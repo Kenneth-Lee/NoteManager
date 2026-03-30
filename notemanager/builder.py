@@ -4,6 +4,7 @@ Provides both full-build and incremental single-file update capabilities.
 """
 
 import json
+import logging
 import datetime
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from notemanager.renderer.md_renderer import render_md
 from notemanager.renderer.template import wrap_html
 from notemanager.ref_resolver import extract_labels, resolve_references
 from notemanager.indexer import build_index
+
+logger = logging.getLogger(__name__)
 
 
 def full_build(project_root: str | Path) -> Path:
@@ -136,7 +139,7 @@ def update_file(project_root: str | Path, file_path: str | Path) -> None:
     # Update status
     _write_status(nm_dir, len(files), len(ref_labels))
 
-    print(f"已更新: {rel_path}")
+    logger.info("已更新: %s", rel_path)
 
 
 def remove_file(project_root: str | Path, file_path: str | Path) -> None:
@@ -153,7 +156,7 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
     html_file = html_dir / html_rel
     if html_file.exists():
         html_file.unlink()
-        print(f"已删除: {html_rel}")
+    logger.info("已删除: %s", html_rel)
 
     # Re-scan and rebuild index
     files = scan_directory(project_root)
@@ -244,7 +247,6 @@ def _extract_title(content, ext):
 
 def _copy_static_assets(static_dir):
     """Copy CSS and JS assets to the static directory."""
-    from notemanager.cli import _DEFAULT_CSS, _DEFAULT_JS
     css = static_dir / "notemanager.css"
     if not css.exists():
         css.write_text(_DEFAULT_CSS, encoding="utf-8")
@@ -277,3 +279,149 @@ def _write_status(nm_dir, file_count, label_count):
         json.dumps(status, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+_DEFAULT_CSS = """\
+/* NoteManager default stylesheet */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px;
+    line-height: 1.6;
+    color: #333;
+}
+.nm-nav {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 0;
+    border-bottom: 1px solid #ddd;
+    margin-bottom: 20px;
+}
+.nm-nav a { text-decoration: none; color: #0066cc; }
+.nm-nav a:hover { text-decoration: underline; }
+#nm-search {
+    padding: 4px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    width: 200px;
+}
+.nm-content { max-width: 100%; }
+pre {
+    background: #f5f5f5;
+    padding: 12px;
+    border-radius: 4px;
+    overflow-x: auto;
+}
+code {
+    background: #f5f5f5;
+    padding: 2px 4px;
+    border-radius: 2px;
+}
+pre code { background: none; padding: 0; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+th { background: #f5f5f5; }
+.admonition {
+    padding: 12px;
+    margin: 12px 0;
+    border-left: 4px solid #0066cc;
+    background: #f0f7ff;
+}
+.admonition-title { font-weight: bold; margin-bottom: 4px; }
+#nm-search-results {
+    position: absolute;
+    background: white;
+    border: 1px solid #ccc;
+    max-height: 300px;
+    overflow-y: auto;
+    display: none;
+    z-index: 100;
+    width: 400px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+#nm-search-results a {
+    display: block;
+    padding: 8px;
+    text-decoration: none;
+    color: #333;
+    border-bottom: 1px solid #eee;
+}
+#nm-search-results a:hover { background: #f0f7ff; }
+img { max-width: 100%; }
+"""
+
+_DEFAULT_JS = """\
+/* NoteManager search functionality */
+(function() {
+    var searchInput = document.getElementById('nm-search');
+    var resultsDiv = document.getElementById('nm-search-results');
+    if (!searchInput || !resultsDiv) return;
+
+    var searchData = null;
+    var debounceTimer = null;
+
+    function loadIndex() {
+        if (searchData) return Promise.resolve(searchData);
+        var pathParts = window.location.pathname.split('/');
+        var depth = pathParts.length - 2;
+        var prefix = '';
+        for (var i = 0; i < depth; i++) prefix += '../';
+        return fetch(prefix + 'index/search_index.json')
+            .then(function(r) { return r.json(); })
+            .then(function(d) { searchData = d; return d; });
+    }
+
+    function search(query) {
+        if (!searchData || !query) return [];
+        var q = query.toLowerCase();
+        var results = [];
+        for (var i = 0; i < searchData.documents.length; i++) {
+            var doc = searchData.documents[i];
+            if (doc.title.toLowerCase().indexOf(q) >= 0 ||
+                doc.text.toLowerCase().indexOf(q) >= 0) {
+                results.push(doc);
+                if (results.length >= 20) break;
+            }
+        }
+        return results;
+    }
+
+    function getPath(doc) {
+        var pathParts = window.location.pathname.split('/');
+        var depth = pathParts.length - 2;
+        var prefix = '';
+        for (var i = 0; i < depth; i++) prefix += '../';
+        return prefix + doc.path;
+    }
+
+    searchInput.addEventListener('input', function() {
+        clearTimeout(debounceTimer);
+        var query = this.value.trim();
+        if (!query) { resultsDiv.style.display = 'none'; return; }
+        debounceTimer = setTimeout(function() {
+            loadIndex().then(function() {
+                var results = search(query);
+                if (!results.length) {
+                    resultsDiv.innerHTML = '<div style="padding:8px">无搜索结果</div>';
+                } else {
+                    var html = '';
+                    for (var i = 0; i < results.length; i++) {
+                        html += '<a href="' + getPath(results[i]) + '">' +
+                                results[i].title + '</a>';
+                    }
+                    resultsDiv.innerHTML = html;
+                }
+                resultsDiv.style.display = 'block';
+            });
+        }, 300);
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!resultsDiv.contains(e.target) && e.target !== searchInput) {
+            resultsDiv.style.display = 'none';
+        }
+    });
+})();
+"""
