@@ -65,6 +65,13 @@ class NoteEventHandler(FileSystemEventHandler):
                     except Exception as e:
                         logger.error("处理 %s 时出错: %s", fpath, e)
 
+                # Notify web clients about file changes
+                try:
+                    from notemanager.web import notify_event
+                    notify_event("build_complete", {"directory": str(self.project_root)})
+                except Exception:
+                    pass
+
             self._timer = threading.Timer(self.debounce_seconds, process)
             self._timer.daemon = True
             self._timer.start()
