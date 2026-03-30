@@ -9,9 +9,9 @@ try:
 except ImportError:
     _PYGMENTS_CSS = ""
 
-# Compute relative path from an HTML file to the static directory
-# static/ is at .NoteManager/static/, html files are at .NoteManager/html/...
-# So from html/a/b/c.html, static is at ../../static/ (depth dependent)
+# Compute relative path from an HTML file to the _static directory
+# _static/ is at .NoteManager/html/_static/, html files are at .NoteManager/html/...
+# So from html/a/b/c.html, _static is at ../../_static/ (depth dependent)
 
 
 def _static_prefix(html_rel_path: str) -> str:
@@ -43,7 +43,7 @@ def wrap_html(body: str, title: str, html_rel_path: str) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{_escape(title)}</title>
-<link rel="stylesheet" href="{prefix}../static/notemanager.css">
+<link rel="stylesheet" href="{prefix}_static/notemanager.css">
 <style>
 {_PYGMENTS_CSS}
 </style>
@@ -57,7 +57,8 @@ def wrap_html(body: str, title: str, html_rel_path: str) -> str:
 <div class="nm-content">
 {body}
 </div>
-<script src="{prefix}../static/notemanager.js"></script>
+<script>window.NM_PREFIX="{prefix}";</script>
+<script src="{prefix}_static/notemanager.js"></script>
 </body>
 </html>
 """
