@@ -11,9 +11,32 @@ try:
 except ImportError:
     _PYGMENTS_CSS = ""
 
+try:
+    from pygments import highlight as _pyg_highlight
+    from pygments.lexers import RstLexer, MarkdownLexer
+    from pygments.formatters import HtmlFormatter as _HtmlFormatter
+    _SOURCE_FMT = _HtmlFormatter(style="monokai", nowrap=True, noclasses=True)
+    _RST_LEXER = RstLexer()
+    _MD_LEXER = MarkdownLexer()
+except ImportError:
+    _pyg_highlight = None
+
 # Compute relative path from an HTML file to the _static directory
 # _static/ is at .NoteManager/html/_static/, html files are at .NoteManager/html/...
 # So from html/a/b/c.html, _static is at ../../_static/ (depth dependent)
+
+
+def _highlight_source(source: str, source_path: str) -> str:
+    """Highlight source text using Pygments server-side."""
+    if _pyg_highlight is None:
+        return _escape(source)
+    if source_path.endswith(".md"):
+        lexer = _MD_LEXER
+    elif source_path.endswith(".rst"):
+        lexer = _RST_LEXER
+    else:
+        return _escape(source)
+    return _pyg_highlight(source, lexer, _SOURCE_FMT)
 
 
 def _static_prefix(html_rel_path: str) -> str:
@@ -45,9 +68,11 @@ def wrap_html(body: str, title: str, html_rel_path: str,
     prefix = _static_prefix(html_rel_path)
     warnings = warnings or []
 
-    # Escape source for JS string literal
-    source_json = _escape_json(source)
+    # Highlight source server-side with Pygments
     source_path_display = _escape(source_path) if source_path else ""
+    highlighted_source = _highlight_source(source, source_path) if source else ""
+    # Escape curly braces for f-string embedding
+    highlighted_source = highlighted_source.replace("{", "{{").replace("}", "}}")
     warnings_text = "\\n".join(warnings) if warnings else "无诊断信息"
 
     return f"""\
@@ -84,6 +109,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
                    width: calc(100% - 30px); max-width: 900px; max-height: calc(100vh - 60px);
                    z-index: 99; box-shadow: 0 2px 8px rgba(0,0,0,0.15); user-select: text; }}
 #nm-source-view.show {{ display: block; }}
+#nm-source-view pre, #nm-source-view code {{ background: none; color: #f8f8f2; padding: 0; border-radius: 0; }}
 .nm-source-header {{ display: flex; justify-content: space-between; align-items: center;
                           margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #555; }}
 .nm-source-path {{ color: #98c379; font-size: 12px; font-family: 'SFMono-Regular', Consolas, monospace; }}
@@ -114,18 +140,14 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 <div class="nm-content">
 {body}
 </div>
-<div id="nm-source-view"><div class="nm-source-header"><span class="nm-source-path"></span><button class="nm-source-close" onclick="nmCloseAllPanels()">关闭</button></div><pre><code></code></pre></div>
+<div id="nm-source-view"><div class="nm-source-header"><span class="nm-source-path">{source_path_display}</span><button class="nm-source-close" onclick="nmCloseAllPanels()">关闭</button></div><pre><code>{highlighted_source}</code></pre></div>
 <pre id="nm-warnings-view">{_escape(warnings_text)}</pre>
 <script>window.NM_PREFIX="{prefix}";</script>
-<script>window.NM_SOURCE={source_json};</script>
-<script>window.NM_SOURCE_PATH="{source_path_display}";</script>
 <script src="{prefix}_static/notemanager.js"></script>
 <script src="{prefix}_static/katex.min.js"></script>
 <script src="{prefix}_static/katex-auto-render.min.js"></script>
 <script src="{prefix}_static/mermaid.min.js"></script>
 <script>if(typeof mermaid!=='undefined')mermaid.initialize({{startOnLoad:true,theme:'default'}});</script>
-<link rel="stylesheet" href="{prefix}_static/highlight-atom-one-dark.min.css">
-<script src="{prefix}_static/highlight.min.js"></script>
 <script>
 function nmCloseAllPanels() {{
     ['nm-toc-panel','nm-source-view','nm-warnings-view'].forEach(function(id){{document.getElementById(id).classList.remove('show');}});
@@ -141,7 +163,7 @@ function nmTogglePanel(id,btn) {{
     }}
 }}
 function nmToggleToc() {{ nmTogglePanel('nm-toc-panel',event.target); }}
-function nmToggleSource() {{ var v=document.getElementById('nm-source-view'); var c=v.querySelector('code')||v; var h=v.querySelector('.nm-source-path'); if(!v.dataset.loaded){{c.textContent=window.NM_SOURCE||'';if(h)h.textContent=window.NM_SOURCE_PATH||'';v.dataset.loaded='1';}} nmTogglePanel('nm-source-view',event.target); }}
+function nmToggleSource() {{ nmTogglePanel('nm-source-view',event.target); }}
 function nmToggleWarnings() {{ nmTogglePanel('nm-warnings-view',event.target); }}
 document.querySelectorAll('.nm-toc-panel a').forEach(function(a){{a.addEventListener('click',function(e){{e.preventDefault();var t=document.getElementById(this.getAttribute('href').substring(1));if(t)t.scrollIntoView({{behavior:'smooth',block:'start'}});nmCloseAllPanels();}});}});
 document.addEventListener('click',function(e){{if(!e.target.closest('.nm-toc-panel')&&!e.target.closest('.nm-toolbar')){{var tp=document.getElementById('nm-toc-panel');if(tp&&tp.classList.contains('show'))nmCloseAllPanels();}}}});
@@ -156,8 +178,3 @@ def _escape(text: str) -> str:
     """Escape HTML special characters."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
-
-def _escape_json(text: str) -> str:
-    """Escape a string for embedding as a JSON string literal in HTML."""
-    import json
-    return json.dumps(text, ensure_ascii=False)
