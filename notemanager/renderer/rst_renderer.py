@@ -84,6 +84,7 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
     body, docinfo = _extract_and_strip_docinfo(body)
     if docinfo:
         warnings.append(f"文档信息: {docinfo}")
+    dtags = _extract_dtags(body)
     body = _strip_dtags(body)
     body = _normalize_literal_block_markers(body)
     body = _clean_paragraph_linebreaks(body)
@@ -99,7 +100,7 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
     if toc_html and id_to_number:
         toc_html = add_toc_numbers(toc_html, id_to_number)
 
-    return {"body": body, "toc": toc_html, "warnings": warnings}
+    return {"body": body, "toc": toc_html, "warnings": warnings, "dtags": dtags}
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +210,17 @@ def _extract_and_strip_docinfo(html):
         docinfo_text = ", ".join(parts)
         html = html[:m.start()] + html[m.end():]
     return html, docinfo_text
+
+
+def _extract_dtags(html):
+    """Extract dtag text from HTML before stripping."""
+    tags = []
+    for m in re.finditer(r'<span class="dtag"[^>]*>([^<]+)</span>', html):
+        for tag in m.group(1).split(","):
+            tag = tag.strip()
+            if tag and tag not in tags:
+                tags.append(tag)
+    return tags
 
 
 def _strip_dtags(html):

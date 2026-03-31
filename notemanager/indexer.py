@@ -33,6 +33,7 @@ def build_index(
     output_dir: Path,
     ref_labels: dict[str, str] | None = None,
     rst_index_directives: dict[str, list[str]] | None = None,
+    dtags_per_doc: dict[str, list[str]] | None = None,
 ) -> None:
     """Build a categorized search index from rendered HTML documents.
 
@@ -42,6 +43,8 @@ def build_index(
         ref_labels: Mapping of label names to HTML file paths.
         rst_index_directives: Mapping of path -> list of index terms
             extracted from RST ``.. index::`` directives.
+        dtags_per_doc: Mapping of rel_path -> list of dtag strings
+            extracted from source before stripping.
     """
     entries = []
 
@@ -75,6 +78,23 @@ def build_index(
                     "text": term.strip(),
                     "snippet": f"索引条目: {term.strip()}",
                 })
+
+    # Add pre-extracted dtag entries
+    if dtags_per_doc:
+        seen = set()
+        for rel_path, tags in dtags_per_doc.items():
+            html_path = str(Path(rel_path).with_suffix(".html"))
+            for tag in tags:
+                tag = tag.strip()
+                if tag and (html_path, tag) not in seen:
+                    seen.add((html_path, tag))
+                    entries.append({
+                        "type": "dtag",
+                        "title": tag,
+                        "path": html_path,
+                        "text": tag,
+                        "snippet": f"文档标签: {tag}",
+                    })
 
     data = {"documents": entries}
     output_path = output_dir / "search_index.json"
@@ -133,6 +153,35 @@ def _extract_index_terms(entries: list, path: str, html: str) -> None:
                 "text": term,
                 "snippet": f"索引条目: {term}",
             })
+
+
+def extract_dtags_from_sources(files) -> dict[str, list[str]]:
+    """Extract :dtag: entries from source files.
+
+    Args:
+        files: List of FileInfo objects from the scanner.
+
+    Returns:
+        Dict mapping relative source path -> list of dtag strings.
+    """
+    _DTAG_ROLE_RE = re.compile(r":dtag:`([^`]+)`")
+    result = {}
+    for fi in files:
+        if fi.ext != ".rst":
+            continue
+        try:
+            content = fi.path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        tags = []
+        for m in _DTAG_ROLE_RE.finditer(content):
+            for tag in m.group(1).split(","):
+                tag = tag.strip()
+                if tag and tag not in tags:
+                    tags.append(tag)
+        if tags:
+            result[str(fi.rel_path)] = tags
+    return result
 
 
 def extract_rst_index_directives(files) -> dict[str, list[str]]:

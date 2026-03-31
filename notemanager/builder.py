@@ -14,6 +14,7 @@ from notemanager.renderer.md_renderer import render_md
 from notemanager.renderer.template import wrap_html
 from notemanager.ref_resolver import extract_labels, resolve_references
 from notemanager.indexer import build_index, extract_rst_index_directives
+from notemanager.indexer import extract_dtags_from_sources
 
 logger = logging.getLogger(__name__)
 
@@ -53,16 +54,29 @@ def full_build(project_root: str | Path) -> Path:
 
     # Second pass: resolve references and write HTML
     documents = []
+    all_dtags = {}  # rel_path -> list of tag strings
     for fi in files:
-        doc = _write_html(html_dir, fi, rendered[fi.rel_path], ref_labels)
+        r = rendered[fi.rel_path]
+        doc = _write_html(html_dir, fi, r, ref_labels)
         documents.append(doc)
+        if r.get("dtags"):
+            all_dtags[str(fi.rel_path)] = r["dtags"]
+
+    # Build dtag index (tag -> list of html paths)
+    dtag_index = _build_dtag_index(all_dtags)
 
     # Build search index (includes labels and index directives)
-    build_index(documents, index_dir, ref_labels, rst_index_dirs)
+    build_index(documents, index_dir, ref_labels, rst_index_dirs, all_dtags)
 
     # Write ref_labels
     (index_dir / "ref_labels.json").write_text(
         json.dumps(ref_labels, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    # Write dtag index
+    (index_dir / "dtag_index.json").write_text(
+        json.dumps(dtag_index, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -129,6 +143,9 @@ def update_file(project_root: str | Path, file_path: str | Path) -> None:
     # Re-extract .. index:: directives
     rst_index_dirs = extract_rst_index_directives(files)
 
+    # Re-extract dtags from source
+    dtags_per_doc = extract_dtags_from_sources(files)
+
     # Write this file's HTML
     _write_html(html_dir, fi, rendered, ref_labels)
 
@@ -147,7 +164,14 @@ def update_file(project_root: str | Path, file_path: str | Path) -> None:
             })
 
     index_dir.mkdir(parents=True, exist_ok=True)
-    build_index(documents, index_dir, ref_labels, rst_index_dirs)
+    build_index(documents, index_dir, ref_labels, rst_index_dirs, dtags_per_doc)
+
+    # Write dtag index
+    dtag_index = _build_dtag_index(dtags_per_doc)
+    (index_dir / "dtag_index.json").write_text(
+        json.dumps(dtag_index, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
     # Update ref_labels
     (index_dir / "ref_labels.json").write_text(
@@ -185,6 +209,7 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
     files = scan_directory(project_root)
     ref_labels = extract_labels(project_root, files)
     rst_index_dirs = extract_rst_index_directives(files)
+    dtags_per_doc = extract_dtags_from_sources(files)
 
     documents = []
     for f in files:
@@ -200,7 +225,7 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
             })
 
     index_dir.mkdir(parents=True, exist_ok=True)
-    build_index(documents, index_dir, ref_labels, rst_index_dirs)
+    build_index(documents, index_dir, ref_labels, rst_index_dirs, dtags_per_doc)
 
     (index_dir / "ref_labels.json").write_text(
         json.dumps(ref_labels, ensure_ascii=False, indent=2),
@@ -238,6 +263,7 @@ def _write_html(html_dir, fi, rendered, ref_labels):
         source=rendered.get("source", ""),
         warnings=rendered.get("warnings", []),
         source_path=str(fi.rel_path),
+        dtags=rendered.get("dtags", []),
     )
     html_path.write_text(full_html, encoding="utf-8")
 
@@ -246,6 +272,16 @@ def _write_html(html_dir, fi, rendered, ref_labels):
         "path": str(html_rel),
         "body": body,
     }
+
+
+def _build_dtag_index(all_dtags: dict) -> dict:
+    """Build a mapping of tag -> list of HTML paths."""
+    index = {}
+    for rel_path, tags in all_dtags.items():
+        html_path = str(Path(rel_path).with_suffix(".html"))
+        for tag in tags:
+            index.setdefault(tag, []).append(html_path)
+    return index
 
 
 def _extract_title(content, ext):
@@ -343,13 +379,9 @@ def _generate_landing_page(html_dir, documents):
             node = node.setdefault(part, {})
         node[parts[-1]] = doc
 
-    body_parts = ['<h1>NoteManager</h1>', '<div id="nm-tree">']
-    body_parts.append(_render_tree(tree, depth=0))
-    body_parts.append('</div>')
-    body_parts.append('<div id="nm-search-results-main"></div>')
-
-    body = "\n".join(body_parts)
-    full_html = wrap_html(body, "NoteManager", "index.html")
+    tree_html = _render_tree(tree, depth=0)
+    body = '<h1>NoteManager</h1>'
+    full_html = wrap_html(body, "NoteManager", "index.html", toc=tree_html)
     (html_dir / "index.html").write_text(full_html, encoding="utf-8")
 
 
@@ -391,30 +423,11 @@ _DEFAULT_CSS = """\
 /* NoteManager default stylesheet */
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 20px;
+    margin: 0;
     line-height: 1.6;
     color: #333;
 }
-.nm-nav {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 8px 0;
-    border-bottom: 1px solid #ddd;
-    margin-bottom: 20px;
-}
-.nm-nav a { text-decoration: none; color: #0066cc; }
-.nm-nav a:hover { text-decoration: underline; }
-#nm-search {
-    padding: 6px 10px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    width: 260px;
-    font-size: 14px;
-}
-.nm-content { max-width: 100%; position: relative; }
+.nm-content { max-width: 900px; position: relative; }
 pre {
     background: #f5f5f5;
     padding: 12px;
@@ -470,84 +483,21 @@ img { max-width: 100%; }
 .nm-file::before {
     content: "\\1F4C4 ";
 }
-
-/* Search results (nav overlay) */
-#nm-search-results {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    background: white;
-    border: 1px solid #ccc;
-    max-height: 80vh;
-    overflow-y: auto;
-    display: none;
-    z-index: 100;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    border-radius: 4px;
-}
-#nm-search-results .nm-result-item {
-    display: block;
-    padding: 10px 12px;
-    text-decoration: none;
-    color: #333;
-    border-bottom: 1px solid #eee;
-}
-#nm-search-results .nm-result-item:hover { background: #f0f7ff; }
-#nm-search-results .nm-result-title { font-weight: 500; color: #0066cc; }
-#nm-search-results .nm-result-path { font-size: 12px; color: #888; font-family: monospace; }
-#nm-search-results .nm-result-snippet { font-size: 13px; color: #666; margin-top: 2px; }
-#nm-search-results .nm-result-snippet mark { background: #ffe066; padding: 0 2px; border-radius: 2px; }
-#nm-search-results .nm-no-results { padding: 20px; text-align: center; color: #999; }
-#nm-search-results .nm-result-count { padding: 8px 12px; font-size: 13px; color: #888; border-bottom: 1px solid #eee; background: #fafafa; }
-
-/* Main search results (landing page) */
-#nm-search-results-main { display: none; }
-#nm-search-results-main .nm-result-item {
-    display: block;
-    padding: 10px 12px;
-    text-decoration: none;
-    color: #333;
-    border-bottom: 1px solid #eee;
-}
-#nm-search-results-main .nm-result-item:hover { background: #f0f7ff; }
-#nm-search-results-main .nm-result-title { font-weight: 500; color: #0066cc; }
-#nm-search-results-main .nm-result-path { font-size: 12px; color: #888; font-family: monospace; }
-#nm-search-results-main .nm-result-snippet { font-size: 13px; color: #666; margin-top: 2px; }
-#nm-search-results-main .nm-result-snippet mark { background: #ffe066; padding: 0 2px; border-radius: 2px; }
-#nm-search-results-main .nm-no-results { padding: 20px; text-align: center; color: #999; }
-#nm-search-results-main .nm-result-count { padding: 8px 12px; font-size: 13px; color: #888; border-bottom: 1px solid #eee; background: #fafafa; }
-
-/* Type badges */
-.nm-type-badge {
-    display: inline-block;
-    font-size: 11px;
-    padding: 1px 6px;
-    border-radius: 3px;
-    margin-right: 6px;
-    font-weight: 600;
-    vertical-align: middle;
-}
-.nm-type-chapter { background: #e8f5e9; color: #2e7d32; }
-.nm-type-label { background: #e3f2fd; color: #1565c0; }
-.nm-type-index { background: #fff3e0; color: #e65100; }
-.nm-type-dtag { background: #f3e5f5; color: #7b1fa2; }
 """
 
 _DEFAULT_JS = """\
-/* NoteManager search functionality */
+/* NoteManager sidebar search */
 (function() {
     var searchInput = document.getElementById('nm-search');
-    var resultsDiv = document.getElementById('nm-search-results');
-    var mainResultsDiv = document.getElementById('nm-search-results-main');
-    var treeDiv = document.getElementById('nm-tree');
     if (!searchInput) return;
+
+    var sidebarToc = document.getElementById('nm-sidebar-toc');
+    var sidebarResults = document.getElementById('nm-sidebar-search-results');
 
     var searchData = null;
     var debounceTimer = null;
 
     var prefix = window.NM_PREFIX || '';
-    var isIndexPage = !!treeDiv;
 
     var TYPE_LABELS = {
         chapter: '章节',
@@ -622,32 +572,18 @@ _DEFAULT_JS = """\
     function showSearchResults(query) {
         var results = regexSearch(query);
         var html = renderResults(query, results);
-        if (isIndexPage) {
-            if (treeDiv) treeDiv.style.display = 'none';
-            if (mainResultsDiv) {
-                mainResultsDiv.innerHTML = html;
-                mainResultsDiv.style.display = 'block';
-            }
-        } else {
-            if (resultsDiv) {
-                resultsDiv.innerHTML = html;
-                resultsDiv.style.display = 'block';
-            }
+        if (sidebarToc) sidebarToc.style.display = 'none';
+        if (sidebarResults) {
+            sidebarResults.innerHTML = html;
+            sidebarResults.style.display = 'block';
         }
     }
 
     function hideSearchResults() {
-        if (isIndexPage) {
-            if (treeDiv) treeDiv.style.display = '';
-            if (mainResultsDiv) {
-                mainResultsDiv.style.display = 'none';
-                mainResultsDiv.innerHTML = '';
-            }
-        } else {
-            if (resultsDiv) {
-                resultsDiv.style.display = 'none';
-                resultsDiv.innerHTML = '';
-            }
+        if (sidebarToc) sidebarToc.style.display = '';
+        if (sidebarResults) {
+            sidebarResults.style.display = 'none';
+            sidebarResults.innerHTML = '';
         }
     }
 
@@ -665,13 +601,17 @@ _DEFAULT_JS = """\
         }, 200);
     });
 
-    // Close search results when clicking outside (document pages only)
-    if (!isIndexPage && resultsDiv) {
-        document.addEventListener('click', function(e) {
-            if (!resultsDiv.contains(e.target) && e.target !== searchInput) {
-                resultsDiv.style.display = 'none';
+    // Dtag badge click: search for that tag
+    document.querySelectorAll('.nm-dtag-badge').forEach(function(badge) {
+        badge.addEventListener('click', function() {
+            var tag = this.getAttribute('data-dtag');
+            if (tag) {
+                searchInput.value = 'dtag:' + tag;
+                loadIndex().then(function() {
+                    showSearchResults('dtag:' + tag);
+                });
             }
         });
-    }
+    });
 })();
 """

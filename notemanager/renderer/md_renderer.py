@@ -62,7 +62,7 @@ def render_md(content: str, source_path: str = "<string>") -> dict:
     if toc_html and id_to_number:
         toc_html = add_toc_numbers(toc_html, id_to_number)
 
-    return {"body": body, "toc": toc_html, "warnings": []}
+    return {"body": body, "toc": toc_html, "warnings": [], "dtags": []}
 
 
 def _convert_links(html: str) -> str:
