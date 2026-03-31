@@ -42,8 +42,13 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
 
     warnings = []
     if ignored_roles:
-        unique = sorted(set(ignored_roles))
-        warnings.append(f"已忽略不支持的 role: {', '.join(unique)}")
+        unique = sorted(set(r[0] for r in ignored_roles))
+        if unique:
+            details = "; ".join(f":{r[0]}:`{r[1]}`" for r in ignored_roles if r[1])
+            msg = f"已忽略不支持的 role: {', '.join(unique)}"
+            if details:
+                msg += f" (如: {details})"
+            warnings.append(msg)
 
     warning_stream = io.StringIO()
 
@@ -155,7 +160,7 @@ def _strip_unsupported_roles(text):
             return role_content
         if role_name.lower() in known_roles:
             return match.group(0)
-        ignored.append(role_name)
+        ignored.append((role_name, role_content))
         return ""
 
     sanitized = re.sub(r":([a-zA-Z][\w-]*):`([^`\n]*)`", _repl, text)

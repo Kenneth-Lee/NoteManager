@@ -14,7 +14,13 @@ from pathlib import Path
 
 # <section id="xxx">...<hN>title</hN>
 _SECTION_HEADING_RE = re.compile(
-    r'<section[^>]*\bid="([^"]+)"[^>]*>.*?<h(\d+)>([^<]+)</h\2>',
+    r'<section[^>]*\bid="([^"]+)"[^>]*>.*?<h(\d+)>(.*?)</h\2>',
+    re.DOTALL,
+)
+
+# <hN id="xxx">title</hN>  (Markdown-style, no section wrapper)
+_DIRECT_HEADING_RE = re.compile(
+    r'<h(\d+)\s[^>]*\bid="([^"]+)"[^>]*>(.*?)</h\1>',
     re.DOTALL,
 )
 
@@ -106,16 +112,34 @@ def build_index(
 
 def _extract_chapters(entries: list, path: str, html: str) -> None:
     """Extract section headings from rendered HTML."""
+    seen_ids = set()
+    # RST style: <section id="xxx">...<hN>title</hN>
     for match in _SECTION_HEADING_RE.finditer(html):
         section_id = match.group(1)
         level = int(match.group(2))
         title = _strip_tags(match.group(3))
         if not title:
             continue
+        seen_ids.add(section_id)
         entries.append({
             "type": "chapter",
             "title": title,
             "path": f"{path}#{section_id}",
+            "text": title,
+            "snippet": f"H{level}: {title}",
+        })
+    # Markdown style: <hN id="xxx">title</hN>
+    for match in _DIRECT_HEADING_RE.finditer(html):
+        level = int(match.group(1))
+        heading_id = match.group(2)
+        title = _strip_tags(match.group(3))
+        if not title or heading_id in seen_ids:
+            continue
+        seen_ids.add(heading_id)
+        entries.append({
+            "type": "chapter",
+            "title": title,
+            "path": f"{path}#{heading_id}",
             "text": title,
             "snippet": f"H{level}: {title}",
         })
