@@ -106,6 +106,14 @@ def _resolve_doc_links(html: str, current_html_path: str) -> str:
         else:
             html_target = doc_path
 
+        # If target has no directory component, resolve relative to current
+        # file's directory (e.g. toctree entry "工具链" in "ocaml/index.html"
+        # should become "ocaml/工具链.html")
+        if not Path(html_target).parent.parts:
+            current_dir = str(Path(current_html_path).parent)
+            if current_dir and current_dir != ".":
+                html_target = current_dir + "/" + html_target
+
         rel_path = _relative_path(current_html_path, html_target)
         return full_tag.replace(f'href="#doc-{doc_path}"', f'href="{rel_path}"')
 

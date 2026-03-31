@@ -269,9 +269,11 @@ class NoteManagerDaemon:
                 except (ConnectionError, json.JSONDecodeError) as e:
                     logger.error("处理请求出错: %s", e)
 
-        self._tcp_server = socketserver.ThreadingTCPServer(
+        class ReuseAddrTCPServer(socketserver.ThreadingTCPServer):
+            allow_reuse_address = True
+
+        self._tcp_server = ReuseAddrTCPServer(
             (DEFAULT_HOST, self.port), TCPHandler,
-            bind_and_activate=True,
         )
         self._tcp_server.daemon_threads = True
         tcp_thread = threading.Thread(target=self._tcp_server.serve_forever)

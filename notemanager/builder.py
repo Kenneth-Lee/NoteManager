@@ -211,13 +211,12 @@ def _render_file(fi: FileInfo) -> dict:
     """Render a single file to HTML body."""
     content = fi.path.read_text(encoding="utf-8")
     if fi.ext == ".rst":
-        body = render_rst(content, str(fi.rel_path))
+        result = render_rst(content, str(fi.rel_path))
     else:
-        body = render_md(content, str(fi.rel_path))
-    return {
-        "body": body,
-        "title": _extract_title(content, fi.ext),
-    }
+        result = render_md(content, str(fi.rel_path))
+    result["title"] = _extract_title(content, fi.ext)
+    result["source"] = content
+    return result
 
 
 def _write_html(html_dir, fi, rendered, ref_labels):
@@ -227,7 +226,14 @@ def _write_html(html_dir, fi, rendered, ref_labels):
     html_path.parent.mkdir(parents=True, exist_ok=True)
 
     body = resolve_references(rendered["body"], str(html_rel), ref_labels)
-    full_html = wrap_html(body, rendered["title"], str(html_rel))
+    full_html = wrap_html(
+        body,
+        rendered["title"],
+        str(html_rel),
+        toc=rendered.get("toc", ""),
+        source=rendered.get("source", ""),
+        warnings=rendered.get("warnings", []),
+    )
     html_path.write_text(full_html, encoding="utf-8")
 
     return {
