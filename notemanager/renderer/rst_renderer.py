@@ -81,7 +81,10 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
     # Post-processing pipeline
     body = _strip_system_messages(body)
     body = _strip_problematic_spans(body)
-    body = _strip_docinfo(body)
+    body, docinfo = _extract_and_strip_docinfo(body)
+    if docinfo:
+        warnings.append(f"文档信息: {docinfo}")
+    body = _strip_dtags(body)
     body = _normalize_literal_block_markers(body)
     body = _clean_paragraph_linebreaks(body)
 
@@ -183,15 +186,38 @@ def _strip_problematic_spans(html):
     )
 
 
-def _strip_docinfo(html):
-    """Remove docinfo (metadata) from body — e.g. :Author:, :Version:."""
-    # docutils renders docinfo as <dl class="docinfo">...</dl>
-    return re.sub(
-        r'<dl class="docinfo[^"]*"[^>]*>.*?</dl>\s*',
-        "",
-        html,
-        flags=re.DOTALL,
-    )
+def _extract_and_strip_docinfo(html):
+    """Extract metadata from docinfo and strip it from body.
+
+    Returns (html, docinfo_text) where docinfo_text is a human-readable
+    summary like "Author: X, Version: Y".
+    """
+    docinfo_text = ""
+    m = re.search(r'<dl class="docinfo[^"]*"[^>]*>(.*?)</dl>', html, re.DOTALL)
+    if m:
+        # Extract field name-value pairs
+        fields = re.findall(
+            r'<dt[^>]*>(.*?)</dt>\s*<dd[^>]*>(.*?)</dd>',
+            m.group(1),
+            re.DOTALL,
+        )
+        parts = []
+        for name, value in fields:
+            name = re.sub(r"<[^>]+>", "", name).strip().rstrip(":")
+            value = re.sub(r"<[^>]+>", "", value).strip()
+            parts.append(f"{name}: {value}")
+        docinfo_text = ", ".join(parts)
+        html = html[:m.start()] + html[m.end():]
+    return html, docinfo_text
+
+
+def _strip_dtags(html):
+    """Remove dtag spans from body — they are for index only."""
+    # Remove <span class="dtag">...</span> and clean up empty <p> wrappers
+    html = re.sub(r'<span class="dtag"[^>]*>.*?</span>', "", html, flags=re.DOTALL)
+    # Clean up empty paragraphs left behind
+    html = re.sub(r'<p>\s*</p>', "", html)
+    return html
 
 
 def _normalize_literal_block_markers(html):

@@ -52,6 +52,7 @@ def render_md(content: str, source_path: str = "<string>") -> dict:
     )
     body = md.convert(content)
     body = _convert_links(body)
+    body = _convert_mermaid_blocks(body)
 
     # TOC from markdown toc extension
     toc_html = getattr(md, "toc", "") or ""
@@ -65,16 +66,43 @@ def render_md(content: str, source_path: str = "<string>") -> dict:
 
 
 def _convert_links(html: str) -> str:
-    """Convert .md/.rst links in HTML to .html links."""
+    """Convert .md/.rst links in HTML to .html links, fix bare URLs."""
     def replace_link(match):
         prefix = match.group(1)
         path = match.group(2)
+        suffix = match.group(3)
         if path.startswith(("http://", "https://", "#", "mailto:")):
             return match.group(0)
+        # Fix bare www. URLs
+        if path.startswith("www."):
+            return f'{prefix}http://{path}{suffix}'
         for ext in (".md", ".rst"):
             if path.endswith(ext):
                 path = path[: -len(ext)] + ".html"
                 break
-        return f'{prefix}"{path}"'
+        return f'{prefix}{path}{suffix}'
 
     return re.sub(r'(href=")([^"]*)(")', replace_link, html)
+
+
+def _convert_mermaid_blocks(html: str) -> str:
+    """Convert mermaid code blocks to <pre class="mermaid"> for client-side rendering."""
+    # codehilite wraps them in <div class="highlight"><pre>...<code>CONTENT</code></pre></div>
+    # where CONTENT starts with a mermaid keyword
+    mermaid_start = r'(?:graph |pie\s|flowchart |sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt |journey |gitGraph)'
+    pattern = (
+        r'<div class="highlight"><pre[^>]*><span></span>'
+        r'<code>(' + mermaid_start + r'.*?)</code></pre></div>'
+    )
+    def _replace(m):
+        code = m.group(1)
+        code = code.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+        code = code.replace("&quot;", '"').replace("&#39;", "'")
+        return f'<pre class="mermaid">{code}</pre>'
+    html = re.sub(pattern, _replace, html, flags=re.DOTALL)
+    # Also handle plain <pre><code> without highlight wrapper
+    pattern2 = (
+        r'<pre><code>(' + mermaid_start + r'.*?)</code></pre>'
+    )
+    html = re.sub(pattern2, _replace, html, flags=re.DOTALL)
+    return html

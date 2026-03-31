@@ -69,6 +69,9 @@ def full_build(project_root: str | Path) -> Path:
     # Copy static assets
     _copy_static_assets(static_dir)
 
+    # Copy project assets (images, etc.) to html directory
+    _copy_project_assets(project_root, html_dir)
+
     # Generate landing page
     _generate_landing_page(html_dir, documents)
 
@@ -106,6 +109,7 @@ def update_file(project_root: str | Path, file_path: str | Path) -> None:
     # Refresh static assets (JS/CSS may have been updated)
     static_dir.mkdir(parents=True, exist_ok=True)
     _copy_static_assets(static_dir)
+    _copy_project_assets(project_root, html_dir)
 
     # Re-scan to get current file list
     files = scan_directory(project_root)
@@ -214,7 +218,7 @@ def _render_file(fi: FileInfo) -> dict:
         result = render_rst(content, str(fi.rel_path))
     else:
         result = render_md(content, str(fi.rel_path))
-    result["title"] = _extract_title(content, fi.ext)
+    result["title"] = _extract_title_from_html(result.get("body", "")) or _extract_title(content, fi.ext)
     result["source"] = content
     return result
 
@@ -233,6 +237,7 @@ def _write_html(html_dir, fi, rendered, ref_labels):
         toc=rendered.get("toc", ""),
         source=rendered.get("source", ""),
         warnings=rendered.get("warnings", []),
+        source_path=str(fi.rel_path),
     )
     html_path.write_text(full_html, encoding="utf-8")
 
@@ -271,10 +276,60 @@ def _extract_title(content, ext):
     return "Untitled"
 
 
+def _extract_title_from_html(body):
+    """Extract the first heading text from rendered HTML body."""
+    import re
+    m = re.search(r'<h1[^>]*>(.*?)</h1>', body, re.DOTALL)
+    if m:
+        text = re.sub(r"<[^>]+>", "", m.group(1)).strip()
+        if text:
+            return text
+    return None
+
+
 def _copy_static_assets(static_dir):
     """Copy CSS and JS assets to the static directory."""
     (static_dir / "notemanager.css").write_text(_DEFAULT_CSS, encoding="utf-8")
     (static_dir / "notemanager.js").write_text(_DEFAULT_JS, encoding="utf-8")
+
+    # Copy bundled third-party assets (KaTeX, Mermaid, Highlight.js)
+    _ASSETS_SRC = Path(__file__).parent / "renderer" / "assets"
+    if _ASSETS_SRC.is_dir():
+        import shutil
+        for item in _ASSETS_SRC.iterdir():
+            if item.is_file():
+                shutil.copy2(item, static_dir / item.name)
+            elif item.is_dir():
+                dest = static_dir / item.name
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.copytree(item, dest)
+
+
+# File extensions to copy as project assets
+_ASSET_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".ico",
+    ".pdf", ".zip", ".tar", ".gz",
+    ".css", ".js", ".woff", ".woff2", ".ttf", ".eot",
+}
+
+
+def _copy_project_assets(project_root, html_dir):
+    """Copy non-document assets (images, etc.) to the html output directory."""
+    import shutil
+    root = Path(project_root).resolve()
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        parts = path.relative_to(root).parts
+        if any(part in {".NoteManager", "_build", "_static", "_extensions",
+                        "__pycache__", ".git", ".svn", ".hg"} for part in parts):
+            continue
+        if path.suffix.lower() in _ASSET_EXTENSIONS:
+            rel = path.relative_to(root)
+            dest = html_dir / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, dest)
 
 
 def _generate_landing_page(html_dir, documents):
