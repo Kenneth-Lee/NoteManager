@@ -18,6 +18,7 @@ from pathlib import Path
 
 from notemanager.protocol import (
     DEFAULT_HOST, DEFAULT_PORT, DEFAULT_UNIX_SOCKET, recv_command, send_response,
+    send_command,
     use_unix_socket,
 )
 from notemanager.builder import full_build
@@ -30,6 +31,13 @@ from notemanager.renderer.template import wrap_html
 logger = logging.getLogger(__name__)
 
 DEFAULT_WEB_PORT = 19833
+
+# 父进程等子进程写完索引再返回；首次 full_build 可能远超 1 分钟。
+_DAEMON_PARENT_STARTUP_POLL_S = 0.2
+_DAEMON_PARENT_STARTUP_MAX_STEPS = 6000  # ×0.2s ≈ 20 分钟
+
+# CLI `_ensure_daemon` 轮询（与父进程等待同量级，避免 daemon 已在跑但构建未结束）
+DAEMON_ENSURE_WAIT_STEPS = 2400  # ×0.5s ≈ 20 分钟
 
 # Global config directory
 HOME_NM_DIR = Path.home() / ".NoteManager"
@@ -55,7 +63,7 @@ def _save_config(config: dict) -> None:
 
 def _write_daemon_info(pid: int, port: int, web_port: int,
                        transport: str, socket_path: str = "") -> None:
-    """Write daemon runtime info."""
+    """Write daemon runtime info (PID is valid while process is up)."""
     HOME_NM_DIR.mkdir(parents=True, exist_ok=True)
     DAEMON_FILE.write_text(
         json.dumps({
@@ -96,6 +104,27 @@ def is_daemon_running() -> int | None:
         return None
 
 
+def _daemon_responded_startup_complete() -> bool:
+    """True if we can reach the daemon and status says startup is finished."""
+    if not is_daemon_running() or not DAEMON_FILE.exists():
+        return False
+    try:
+        info = json.loads(DAEMON_FILE.read_text(encoding="utf-8"))
+        sock = info.get("socket_path", str(DEFAULT_UNIX_SOCKET))
+        port = info.get("port", DEFAULT_PORT)
+        resp = send_command(
+            {"cmd": "status"},
+            port=port,
+            timeout=2,
+            socket_path=sock,
+        )
+        if not resp.get("ok"):
+            return False
+        return resp["data"].get("startup_complete", True)
+    except (ConnectionError, OSError, TimeoutError, json.JSONDecodeError, KeyError):
+        return False
+
+
 def get_daemon_web_port() -> int | None:
     """Get the web UI port of the running daemon."""
     if not DAEMON_FILE.exists():
@@ -132,6 +161,7 @@ class NoteManagerDaemon:
         self._observers = {}  # directory -> Observer
         self._lock = threading.Lock()
         self._shutdown = threading.Event()
+        self._startup_complete_event = threading.Event()
         self._tcp_server = None
         self._web_server = None
 
@@ -252,6 +282,7 @@ class NoteManagerDaemon:
                 "directory_count": len(dirs),
                 "details": status_info,
                 "default_project": self.config.get("default_project"),
+                "startup_complete": self._startup_complete_event.is_set(),
             },
         }
 
@@ -413,16 +444,19 @@ class NoteManagerDaemon:
     def handle_command(self, cmd: dict) -> dict:
         """Dispatch a command (for TCP/CLI)."""
         action = cmd.get("cmd")
+        if action == "stop":
+            return self.stop_daemon()
+        if action == "status":
+            return self.get_status()
+        # Avoid empty _observers while config directories are still being restored.
+        if not self._startup_complete_event.wait(timeout=600):
+            return {"ok": False, "error": "Daemon 启动超时（恢复监控目录未完成）"}
         if action == "add":
             return self.add_directory(cmd["directory"])
         elif action == "remove":
             return self.remove_directory(cmd["directory"])
         elif action == "list":
             return self.list_directories()
-        elif action == "status":
-            return self.get_status()
-        elif action == "stop":
-            return self.stop_daemon()
         elif action == "search":
             return self.handle_search(cmd)
         elif action == "default":
@@ -435,7 +469,7 @@ class NoteManagerDaemon:
     def run(self) -> None:
         """Run the daemon main loop."""
         _write_daemon_info(
-            os.getpid(), self.port, self.web_port, self.transport, self.socket_path
+            os.getpid(), self.port, self.web_port, self.transport, self.socket_path,
         )
 
         # Start TCP server for CLI
@@ -498,6 +532,7 @@ class NoteManagerDaemon:
                 self.config["directories"].remove(directory)
                 _save_config(self.config)
 
+        self._startup_complete_event.set()
         logger.info("Daemon 就绪")
 
         # Wait for shutdown signal
@@ -521,19 +556,36 @@ class NoteManagerDaemon:
         self._setup_logging(stream=sys.stdout)
         self.run()
 
-    def run_background(self) -> None:
-        """Run daemon in background (POSIX fork or Windows detached process)."""
+    def run_background(self) -> bool:
+        """Run daemon in background (POSIX fork or Windows detached process).
+
+        Returns True once the child reports ``startup_complete`` (or False on timeout).
+        """
         if hasattr(os, "fork"):
             pid = os.fork()
             if pid > 0:
-                time.sleep(0.5)
-                if _pid_exists(pid):
-                    print(f"Daemon 已启动 (PID: {pid})")
-                    print(f"Web UI: http://localhost:{self.web_port}")
-                else:
-                    print("Daemon 启动失败", file=sys.stderr)
-                    sys.exit(1)
-                return
+                for step in range(_DAEMON_PARENT_STARTUP_MAX_STEPS):
+                    time.sleep(_DAEMON_PARENT_STARTUP_POLL_S)
+                    if _daemon_responded_startup_complete():
+                        info = {}
+                        if DAEMON_FILE.exists():
+                            try:
+                                info = json.loads(
+                                    DAEMON_FILE.read_text(encoding="utf-8")
+                                )
+                            except (json.JSONDecodeError, OSError):
+                                pass
+                        real_pid = info.get("pid", pid)
+                        print(f"Daemon 已启动 (PID: {real_pid})")
+                        print(f"Web UI: http://localhost:{self.web_port}")
+                        return True
+                    if step > 0 and step % 150 == 0:
+                        print(
+                            "仍在等待 daemon 完成首次构建与恢复监控…",
+                            file=sys.stderr,
+                        )
+                print("Daemon 启动失败（等待超时，可能仍在后台构建，请稍后 nmr status）", file=sys.stderr)
+                return False
 
             os.setsid()
 
@@ -581,15 +633,21 @@ class NoteManagerDaemon:
         finally:
             log_fp.close()
 
-        for _ in range(20):
-            time.sleep(0.2)
-            if is_daemon_running():
+        # Restore may run full_build per project; wait until status reports ready.
+        for step in range(_DAEMON_PARENT_STARTUP_MAX_STEPS):
+            time.sleep(_DAEMON_PARENT_STARTUP_POLL_S)
+            if _daemon_responded_startup_complete():
                 print(f"Daemon 已启动 (PID: {proc.pid})")
                 print(f"Web UI: http://localhost:{self.web_port}")
-                return
+                return True
+            if step > 0 and step % 150 == 0:
+                print(
+                    "仍在等待 daemon 完成首次构建与恢复监控…",
+                    file=sys.stderr,
+                )
 
-        print("Daemon 启动失败", file=sys.stderr)
-        sys.exit(1)
+        print("Daemon 启动失败（等待超时，可能仍在后台构建，请稍后 nmr status）", file=sys.stderr)
+        return False
 
     @staticmethod
     def _setup_logging(stream=None) -> None:

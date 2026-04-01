@@ -12,8 +12,13 @@ import time
 from pathlib import Path
 
 from notemanager.daemon import (
-    is_daemon_running, NoteManagerDaemon, DAEMON_FILE,
-    get_daemon_web_port, DEFAULT_WEB_PORT,
+    is_daemon_running,
+    NoteManagerDaemon,
+    DAEMON_FILE,
+    get_daemon_web_port,
+    DEFAULT_WEB_PORT,
+    DAEMON_ENSURE_WAIT_STEPS,
+    _daemon_responded_startup_complete,
 )
 from notemanager.protocol import (
     send_command, DEFAULT_PORT, DEFAULT_UNIX_SOCKET,
@@ -21,27 +26,23 @@ from notemanager.protocol import (
 
 
 def _ensure_daemon(port: int = DEFAULT_PORT, web_port: int = DEFAULT_WEB_PORT) -> bool:
-    """Make sure daemon is running. Start it if not. Returns True if running."""
-    if is_daemon_running():
-        return True
+    """Make sure daemon is running and finished restoring projects. Start if needed."""
+    if not is_daemon_running():
+        print("Daemon 未运行，正在启动...")
+        daemon = NoteManagerDaemon(port=port, web_port=web_port)
+        if not daemon.run_background():
+            return False
 
-    print("Daemon 未运行，正在启动...")
-    daemon = NoteManagerDaemon(port=port, web_port=web_port)
-    daemon.run_background()
-
-    for _ in range(20):
+    # PID 存在不等于已恢复完监控目录；须等 status.startup_complete（见 daemon.handle_command）。
+    for step in range(DAEMON_ENSURE_WAIT_STEPS):
         time.sleep(0.5)
-        if is_daemon_running():
-            try:
-                send_command(
-                    {"cmd": "status"},
-                    port=port,
-                    timeout=2,
-                    socket_path=_get_daemon_socket_path(),
-                )
-                return True
-            except ConnectionError:
-                continue
+        if is_daemon_running() and _daemon_responded_startup_complete():
+            return True
+        if step > 0 and step % 60 == 0:
+            print(
+                "仍在等待 daemon 完成首次构建与恢复监控…",
+                file=sys.stderr,
+            )
     return False
 
 
@@ -101,7 +102,8 @@ def cmd_start(args):
             print(f"Web UI: http://localhost:{web_port}")
         return
     daemon = NoteManagerDaemon(port=args.port, web_port=args.web_port)
-    daemon.run_background()
+    if not daemon.run_background():
+        sys.exit(1)
 
 
 def cmd_stop(args):
