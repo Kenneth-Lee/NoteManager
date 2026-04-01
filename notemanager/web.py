@@ -258,9 +258,44 @@ class WebHandler(BaseHTTPRequestHandler):
         self._send_file(target)
 
 
+def _same_project_root(a: str, b: str) -> bool:
+    """Compare project root paths (Windows: case-insensitive)."""
+    try:
+        pa = Path(a).resolve()
+        pb = Path(b).resolve()
+    except OSError:
+        pa, pb = Path(a), Path(b)
+    if os.name == "nt":
+        return os.path.normcase(str(pa)) == os.path.normcase(str(pb))
+    return pa == pb
+
+
+def _enrich_build_complete_event(data: dict) -> dict:
+    """Add numeric project index so /p/N/ pages can reload only when relevant."""
+    if "project" in data:
+        return data
+    directory = data.get("directory")
+    if not directory:
+        return data
+    daemon = WebHandler.daemon_ref
+    if not daemon:
+        return data
+    with daemon._lock:
+        roots = list(daemon._observers.keys())
+    for i, root in enumerate(roots):
+        if _same_project_root(directory, root):
+            data = dict(data)
+            data["project"] = i
+            break
+    return data
+
+
 def notify_event(event_type: str, data: dict = None):
     """Public function for daemon to broadcast events to all web clients."""
-    broadcaster.broadcast(event_type, data)
+    payload = dict(data or {})
+    if event_type == "build_complete":
+        payload = _enrich_build_complete_event(payload)
+    broadcaster.broadcast(event_type, payload)
 
 
 def start_web_server(daemon_ref, port: int) -> HTTPServer:

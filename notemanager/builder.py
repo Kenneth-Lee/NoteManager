@@ -667,6 +667,16 @@ _DEFAULT_JS = """\
             if (!data || !data.url) return;
             window.location.href = data.url;
         });
+        evtSource.addEventListener('build_complete', function(e) {
+            var data;
+            try { data = JSON.parse(e.data); } catch (err) { return; }
+            if (data.project === undefined || data.project === null) return;
+            var parts = window.location.pathname.split('/').filter(function(s) { return s; });
+            if (parts.length < 2 || parts[0] !== 'p') return;
+            var cur = parseInt(parts[1], 10);
+            if (isNaN(cur) || cur !== data.project) return;
+            window.location.reload();
+        });
     })();
 })();
 """

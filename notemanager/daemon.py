@@ -205,7 +205,7 @@ class NoteManagerDaemon:
         logger.info("重建目录: %s", path)
         try:
             full_build(path)
-            self._notify_change("build_complete")
+            self._notify_change("build_complete", {"directory": dir_str})
             return {"ok": True, "message": f"重建完成: {path}"}
         except Exception as e:
             logger.error("重建失败: %s: %s", path, e)
@@ -393,11 +393,14 @@ class NoteManagerDaemon:
                 return i
         return None
 
-    def _notify_change(self, event_type: str):
+    def _notify_change(self, event_type: str, extra: dict | None = None):
         """Push an event to all connected web UI clients."""
         try:
             status = self.get_status()
-            notify_event(event_type, status.get("data", {}))
+            payload = dict(status.get("data", {}))
+            if extra:
+                payload.update(extra)
+            notify_event(event_type, payload)
         except Exception as e:
             logger.error("通知事件失败: %s", e)
 
