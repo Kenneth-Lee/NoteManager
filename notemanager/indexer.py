@@ -6,11 +6,17 @@ Extracts structured entries from rendered HTML:
 - index: inline index terms (:index: role)
 - label: cross-reference anchors (.. _label:)
 - index-directive: .. index:: entries from RST source
+- grep: text blocks from rendered main content (not raw source)
 """
+
+from __future__ import annotations
 
 import json
 import re
+from html.parser import HTMLParser
 from pathlib import Path
+
+from notemanager.index_body import extract_render_panel_inner_html
 
 # <section id="xxx">...<hN>title</hN>
 _SECTION_HEADING_RE = re.compile(
@@ -32,6 +38,125 @@ _INDEX_TERM_RE = re.compile(r'<span class="index-term">([^<]+)</span>')
 
 # .. index:: term
 _RST_INDEX_DIRECTIVE_RE = re.compile(r'^\.\.\s+index::\s+(.+)$', re.MULTILINE)
+
+_GREP_BLOCK_TAGS = frozenset({
+    "p", "li", "h1", "h2", "h3", "h4", "h5", "h6",
+    "td", "th", "blockquote", "pre", "dt", "dd", "caption",
+    # Sphinx / HTML5 常见容器，避免正文落在 section/main 的直接文本节点里被漏抽
+    "section", "main", "article",
+})
+_GREP_SKIP_TAGS = frozenset({"script", "style", "noscript", "template"})
+_MAX_GREP_NODES_PER_DOC = 600
+_MAX_GREP_TEXT_LEN = 4000
+
+
+def parse_search_query(query: str) -> tuple[str | None, str]:
+    """解析 ``chapter:`` / ``grep:`` 等前缀，返回 (类型或 None, 核心查询串)。"""
+    raw = query.strip()
+    m = re.match(r"^(chapter|label|index|dtag|grep):\s*(.*)$", raw, re.IGNORECASE)
+    if m:
+        core = (m.group(2) or "").strip()
+        return m.group(1).lower(), core
+    return None, raw
+
+
+def filter_search_documents(
+    entries: list,
+    query: str,
+    *,
+    limit: int = 500,
+) -> list:
+    """按与 Web 侧一致的规则过滤索引条目（正则，默认忽略大小写）。"""
+    typ, core = parse_search_query(query)
+    if not core:
+        return []
+    try:
+        rex = re.compile(core, re.IGNORECASE)
+    except re.error:
+        rex = re.compile(re.escape(core), re.IGNORECASE)
+    results = []
+    for e in entries:
+        if typ and e.get("type") != typ:
+            continue
+        title = e.get("title", "") or ""
+        text = e.get("text", "") or ""
+        snippet = e.get("snippet", "") or ""
+        if rex.search(title) or rex.search(text) or rex.search(snippet):
+            results.append(e)
+            if len(results) >= limit:
+                break
+    return results
+
+
+class _GrepBlockExtractor(HTMLParser):
+    """从渲染正文中按块级元素抽出纯文本节点（不含 script/style）。"""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.nodes: list[str] = []
+        self._skip = 0
+        self._buffers: list[list[str]] = []
+
+    def handle_starttag(self, tag, attrs):
+        t = tag.lower()
+        if t in _GREP_SKIP_TAGS:
+            self._skip += 1
+            return
+        if self._skip:
+            return
+        if t in _GREP_BLOCK_TAGS:
+            self._buffers.append([])
+
+    def handle_endtag(self, tag):
+        t = tag.lower()
+        if self._skip:
+            if t in _GREP_SKIP_TAGS:
+                self._skip -= 1
+            return
+        if t in _GREP_BLOCK_TAGS and self._buffers:
+            buf = self._buffers.pop()
+            raw = "".join(buf)
+            text = _grep_normalize_text(raw)
+            if len(text) >= 2:
+                self.nodes.append(text[:_MAX_GREP_TEXT_LEN])
+
+    def handle_data(self, data):
+        if self._skip or not self._buffers:
+            return
+        self._buffers[-1].append(data)
+
+    def close(self) -> None:
+        super().close()
+        while self._buffers:
+            buf = self._buffers.pop()
+            text = _grep_normalize_text("".join(buf))
+            if len(text) >= 2:
+                self.nodes.append(text[:_MAX_GREP_TEXT_LEN])
+
+
+def _grep_normalize_text(s: str) -> str:
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _extract_grep_nodes(entries: list, path: str, body_html: str, doc_title: str) -> None:
+    """从单页渲染正文中追加 type=grep 的索引条目。"""
+    try:
+        parser = _GrepBlockExtractor()
+        parser.feed(body_html)
+        parser.close()
+    except Exception:
+        return
+    nodes = parser.nodes[:_MAX_GREP_NODES_PER_DOC]
+    base_title = (doc_title or Path(path).stem or "文档")[:120]
+    for node_text in nodes:
+        snip = node_text[:160] + ("…" if len(node_text) > 160 else "")
+        entries.append({
+            "type": "grep",
+            "title": base_title,
+            "path": path,
+            "text": node_text,
+            "snippet": snip,
+        })
 
 
 def build_index(
@@ -57,9 +182,13 @@ def build_index(
     for doc in documents:
         path = doc["path"]
         body = doc["body"]
+        if 'id="nm-panel-render"' in body:
+            body = extract_render_panel_inner_html(body)
+        title = doc.get("title") or ""
         _extract_chapters(entries, path, body)
         _extract_dtags(entries, path, body)
         _extract_index_terms(entries, path, body)
+        _extract_grep_nodes(entries, path, body, title)
 
     # Add label entries
     if ref_labels:

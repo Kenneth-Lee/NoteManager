@@ -221,6 +221,132 @@ class NoteManagerDaemon:
         self._startup_complete_event = threading.Event()
         self._tcp_server = None
         self._web_server = None
+        self._rebuild_job_lock = threading.Lock()
+        self._rebuild_jobs: dict[int, dict] = {}
+        self._rebuild_next_id = 1
+        self._rebuild_active_job_id: int | None = None
+
+    def _resolve_rebuild_targets(self, cmd: dict, dirs: list[str]) -> list[str]:
+        """解析要重建的监控目录列表（全部 / 按 --project / 按 directory）。"""
+        if not dirs:
+            return []
+        if cmd.get("directory"):
+            p = str(Path(cmd["directory"]).resolve())
+            if p not in dirs:
+                raise ValueError(f"不在监控列表中: {p}")
+            return [p]
+        proj = cmd.get("project")
+        if proj is not None and proj != "":
+            idx = self._resolve_project_index(proj, dirs)
+            if idx is None:
+                raise ValueError(f"无效的工程标识: {proj}")
+            return [dirs[idx]]
+        return list(dirs)
+
+    def _rebuild_worker(self, job_id: int, cmd: dict) -> None:
+        job = self._rebuild_jobs.get(job_id)
+        if not job:
+            return
+
+        def progress(msg: str) -> None:
+            with job["lock"]:
+                job["lines"].append(msg)
+
+        try:
+            with self._lock:
+                dirs = list(self._observers.keys())
+            targets = self._resolve_rebuild_targets(cmd, dirs)
+            if not targets:
+                raise ValueError("没有可重建的目录")
+            progress(f"开始重建，共 {len(targets)} 个工程")
+            for i, d in enumerate(targets):
+                progress(f"[{i + 1}/{len(targets)}] {Path(d).name} — {d}")
+                full_build(Path(d), progress=progress)
+                progress("  ✓ 工程完成")
+                self._notify_change(
+                    "build_complete",
+                    {"directory": str(Path(d).resolve())},
+                )
+            job["success"] = True
+        except Exception as e:
+            logger.exception("重建任务失败")
+            job["success"] = False
+            job["error"] = str(e)
+            with job["lock"]:
+                job["lines"].append(f"错误: {e}")
+        finally:
+            job["done"].set()
+            with self._rebuild_job_lock:
+                if self._rebuild_active_job_id == job_id:
+                    self._rebuild_active_job_id = None
+
+    def handle_rebuild(self, cmd: dict) -> dict:
+        """启动异步全量重建；CLI 用 rebuild_progress 轮询输出。"""
+        with self._lock:
+            dirs = list(self._observers.keys())
+        try:
+            targets = self._resolve_rebuild_targets(cmd, dirs)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        if not targets:
+            return {"ok": False, "error": "没有监控中的目录"}
+
+        with self._rebuild_job_lock:
+            for stale_id in [
+                jid for jid, j in self._rebuild_jobs.items() if j["done"].is_set()
+            ]:
+                self._rebuild_jobs.pop(stale_id, None)
+            if self._rebuild_active_job_id is not None:
+                cur = self._rebuild_jobs.get(self._rebuild_active_job_id)
+                if cur is not None and not cur["done"].is_set():
+                    return {"ok": False, "error": "已有重建任务进行中"}
+            job_id = self._rebuild_next_id
+            self._rebuild_next_id += 1
+            job = {
+                "lines": [],
+                "lock": threading.Lock(),
+                "done": threading.Event(),
+                "success": None,
+                "error": None,
+            }
+            self._rebuild_jobs[job_id] = job
+            self._rebuild_active_job_id = job_id
+
+        t = threading.Thread(
+            target=self._rebuild_worker,
+            args=(job_id, cmd),
+            daemon=True,
+        )
+        t.start()
+        return {"ok": True, "job_id": job_id}
+
+    def handle_rebuild_progress(self, cmd: dict) -> dict:
+        """拉取重建日志增量；全部消费且任务结束后移除 job。"""
+        job_id = cmd.get("job_id")
+        since = int(cmd.get("since", 0))
+        if job_id is None:
+            return {"ok": False, "error": "需要 job_id"}
+        with self._rebuild_job_lock:
+            job = self._rebuild_jobs.get(job_id)
+        if not job:
+            return {"ok": False, "error": "无效或已结束的 job_id"}
+        with job["lock"]:
+            lines = job["lines"]
+            new_lines = lines[since:]
+            total = len(lines)
+            done = job["done"].is_set()
+        resp = {
+            "ok": True,
+            "new_lines": new_lines,
+            "total_lines": total,
+            "done": done,
+            "success": job["success"] if done else None,
+            "error": job["error"] if done else None,
+        }
+        if done and since >= total:
+            with self._rebuild_job_lock:
+                self._rebuild_jobs.pop(job_id, None)
+        return resp
 
     def add_directory(self, directory: str) -> dict:
         """Add a directory to monitoring."""
@@ -349,13 +475,13 @@ class NoteManagerDaemon:
         if not query:
             return {"ok": False, "error": "需要搜索关键词"}
 
-        project = cmd.get("project")
         with self._lock:
             dirs = list(self._observers.keys())
 
         if not dirs:
             return {"ok": False, "error": "没有监控中的目录"}
 
+        project = cmd.get("project")
         idx = self._resolve_project_index(project, dirs)
         if idx is None:
             return {"ok": False, "error": f"无效的工程标识: {project}"}
@@ -520,6 +646,10 @@ class NoteManagerDaemon:
             return self.handle_default(cmd)
         elif action == "view":
             return self.handle_view(cmd)
+        elif action == "rebuild":
+            return self.handle_rebuild(cmd)
+        elif action == "rebuild_progress":
+            return self.handle_rebuild_progress(cmd)
         else:
             return {"ok": False, "error": f"未知命令: {action}"}
 

@@ -154,9 +154,9 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .nm-tabs {{ display: flex; align-items: center; justify-content: space-between;
            border-bottom: 1px solid #e0e0e0; background: #fafafa; padding: 0 20px; }}
 .nm-tabs-left {{ display: flex; align-items: center; gap: 0; }}
-.nm-global-btn {{ text-decoration: none; font-size: 12px; color: #1565c0; border: 1px solid #bbdefb;
+.nm-console-btn {{ text-decoration: none; font-size: 12px; color: #1565c0; border: 1px solid #bbdefb;
                   background: #e3f2fd; border-radius: 4px; padding: 4px 10px; }}
-.nm-global-btn:hover {{ background: #bbdefb; color: #0d47a1; }}
+.nm-console-btn:hover {{ background: #bbdefb; color: #0d47a1; }}
 .nm-tab {{ padding: 8px 16px; cursor: pointer; border: 1px solid transparent; border-bottom: none;
            background: none; font-size: 13px; color: #666; border-radius: 4px 4px 0 0; margin-top: 4px; }}
 .nm-tab:hover {{ color: #333; background: #f0f0f0; }}
@@ -181,6 +181,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .nm-type-label {{ background: #e3f2fd; color: #1565c0; }}
 .nm-type-index {{ background: #fff3e0; color: #e65100; }}
 .nm-type-dtag {{ background: #f3e5f5; color: #7b1fa2; }}
+.nm-type-grep {{ background: #eceff1; color: #37474f; }}
 /* Directory tree */
 .nm-tree {{ list-style: none; padding-left: 0; }}
 .nm-tree .nm-tree {{ padding-left: 20px; }}
@@ -207,8 +208,9 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 <li><code>label:关键词</code> — 仅搜索锚点标签</li>
 <li><code>index:关键词</code> — 仅搜索索引条目</li>
 <li><code>dtag:关键词</code> — 仅搜索文档标签</li>
+<li><code>grep:正则</code> — 在当前工程内全局搜索<strong>已渲染正文块</strong>（非源码）</li>
 </ul>
-<div style="margin-top:6px;color:#888;">支持正则表达式</div>
+<div style="margin-top:6px;color:#888;">支持正则；本页搜索即当前工程内全局搜索</div>
 </div>
 </div>
 <div id="nm-sidebar-toc" class="nm-sidebar-toc">{toc}</div>
@@ -222,7 +224,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 <button class="nm-tab" data-tab="source">源文件</button>
 <button class="nm-tab" data-tab="warnings">诊断</button>
 </div>
-<a class="nm-global-btn" href="/" title="返回全局控制台">全局</a>
+<a class="nm-console-btn" href="/" title="返回控制台">控制台</a>
 </div>
 <div class="nm-tab-panels">
 <div id="nm-panel-render" class="nm-tab-panel active">

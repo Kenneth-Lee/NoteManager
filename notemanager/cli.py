@@ -23,6 +23,9 @@ from notemanager.daemon import (
 from notemanager.protocol import (
     send_command, DEFAULT_PORT, DEFAULT_UNIX_SOCKET,
 )
+from notemanager.indexer import (
+    filter_search_documents,
+)
 
 
 def _ensure_daemon(port: int = DEFAULT_PORT, web_port: int = DEFAULT_WEB_PORT) -> bool:
@@ -308,48 +311,65 @@ def cmd_search(args):
         print("错误: 无法启动 Daemon")
         sys.exit(1)
 
-    idx = _resolve_project(args)
-    project_dir = Path(_resolve_project_dir(args))
     port = _get_daemon_port()
+    sock = _get_daemon_socket_path()
+    payload: dict = {"cmd": "search", "query": args.query, "project": _resolve_project(args)}
     try:
         resp = send_command(
-            {"cmd": "search", "query": args.query, "project": idx},
+            payload,
             port=port,
             timeout=5,
-            socket_path=_get_daemon_socket_path(),
+            socket_path=sock,
         )
     except ConnectionError:
         print("错误: 无法连接 Daemon")
         sys.exit(1)
 
-    if resp.get("ok"):
-        print(resp["message"])
-        index_file = project_dir / ".NoteManager" / "html" / "_index" / "search_index.json"
-        if not index_file.is_file():
-            print(f"未找到索引文件: {index_file}")
-            return
-        data = json.loads(index_file.read_text(encoding="utf-8"))
-        docs = data.get("documents", [])
-        results = _search_entries(docs, args.query)
-        paths = []
-        seen = set()
-        for item in results:
-            src = _resolve_source_from_result(project_dir, item.get("path", ""))
-            if src is None:
-                continue
-            full = str(src.resolve())
-            if full not in seen:
-                seen.add(full)
-                paths.append(full)
-        if not paths:
-            print("命令行结果: 无可映射源文件")
-            return
-        print("命令行结果（源文件绝对路径）:")
-        for p in paths:
-            print(p)
-    else:
+    if not resp.get("ok"):
         print(f"错误: {resp.get('error')}")
         sys.exit(1)
+
+    print(resp.get("message", ""))
+    try:
+        list_resp = send_command(
+            {"cmd": "list"},
+            port=port,
+            timeout=3,
+            socket_path=sock,
+        )
+    except ConnectionError:
+        print("错误: 无法获取工程列表")
+        sys.exit(1)
+    if not list_resp.get("ok"):
+        print(f"错误: {list_resp.get('error')}")
+        sys.exit(1)
+    dirs = list_resp["data"]["directories"]
+
+    project_dir = Path(dirs[payload["project"]])
+    index_file = project_dir / ".NoteManager" / "html" / "_index" / "search_index.json"
+    if not index_file.is_file():
+        print(f"未找到索引文件: {index_file}")
+        return
+    data = json.loads(index_file.read_text(encoding="utf-8"))
+    docs = data.get("documents", [])
+    results = filter_search_documents(docs, args.query, limit=200)
+
+    paths = []
+    seen = set()
+    for item in results:
+        src = _resolve_source_from_result(project_dir, item.get("path", ""))
+        if src is None:
+            continue
+        full = str(src.resolve())
+        if full not in seen:
+            seen.add(full)
+            paths.append(full)
+    if not paths:
+        print("命令行结果: 无可映射源文件")
+        return
+    print("命令行结果（源文件绝对路径）:")
+    for p in paths:
+        print(p)
 
 
 def cmd_default(args):
@@ -389,34 +409,6 @@ def _resolve_project_dir(args) -> str:
     return resp["data"]["directories"][idx]
 
 
-def _parse_query(query: str):
-    m = re.match(r"^(chapter|label|index|dtag):(.+)$", query, re.IGNORECASE)
-    if m:
-        return m.group(1).lower(), m.group(2)
-    return None, query
-
-
-def _search_entries(entries, query: str):
-    typ, core = _parse_query(query)
-    if not core:
-        return []
-    try:
-        rex = re.compile(core, re.IGNORECASE)
-    except re.error:
-        rex = re.compile(re.escape(core), re.IGNORECASE)
-    results = []
-    for e in entries:
-        if typ and e.get("type") != typ:
-            continue
-        title = e.get("title", "")
-        text = e.get("text", "")
-        if rex.search(title) or rex.search(text):
-            results.append(e)
-            if len(results) >= 200:
-                break
-    return results
-
-
 def _resolve_source_from_result(project_dir: Path, result_path: str) -> Path | None:
     html_rel = result_path.split("#", 1)[0]
     if not html_rel.endswith(".html"):
@@ -442,10 +434,10 @@ def cmd_searche(args):
     if not index_file.is_file():
         print(f"错误: 搜索索引不存在: {index_file}")
         sys.exit(1)
-
     data = json.loads(index_file.read_text(encoding="utf-8"))
     docs = data.get("documents", [])
-    results = _search_entries(docs, args.query)
+    results = filter_search_documents(docs, args.query, limit=500)
+
     if not results:
         print("没有搜索结果")
         return
@@ -468,7 +460,8 @@ def cmd_searche(args):
         print("编号越界")
         return
 
-    target = _resolve_source_from_result(project_dir, shown[idx].get("path", ""))
+    chosen = shown[idx]
+    target = _resolve_source_from_result(project_dir, chosen.get("path", ""))
     if target is None:
         print("该结果无法映射到源文件")
         return
@@ -502,6 +495,56 @@ def cmd_searche(args):
         if os.name == "nt":
             print("提示: VS Code 可设置 EDITOR=\"code --wait\"，或直接设为 code.cmd 的完整路径。")
         sys.exit(1)
+
+
+def cmd_rebuild(args):
+    """全量重建所有监控工程（HTML、索引、_static），阻塞至完成并打印进度。"""
+    if not _ensure_daemon():
+        print("错误: 无法启动 Daemon")
+        sys.exit(1)
+    port = _get_daemon_port()
+    sock = _get_daemon_socket_path()
+    payload: dict = {"cmd": "rebuild"}
+    if getattr(args, "project", None):
+        payload["project"] = args.project
+    try:
+        resp = send_command(payload, port=port, timeout=30, socket_path=sock)
+    except ConnectionError:
+        print("错误: 无法连接 Daemon")
+        sys.exit(1)
+    if not resp.get("ok"):
+        print(f"错误: {resp.get('error')}")
+        sys.exit(1)
+    job_id = resp.get("job_id")
+    if job_id is None:
+        print("错误: 未返回 job_id")
+        sys.exit(1)
+    since = 0
+    while True:
+        try:
+            pr = send_command(
+                {"cmd": "rebuild_progress", "job_id": job_id, "since": since},
+                port=port,
+                timeout=120,
+                socket_path=sock,
+            )
+        except ConnectionError:
+            print("错误: 轮询进度时断开连接")
+            sys.exit(1)
+        if not pr.get("ok"):
+            print(f"错误: {pr.get('error')}")
+            sys.exit(1)
+        for line in pr.get("new_lines") or []:
+            print(line, flush=True)
+        since = pr.get("total_lines", since)
+        if pr.get("done"):
+            if pr.get("success") is not True:
+                err = pr.get("error") or "重建失败"
+                print(f"错误: {err}", file=sys.stderr)
+                sys.exit(1)
+            print("重建全部完成。", flush=True)
+            break
+        time.sleep(0.15)
 
 
 def cmd_view(args):
@@ -552,11 +595,27 @@ def main():
 
     subparsers.add_parser("list", help="列出所有监控中的目录")
 
+    rebuild_p = subparsers.add_parser(
+        "rebuild",
+        help="强制全量重建（更新 HTML、索引、notemanager.js 等），等待完成并显示进度",
+    )
+    rebuild_p.add_argument(
+        "--project",
+        "-p",
+        help="仅重建指定工程（编号或目录名）；省略则重建全部监控目录",
+    )
+
     search_p = subparsers.add_parser("search", help="在 Web UI 中搜索并显示结果")
-    search_p.add_argument("query", help="搜索关键词 (支持正则和类型前缀如 chapter:xxx)")
+    search_p.add_argument(
+        "query",
+        help="搜索关键词（正则）；grep: 为全局正文块搜索，chapter:/label:/ 等仅当前工程",
+    )
     search_p.add_argument("--project", "-p", help="指定工程 (编号或目录名)")
     searche_p = subparsers.add_parser("searche", help="搜索并交互选择后进入目录或编辑")
-    searche_p.add_argument("query", help="搜索关键词 (支持正则和类型前缀如 chapter:xxx)")
+    searche_p.add_argument(
+        "query",
+        help="搜索关键词（正则）；grep: 为当前工程正文块全局搜索",
+    )
     searche_p.add_argument("--project", "-p", help="指定工程 (编号或目录名)")
     view_p = subparsers.add_parser("view", help="在 Web UI 查看指定 md/rst 文件")
     view_p.add_argument("file", help="要查看的 md/rst 文件路径")
@@ -573,6 +632,7 @@ def main():
         "add": cmd_add,
         "remove": cmd_remove,
         "list": cmd_list,
+        "rebuild": cmd_rebuild,
         "search": cmd_search,
         "searche": cmd_searche,
         "view": cmd_view,

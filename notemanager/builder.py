@@ -6,6 +6,7 @@ Provides both full-build and incremental single-file update capabilities.
 import json
 import logging
 import datetime
+from collections.abc import Callable
 from pathlib import Path
 
 from notemanager.scanner import scan_directory, FileInfo
@@ -20,13 +21,23 @@ from notemanager.indexer import extract_dtags_from_sources
 logger = logging.getLogger(__name__)
 
 
-def full_build(project_root: str | Path) -> Path:
+def full_build(
+    project_root: str | Path,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> Path:
     """Full build: scan, render all files, rebuild index.
 
     Returns the .NoteManager directory path.
     """
+    def p(msg: str) -> None:
+        if progress:
+            progress(msg)
+
     project_root = Path(project_root).resolve()
     files = scan_directory(project_root)
+    n = len(files)
+    p(f"  已扫描 {n} 个源文件")
 
     nm_dir = project_root / ".NoteManager"
     html_dir = nm_dir / "html"
@@ -46,8 +57,11 @@ def full_build(project_root: str | Path) -> Path:
     rendered = {}
     for fi in files:
         rendered[fi.rel_path] = _render_file(fi)
+    if n:
+        p(f"  语法转换完成 ({n} 个文件)")
 
     # Extract labels
+    p("  解析标签、交叉引用与 index 指令…")
     ref_labels = extract_labels(project_root, files)
 
     # Extract .. index:: directives from RST sources
@@ -56,17 +70,24 @@ def full_build(project_root: str | Path) -> Path:
     # Second pass: resolve references and write HTML
     documents = []
     all_dtags = {}  # rel_path -> list of tag strings
-    for fi in files:
+    last_report = 0
+    step = max(1, n // 15) if n else 1
+    for j, fi in enumerate(files):
         r = rendered[fi.rel_path]
         doc = _write_html(html_dir, fi, r, ref_labels)
         documents.append(doc)
         if r.get("dtags"):
             all_dtags[str(fi.rel_path)] = r["dtags"]
+        k = j + 1
+        if n and (k == n or k <= 2 or k - last_report >= step):
+            p(f"  生成 HTML {k}/{n} {fi.rel_path}")
+            last_report = k
 
     # Build dtag index (tag -> list of html paths)
     dtag_index = _build_dtag_index(all_dtags)
 
     # Build search index (includes labels and index directives)
+    p("  构建搜索索引…")
     index_count = build_index(documents, index_dir, ref_labels, rst_index_dirs, all_dtags)
 
     # Write ref_labels
@@ -82,12 +103,14 @@ def full_build(project_root: str | Path) -> Path:
     )
 
     # Copy static assets
+    p("  写入 _static（notemanager.js / css 等）…")
     _copy_static_assets(static_dir)
 
     # Copy project assets (images, etc.) to html directory
     _copy_project_assets(project_root, html_dir)
 
     # Generate landing page
+    p("  生成首页与状态…")
     _generate_landing_page(html_dir, documents)
 
     # Write status
@@ -496,6 +519,28 @@ img { max-width: 100%; }
 _DEFAULT_JS = """\
 /* NoteManager sidebar search */
 (function() {
+    (function removeLegacyFulltextUI() {
+        var g = document.getElementById('nm-search-grep');
+        if (g) {
+            var lb = g.closest('.nm-search-grep-label') || g.closest('label');
+            if (lb) lb.remove();
+            else g.remove();
+        }
+        var prog = document.getElementById('nm-grep-progress');
+        if (prog) prog.remove();
+        var oldRow = document.querySelector('.nm-search-row');
+        var inp = document.getElementById('nm-search');
+        if (oldRow && inp && oldRow.contains(inp)) {
+            var par = oldRow.parentNode;
+            var btn = oldRow.querySelector('.nm-search-help');
+            par.insertBefore(inp, oldRow);
+            if (btn) par.insertBefore(btn, oldRow);
+            oldRow.remove();
+        } else if (oldRow) {
+            oldRow.remove();
+        }
+    })();
+
     var searchInput = document.getElementById('nm-search');
     if (!searchInput) return;
 
@@ -503,6 +548,7 @@ _DEFAULT_JS = """\
     var sidebarResults = document.getElementById('nm-sidebar-search-results');
 
     var searchData = null;
+    var searchDataPrefix = null;
     var debounceTimer = null;
 
     var prefix = window.NM_PREFIX || '';
@@ -511,25 +557,57 @@ _DEFAULT_JS = """\
         chapter: '章节',
         label: '标签',
         index: '索引',
-        dtag: '标记'
+        dtag: '标记',
+        grep: '渲染块'
     };
 
+    function escapeHtml(s) {
+        if (!s) return '';
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function escAttr(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+    }
+
+    function showIndexLoadError(err) {
+        console.error(err || 'search index load failed');
+        if (sidebarToc) sidebarToc.style.display = 'none';
+        if (sidebarResults) {
+            sidebarResults.innerHTML = '<div class="nm-no-results">无法加载搜索索引（请确认已构建并执行 nmr rebuild）</div>';
+            sidebarResults.style.display = 'block';
+        }
+    }
+
     function loadIndex() {
-        if (searchData) return Promise.resolve(searchData);
+        if (searchData && searchDataPrefix === prefix) {
+            return Promise.resolve(searchData);
+        }
         return fetch(prefix + '_index/search_index.json')
-            .then(function(r) { return r.json(); })
-            .then(function(d) { searchData = d; return d; });
+            .then(function(r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function(d) {
+                searchData = d;
+                searchDataPrefix = prefix;
+                return d;
+            });
     }
 
     function parseQuery(query) {
-        var match = query.match(/^(chapter|label|index|dtag):(.+)$/i);
-        if (match) return { type: match[1].toLowerCase(), query: match[2] };
-        return { type: null, query: query };
+        var raw = String(query || '').trim();
+        var match = raw.match(/^(chapter|label|index|dtag|grep):\\s*(.*)$/i);
+        if (match) {
+            var core = (match[2] || '').trim();
+            return { type: match[1].toLowerCase(), query: core };
+        }
+        return { type: null, query: raw };
     }
 
     function regexSearch(query) {
         var parsed = parseQuery(query);
-        if (!searchData || !parsed.query) return [];
+        if (!searchData || !searchData.documents || !parsed.query) return [];
         var re;
         try {
             re = new RegExp(parsed.query, 'i');
@@ -537,10 +615,13 @@ _DEFAULT_JS = """\
             re = new RegExp(parsed.query.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'), 'i');
         }
         var results = [];
-        for (var i = 0; i < searchData.documents.length; i++) {
-            var doc = searchData.documents[i];
+        var docs = searchData.documents;
+        for (var i = 0; i < docs.length; i++) {
+            var doc = docs[i];
             if (parsed.type && doc.type !== parsed.type) continue;
-            if (re.test(doc.title) || re.test(doc.text)) {
+            var sn = doc.snippet || '';
+            re.lastIndex = 0;
+            if (re.test(doc.title || '') || re.test(doc.text || '') || re.test(sn)) {
                 results.push(doc);
                 if (results.length >= 200) break;
             }
@@ -565,12 +646,14 @@ _DEFAULT_JS = """\
             var doc = results[i];
             var snippet = doc.snippet || '';
             try {
-                var re = new RegExp('(' + parsedQuery + ')', 'gi');
-                snippet = snippet.replace(re, '<mark>$1</mark>');
-            } catch(e) {}
-            html += '<a class="nm-result-item" href="' + docHref(doc.path) + '">' +
-                '<div class="nm-result-title">' + typeBadge(doc.type) + doc.title + '</div>' +
-                '<div class="nm-result-path">' + doc.path + '</div>' +
+                var rx = new RegExp('(' + parsedQuery + ')', 'gi');
+                snippet = escapeHtml(snippet).replace(rx, '<mark>$1</mark>');
+            } catch(e) {
+                snippet = escapeHtml(snippet);
+            }
+            html += '<a class="nm-result-item" href="' + escAttr(docHref(doc.path)) + '">' +
+                '<div class="nm-result-title">' + typeBadge(doc.type) + escapeHtml(doc.title || '') + '</div>' +
+                '<div class="nm-result-path">' + escapeHtml(doc.path || '') + '</div>' +
                 '<div class="nm-result-snippet">' + snippet + '</div>' +
                 '</a>';
         }
@@ -604,12 +687,11 @@ _DEFAULT_JS = """\
         }
         debounceTimer = setTimeout(function() {
             loadIndex().then(function() {
-                showSearchResults(query);
-            });
+                showSearchResults(searchInput.value.trim());
+            }).catch(showIndexLoadError);
         }, 200);
     });
 
-    // Handle URL query parameters
     (function() {
         var params = new URLSearchParams(window.location.search);
         var q = params.get('q');
@@ -617,10 +699,9 @@ _DEFAULT_JS = """\
             searchInput.value = q;
             loadIndex().then(function() {
                 showSearchResults(q);
-            });
+            }).catch(showIndexLoadError);
         }
     })();
-    // Temporary single-file (/temp/*): no project index; Home goes back to previous page.
     (function() {
         var p = window.location.pathname || '';
         if (p.indexOf('/temp/') === 0) {
@@ -633,7 +714,6 @@ _DEFAULT_JS = """\
             }
         }
     })();
-    // Dtag badge click: search for that tag
     document.querySelectorAll('.nm-dtag-badge').forEach(function(badge) {
         badge.addEventListener('click', function() {
             var tag = this.getAttribute('data-dtag');
@@ -641,11 +721,10 @@ _DEFAULT_JS = """\
                 searchInput.value = 'dtag:' + tag;
                 loadIndex().then(function() {
                     showSearchResults('dtag:' + tag);
-                });
+                }).catch(showIndexLoadError);
             }
         });
     });
-    // SSE: listen for CLI-triggered searches
     (function() {
         var evtSource;
         try { evtSource = new EventSource('/api/events'); } catch(e) { return; }
@@ -664,9 +743,7 @@ _DEFAULT_JS = """\
             clearTimeout(debounceTimer);
             loadIndex().then(function() {
                 showSearchResults(query);
-            }).catch(function(err) {
-                console.error('CLI search failed:', err);
-            });
+            }).catch(showIndexLoadError);
             window.focus();
         });
         evtSource.addEventListener('cli_view', function(e) {

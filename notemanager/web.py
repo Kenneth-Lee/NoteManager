@@ -13,7 +13,6 @@ from pathlib import Path
 import threading
 import time
 
-
 class EventBroadcaster:
     """Manages SSE client connections and broadcasts events."""
 
@@ -460,6 +459,15 @@ function showToast(msg, duration) {{
     t.textContent = msg;
     t.style.display = 'block';
     setTimeout(function() {{ t.style.display = 'none'; }}, duration);
+}}
+
+function escHtml(s) {{
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}}
+
+function escAttr(s) {{
+    return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
 }}
 
 function addProject() {{
