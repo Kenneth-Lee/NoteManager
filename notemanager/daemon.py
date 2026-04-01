@@ -14,7 +14,10 @@ import datetime
 import hashlib
 from pathlib import Path
 
-from notemanager.protocol import DEFAULT_HOST, DEFAULT_PORT, recv_command, send_response
+from notemanager.protocol import (
+    DEFAULT_HOST, DEFAULT_PORT, DEFAULT_UNIX_SOCKET, recv_command, send_response,
+    use_unix_socket,
+)
 from notemanager.builder import full_build
 from notemanager.watcher import start_watcher
 from notemanager.web import notify_event
@@ -48,7 +51,8 @@ def _save_config(config: dict) -> None:
     )
 
 
-def _write_daemon_info(pid: int, port: int, web_port: int) -> None:
+def _write_daemon_info(pid: int, port: int, web_port: int,
+                       transport: str, socket_path: str = "") -> None:
     """Write daemon runtime info."""
     HOME_NM_DIR.mkdir(parents=True, exist_ok=True)
     DAEMON_FILE.write_text(
@@ -56,6 +60,8 @@ def _write_daemon_info(pid: int, port: int, web_port: int) -> None:
             "pid": pid,
             "port": port,
             "web_port": web_port,
+            "transport": transport,
+            "socket_path": socket_path,
             "started": datetime.datetime.now().isoformat(),
         }, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -66,6 +72,11 @@ def _remove_daemon_info() -> None:
     """Remove daemon runtime info on shutdown."""
     if DAEMON_FILE.exists():
         DAEMON_FILE.unlink()
+    if use_unix_socket():
+        try:
+            DEFAULT_UNIX_SOCKET.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def is_daemon_running() -> int | None:
@@ -109,8 +120,13 @@ class NoteManagerDaemon:
     def __init__(self, port: int = DEFAULT_PORT, web_port: int = DEFAULT_WEB_PORT):
         self.port = port
         self.web_port = web_port
+        self.transport = "unix" if use_unix_socket() else "tcp"
+        self.socket_path = str(DEFAULT_UNIX_SOCKET) if use_unix_socket() else ""
         self.config = _load_config()
         self.config["port"] = port
+        self.config["transport"] = self.transport
+        if self.socket_path:
+            self.config["socket_path"] = self.socket_path
         self._observers = {}  # directory -> Observer
         self._lock = threading.Lock()
         self._shutdown = threading.Event()
@@ -227,6 +243,8 @@ class NoteManagerDaemon:
             "data": {
                 "pid": os.getpid(),
                 "port": self.port,
+                "transport": self.transport,
+                "socket_path": self.socket_path,
                 "web_port": self.web_port,
                 "directories": dirs,
                 "directory_count": len(dirs),
@@ -411,7 +429,9 @@ class NoteManagerDaemon:
 
     def run(self) -> None:
         """Run the daemon main loop."""
-        _write_daemon_info(os.getpid(), self.port, self.web_port)
+        _write_daemon_info(
+            os.getpid(), self.port, self.web_port, self.transport, self.socket_path
+        )
 
         # Start TCP server for CLI
         daemon_ref = self
@@ -425,18 +445,31 @@ class NoteManagerDaemon:
                 except (ConnectionError, json.JSONDecodeError) as e:
                     logger.error("处理请求出错: %s", e)
 
-        class ReuseAddrTCPServer(socketserver.ThreadingTCPServer):
-            allow_reuse_address = True
+        if use_unix_socket():
+            class ReuseUnixServer(socketserver.ThreadingUnixStreamServer):
+                daemon_threads = True
 
-        self._tcp_server = ReuseAddrTCPServer(
-            (DEFAULT_HOST, self.port), TCPHandler,
-        )
+            sock_path = Path(self.socket_path)
+            sock_path.parent.mkdir(parents=True, exist_ok=True)
+            if sock_path.exists():
+                sock_path.unlink()
+            self._tcp_server = ReuseUnixServer(self.socket_path, TCPHandler)
+        else:
+            class ReuseAddrTCPServer(socketserver.ThreadingTCPServer):
+                allow_reuse_address = True
+
+            self._tcp_server = ReuseAddrTCPServer(
+                (DEFAULT_HOST, self.port), TCPHandler,
+            )
         self._tcp_server.daemon_threads = True
         tcp_thread = threading.Thread(target=self._tcp_server.serve_forever)
         tcp_thread.daemon = True
         tcp_thread.start()
 
-        logger.info("TCP 已启动 %s:%d", DEFAULT_HOST, self.port)
+        if use_unix_socket():
+            logger.info("Unix Socket 已启动 %s", self.socket_path)
+        else:
+            logger.info("TCP 已启动 %s:%d", DEFAULT_HOST, self.port)
 
         # Start HTTP server for web UI
         from notemanager.web import start_web_server
@@ -468,6 +501,7 @@ class NoteManagerDaemon:
         # Cleanup
         logger.info("正在关闭...")
         self._tcp_server.shutdown()
+        self._tcp_server.server_close()
         self._web_server.shutdown()
         with self._lock:
             for observer in self._observers.values():

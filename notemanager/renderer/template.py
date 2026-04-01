@@ -151,12 +151,6 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .section-number {{ color: #666; margin-right: 0.5em; }}
 /* Main content area with tabs */
 .nm-main {{ margin-left: 280px; min-height: 100vh; display: flex; flex-direction: column; }}
-.nm-global-anchor {{
-    position: fixed; top: 10px; right: 12px; z-index: 120;
-    background: #0066cc; color: #fff; text-decoration: none;
-    font-size: 12px; padding: 4px 10px; border-radius: 12px;
-}}
-.nm-global-anchor:hover {{ background: #0052a3; }}
 .nm-tabs {{ display: flex; border-bottom: 1px solid #e0e0e0; background: #fafafa; padding: 0 20px; }}
 .nm-tab {{ padding: 8px 16px; cursor: pointer; border: 1px solid transparent; border-bottom: none;
            background: none; font-size: 13px; color: #666; border-radius: 4px 4px 0 0; margin-top: 4px; }}
@@ -196,7 +190,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 </head>
 <body>
 <div class="nm-sidebar">
-<div class="nm-sidebar-home"><a id="nm-home-link" href="{prefix}index.html">Home</a></div>
+<div class="nm-sidebar-home"><a href="{prefix}index.html">Home</a></div>
 <div class="nm-sidebar-search">
 <input type="text" id="nm-search" placeholder="搜索...">
 <button class="nm-search-help" onclick="nmToggleHelp()" title="搜索语法帮助">?</button>
@@ -217,7 +211,6 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 {dtag_badges}
 </div>
 <div class="nm-main">
-<a id="nm-global-anchor" class="nm-global-anchor" href="/" style="display:none;">全局</a>
 <div class="nm-tabs">
 <button class="nm-tab active" data-tab="render">渲染</button>
 <button class="nm-tab" data-tab="source">源文件</button>

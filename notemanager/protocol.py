@@ -1,18 +1,26 @@
-"""TCP communication protocol for NoteManager daemon.
+"""IPC protocol for NoteManager daemon.
 
 Protocol: 4-byte big-endian length header + JSON body.
 """
 
 import json
+import os
 import socket
 import struct
+from pathlib import Path
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 19832
+DEFAULT_UNIX_SOCKET = Path.home() / ".NoteManager" / "daemon.sock"
+
+
+def use_unix_socket() -> bool:
+    """Use Unix domain socket on non-Windows systems."""
+    return os.name != "nt"
 
 
 def send_command(cmd: dict, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
-                 timeout: float = 30.0) -> dict:
+                 timeout: float = 30.0, socket_path: str | None = None) -> dict:
     """Send a command to the daemon and return the response.
 
     Args:
@@ -26,6 +34,18 @@ def send_command(cmd: dict, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     """
     body = json.dumps(cmd, ensure_ascii=False).encode("utf-8")
     header = struct.pack(">I", len(body))
+
+    if use_unix_socket():
+        target = socket_path or str(DEFAULT_UNIX_SOCKET)
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+                sock.settimeout(timeout)
+                sock.connect(target)
+                sock.sendall(header + body)
+                return recv_response(sock)
+        except OSError:
+            # Backward compatibility: old daemon may still use TCP.
+            pass
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(timeout)

@@ -613,15 +613,17 @@ _DEFAULT_JS = """\
             });
         }
     })();
-    // Daemon-served pages (/p/*, /temp/*): show global anchor and fix Home link.
+    // Temporary single-file (/temp/*): no project index; Home goes back to previous page.
     (function() {
-        var anchor = document.getElementById('nm-global-anchor');
-        var home = document.getElementById('nm-home-link');
         var p = window.location.pathname || '';
-        var daemonPage = (p.indexOf('/p/') === 0 || p.indexOf('/temp/') === 0);
-        if (daemonPage) {
-            if (anchor) anchor.style.display = 'inline-block';
-            if (home) home.setAttribute('href', '/');
+        if (p.indexOf('/temp/') === 0) {
+            var h = document.querySelector('.nm-sidebar-home a');
+            if (h) {
+                h.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    window.history.back();
+                });
+            }
         }
     })();
     // Dtag badge click: search for that tag

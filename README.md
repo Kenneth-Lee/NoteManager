@@ -80,8 +80,9 @@ webui总是可以发出全局的命令，也可以随时接受nmr后台发来的
 变化，不断产生新的索引，最后用户单独打开那个目录，随便打开一个文件，都可以查找
 其他文档。
 
-所以，你通过nmrd的webui看到的是一个管理界面，在这个管理界面上，当你具体查看某个
-项目，或者进入某个项目的界面，它通过内嵌的窗口显示那个项目的信息。
+所以，你通过nmrd的webui看到的是一个管理界面；当你查看某个项目时，会进入项目页面。
+侧边栏的 Home 指向该项目生成站点的主页（`index.html`）。若从命令行打开未纳入管理的单
+文件临时预览（`/temp/...`），Home 会退回浏览器上一页，便于回到刚才浏览的项目页面。
 
 整个NoteManager的目的是快速定位我们要的笔记，我们从命令行和webui上，都提供这种
 能力：我们在每个页面上都提供查找对话框，你输入部分关键字或者正则表达式，都可以
@@ -112,11 +113,23 @@ searche命令做查找，这个命令的结果和search一样，但你可以选�
 
 ## 安装
 
+### 方式一：正式安装（推荐）
+
+如果你已经把这个项目发布到 PyPI（或私有索引）：
+
+```bash
+pip install notemanager
+```
+
+### 方式二：本地开发安装（editable）
+
+在源码目录下：
+
 ```bash
 pip install -e .
 ```
 
-依赖：Python >= 3.10，自动安装 docutils、Markdown、pygments、watchdog。
+依赖：Python >= 3.10，自动安装 `docutils`、`Markdown`、`pygments`、`watchdog`。
 
 ## 使用
 
@@ -124,6 +137,8 @@ pip install -e .
 
 ```bash
 notemanager start
+# 或
+nmr start
 ```
 
 Daemon 启动后自动开启 Web 控制面板，默认地址：http://localhost:19833
@@ -132,6 +147,8 @@ Daemon 启动后自动开启 Web 控制面板，默认地址：http://localhost:
 
 ```bash
 notemanager add /path/to/your/notes
+# 或
+nmr add /path/to/your/notes
 ```
 
 添加后自动执行首次构建并开始监控文件变化。
@@ -139,11 +156,35 @@ notemanager add /path/to/your/notes
 ### 其他命令
 
 ```bash
-notemanager status          # 查看 daemon 状态和所有项目信息
-notemanager list            # 列出所有监控中的目录
-notemanager remove <目录>   # 停止监控并删除生成的文件
-notemanager stop            # 停止 daemon
+nmr status                  # 查看 daemon 状态和所有项目信息
+nmr list                    # 列出所有监控中的目录
+nmr remove <目录>           # 停止监控并删除生成的文件
+nmr default [工程]          # 设置/查看默认工程
+nmr stop                    # 停止 daemon
 ```
+
+### 搜索、编辑与联动
+
+```bash
+nmr search <关键词> [-p 工程]
+```
+
+- 将搜索请求推送到 WebUI（自动跳到目标项目并显示结果）
+- 同时在命令行输出所有匹配结果对应的源文件绝对路径，便于复制后自行 `cd`
+
+```bash
+nmr searche <关键词> [-p 工程]
+```
+
+- 交互式选择搜索结果
+- 输入数字后直接用 `$EDITOR` 打开对应源文件（例如 `export EDITOR=vim` 或 `export EDITOR="code -w"`）
+
+```bash
+nmr view <文件路径.md|.rst>
+```
+
+- 若文件属于已管理项目：跳转到该文件对应的项目 HTML 页面
+- 若文件未纳入管理：临时渲染单文件页面（`/temp/...`）并跳转显示
 
 ### Web 控制面板
 
@@ -152,7 +193,8 @@ notemanager stop            # 停止 daemon
 - 查看所有监控目录及其状态
 - 添加/移除目录
 - 手动触发重建
-- 直接浏览各项目的 HTML 输出
+- 进入项目页面浏览 HTML 输出（侧边栏 Home 回到该项目站点主页）
+- 需要回到管理界面时，在浏览器地址栏打开 http://localhost:19833/ 即可
 
 ### 可移植性
 

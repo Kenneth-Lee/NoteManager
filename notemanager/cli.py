@@ -14,7 +14,9 @@ from notemanager.daemon import (
     is_daemon_running, NoteManagerDaemon, DAEMON_FILE,
     get_daemon_web_port, DEFAULT_WEB_PORT,
 )
-from notemanager.protocol import send_command, DEFAULT_PORT
+from notemanager.protocol import (
+    send_command, DEFAULT_PORT, DEFAULT_UNIX_SOCKET,
+)
 
 
 def _ensure_daemon(port: int = DEFAULT_PORT, web_port: int = DEFAULT_WEB_PORT) -> bool:
@@ -30,7 +32,12 @@ def _ensure_daemon(port: int = DEFAULT_PORT, web_port: int = DEFAULT_WEB_PORT) -
         time.sleep(0.5)
         if is_daemon_running():
             try:
-                send_command({"cmd": "status"}, port=port, timeout=2)
+                send_command(
+                    {"cmd": "status"},
+                    port=port,
+                    timeout=2,
+                    socket_path=_get_daemon_socket_path(),
+                )
                 return True
             except ConnectionError:
                 continue
@@ -45,6 +52,16 @@ def _get_daemon_port() -> int:
         except (json.JSONDecodeError, KeyError):
             pass
     return DEFAULT_PORT
+
+
+def _get_daemon_socket_path() -> str:
+    if DAEMON_FILE.exists():
+        try:
+            info = json.loads(DAEMON_FILE.read_text(encoding="utf-8"))
+            return info.get("socket_path", str(DEFAULT_UNIX_SOCKET))
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return str(DEFAULT_UNIX_SOCKET)
 
 
 def cmd_start(args):
@@ -66,7 +83,12 @@ def cmd_stop(args):
         return
     port = _get_daemon_port()
     try:
-        resp = send_command({"cmd": "stop"}, port=port, timeout=3)
+        resp = send_command(
+            {"cmd": "stop"},
+            port=port,
+            timeout=3,
+            socket_path=_get_daemon_socket_path(),
+        )
         print(resp.get("message", "已发送停止命令"))
     except ConnectionError:
         print("无法连接 Daemon，强制清理")
@@ -81,13 +103,21 @@ def cmd_status(args):
         return
     port = _get_daemon_port()
     try:
-        resp = send_command({"cmd": "status"}, port=port, timeout=3)
+        resp = send_command(
+            {"cmd": "status"},
+            port=port,
+            timeout=3,
+            socket_path=_get_daemon_socket_path(),
+        )
         if not resp.get("ok"):
             print(f"错误: {resp.get('error')}")
             return
         data = resp["data"]
         print(f"Daemon PID: {data['pid']}")
-        print(f"监听端口: {data['port']}")
+        if data.get("transport") == "unix":
+            print(f"监听方式: unix ({data.get('socket_path')})")
+        else:
+            print(f"监听端口: {data['port']}")
         print(f"Web UI: http://localhost:{data['web_port']}")
         print(f"监控目录数: {data['directory_count']}")
         default = data.get("default_project")
@@ -121,7 +151,11 @@ def cmd_add(args):
         print("错误: 无法启动 Daemon")
         sys.exit(1)
     try:
-        resp = send_command({"cmd": "add", "directory": directory}, port=port)
+        resp = send_command(
+            {"cmd": "add", "directory": directory},
+            port=port,
+            socket_path=_get_daemon_socket_path(),
+        )
         if resp.get("ok"):
             print(resp["message"])
             web_port = get_daemon_web_port()
@@ -141,7 +175,12 @@ def cmd_remove(args):
         sys.exit(1)
     port = _get_daemon_port()
     try:
-        resp = send_command({"cmd": "remove", "directory": directory}, port=port, timeout=5)
+        resp = send_command(
+            {"cmd": "remove", "directory": directory},
+            port=port,
+            timeout=5,
+            socket_path=_get_daemon_socket_path(),
+        )
         if resp.get("ok"):
             print(resp["message"])
         else:
@@ -157,7 +196,12 @@ def cmd_list(args):
         return
     port = _get_daemon_port()
     try:
-        resp = send_command({"cmd": "list"}, port=port, timeout=3)
+        resp = send_command(
+            {"cmd": "list"},
+            port=port,
+            timeout=3,
+            socket_path=_get_daemon_socket_path(),
+        )
         if not resp.get("ok"):
             print(f"错误: {resp.get('error')}")
             return
@@ -183,7 +227,12 @@ def _resolve_project(args):
     """Resolve --project flag to a project index. Returns index or exits."""
     port = _get_daemon_port()
     try:
-        resp = send_command({"cmd": "list"}, port=port, timeout=3)
+        resp = send_command(
+            {"cmd": "list"},
+            port=port,
+            timeout=3,
+            socket_path=_get_daemon_socket_path(),
+        )
     except ConnectionError:
         print("错误: 无法连接 Daemon")
         sys.exit(1)
@@ -237,6 +286,7 @@ def cmd_search(args):
             {"cmd": "search", "query": args.query, "project": idx},
             port=port,
             timeout=5,
+            socket_path=_get_daemon_socket_path(),
         )
     except ConnectionError:
         print("错误: 无法连接 Daemon")
@@ -280,8 +330,12 @@ def cmd_default(args):
         sys.exit(1)
     port = _get_daemon_port()
     try:
-        resp = send_command({"cmd": "default", "project": args.project or ""},
-                            port=port, timeout=3)
+        resp = send_command(
+            {"cmd": "default", "project": args.project or ""},
+            port=port,
+            timeout=3,
+            socket_path=_get_daemon_socket_path(),
+        )
     except ConnectionError:
         print("错误: 无法连接 Daemon")
         sys.exit(1)
@@ -296,7 +350,12 @@ def cmd_default(args):
 def _resolve_project_dir(args) -> str:
     idx = _resolve_project(args)
     port = _get_daemon_port()
-    resp = send_command({"cmd": "list"}, port=port, timeout=3)
+    resp = send_command(
+        {"cmd": "list"},
+        port=port,
+        timeout=3,
+        socket_path=_get_daemon_socket_path(),
+    )
     return resp["data"]["directories"][idx]
 
 
@@ -400,7 +459,12 @@ def cmd_view(args):
     src = str(Path(args.file).expanduser().resolve())
     port = _get_daemon_port()
     try:
-        resp = send_command({"cmd": "view", "file": src}, port=port, timeout=8)
+        resp = send_command(
+            {"cmd": "view", "file": src},
+            port=port,
+            timeout=8,
+            socket_path=_get_daemon_socket_path(),
+        )
     except ConnectionError:
         print("错误: 无法连接 Daemon")
         sys.exit(1)
