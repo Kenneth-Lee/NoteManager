@@ -66,7 +66,7 @@ def full_build(project_root: str | Path) -> Path:
     dtag_index = _build_dtag_index(all_dtags)
 
     # Build search index (includes labels and index directives)
-    build_index(documents, index_dir, ref_labels, rst_index_dirs, all_dtags)
+    index_count = build_index(documents, index_dir, ref_labels, rst_index_dirs, all_dtags)
 
     # Write ref_labels
     (index_dir / "ref_labels.json").write_text(
@@ -90,7 +90,7 @@ def full_build(project_root: str | Path) -> Path:
     _generate_landing_page(html_dir, documents)
 
     # Write status
-    _write_status(nm_dir, len(files), len(ref_labels))
+    _write_status(nm_dir, len(files), len(ref_labels), index_count)
 
     return nm_dir
 
@@ -164,7 +164,7 @@ def update_file(project_root: str | Path, file_path: str | Path) -> None:
             })
 
     index_dir.mkdir(parents=True, exist_ok=True)
-    build_index(documents, index_dir, ref_labels, rst_index_dirs, dtags_per_doc)
+    index_count = build_index(documents, index_dir, ref_labels, rst_index_dirs, dtags_per_doc)
 
     # Write dtag index
     dtag_index = _build_dtag_index(dtags_per_doc)
@@ -183,7 +183,7 @@ def update_file(project_root: str | Path, file_path: str | Path) -> None:
     _generate_landing_page(html_dir, documents)
 
     # Update status
-    _write_status(nm_dir, len(files), len(ref_labels))
+    _write_status(nm_dir, len(files), len(ref_labels), index_count)
 
     logger.info("已更新: %s", rel_path)
 
@@ -225,7 +225,7 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
             })
 
     index_dir.mkdir(parents=True, exist_ok=True)
-    build_index(documents, index_dir, ref_labels, rst_index_dirs, dtags_per_doc)
+    index_count = build_index(documents, index_dir, ref_labels, rst_index_dirs, dtags_per_doc)
 
     (index_dir / "ref_labels.json").write_text(
         json.dumps(ref_labels, ensure_ascii=False, indent=2),
@@ -233,7 +233,7 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
     )
 
     _generate_landing_page(html_dir, documents)
-    _write_status(nm_dir, len(files), len(ref_labels))
+    _write_status(nm_dir, len(files), len(ref_labels), index_count)
 
 
 def _render_file(fi: FileInfo) -> dict:
@@ -406,12 +406,13 @@ def _render_tree(node, depth):
     return "\n".join(parts)
 
 
-def _write_status(nm_dir, file_count, label_count):
+def _write_status(nm_dir, file_count, label_count, index_count=0):
     """Write build status file."""
     status = {
         "last_build": datetime.datetime.now().isoformat(),
         "file_count": file_count,
         "label_count": label_count,
+        "index_count": index_count,
     }
     (nm_dir / "status.json").write_text(
         json.dumps(status, ensure_ascii=False, indent=2),
@@ -601,6 +602,26 @@ _DEFAULT_JS = """\
         }, 200);
     });
 
+    // Handle URL query parameters
+    (function() {
+        var params = new URLSearchParams(window.location.search);
+        var q = params.get('q');
+        if (q) {
+            searchInput.value = q;
+            loadIndex().then(function() {
+                showSearchResults(q);
+            });
+        }
+    })();
+    // Show "global" anchor only when served by daemon /p/* route.
+    (function() {
+        var anchor = document.getElementById('nm-global-anchor');
+        if (!anchor) return;
+        var p = window.location.pathname || '';
+        if (p.indexOf('/p/') === 0) {
+            anchor.style.display = 'inline-block';
+        }
+    })();
     // Dtag badge click: search for that tag
     document.querySelectorAll('.nm-dtag-badge').forEach(function(badge) {
         badge.addEventListener('click', function() {
@@ -613,5 +634,30 @@ _DEFAULT_JS = """\
             }
         });
     });
+    // SSE: listen for CLI-triggered searches
+    (function() {
+        var evtSource;
+        try { evtSource = new EventSource('/api/events'); } catch(e) { return; }
+        evtSource.addEventListener('cli_search', function(e) {
+            var data = JSON.parse(e.data);
+            var query = data.query || '';
+            if (!query) return;
+            var parts = window.location.pathname.split('/');
+            if (parts.length > 2 && parts[1] === 'p') {
+                if (data.project !== undefined && parseInt(parts[2]) !== data.project) {
+                    window.location.href = '/p/' + data.project + '/?q=' + encodeURIComponent(query);
+                    return;
+                }
+            }
+            searchInput.value = query;
+            clearTimeout(debounceTimer);
+            loadIndex().then(function() {
+                showSearchResults(query);
+            }).catch(function(err) {
+                console.error('CLI search failed:', err);
+            });
+            window.focus();
+        });
+    })();
 })();
 """

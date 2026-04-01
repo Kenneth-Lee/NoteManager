@@ -193,7 +193,14 @@ class NoteManagerDaemon:
         """List all monitored directories."""
         with self._lock:
             dirs = list(self._observers.keys())
-        return {"ok": True, "data": {"directories": dirs, "count": len(dirs)}}
+        return {
+            "ok": True,
+            "data": {
+                "directories": dirs,
+                "count": len(dirs),
+                "default_project": self.config.get("default_project"),
+            },
+        }
 
     def get_status(self) -> dict:
         """Get daemon status."""
@@ -220,8 +227,77 @@ class NoteManagerDaemon:
                 "directories": dirs,
                 "directory_count": len(dirs),
                 "details": status_info,
+                "default_project": self.config.get("default_project"),
             },
         }
+
+    def handle_search(self, cmd: dict) -> dict:
+        """Handle CLI 'search' command: broadcast search query to web UI."""
+        query = cmd.get("query", "")
+        if not query:
+            return {"ok": False, "error": "需要搜索关键词"}
+
+        project = cmd.get("project")
+        with self._lock:
+            dirs = list(self._observers.keys())
+
+        if not dirs:
+            return {"ok": False, "error": "没有监控中的目录"}
+
+        idx = self._resolve_project_index(project, dirs)
+        if idx is None:
+            return {"ok": False, "error": f"无效的工程标识: {project}"}
+
+        notify_event("cli_search", {"query": query, "project": idx})
+        return {"ok": True, "message": f"已发送搜索: {query}"}
+
+    def handle_default(self, cmd: dict) -> dict:
+        """Set the default project."""
+        project = cmd.get("project", "")
+        if not project:
+            # Show current default
+            default = self.config.get("default_project")
+            if default:
+                return {"ok": True, "message": f"当前默认工程: {default}"}
+            return {"ok": True, "message": "未设置默认工程"}
+
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not dirs:
+            return {"ok": False, "error": "没有监控中的目录"}
+
+        idx = self._resolve_project_index(project, dirs)
+        if idx is None:
+            return {"ok": False, "error": f"未找到工程: {project}"}
+
+        self.config["default_project"] = dirs[idx]
+        _save_config(self.config)
+        self._notify_change("default_changed")
+        return {"ok": True, "message": f"已设置默认工程: [{idx}] {Path(dirs[idx]).name}"}
+
+    def _resolve_project_index(self, project, dirs):
+        """Resolve a project identifier (index, name, or None) to an index."""
+        if project is None or (isinstance(project, int) and project == 0):
+            # Use default_project if set
+            default = self.config.get("default_project")
+            if default and default in dirs:
+                return dirs.index(default)
+            return 0
+        try:
+            idx = int(project)
+            if 0 <= idx < len(dirs):
+                return idx
+            return None
+        except (ValueError, TypeError):
+            pass
+        # Match by directory basename
+        for i, d in enumerate(dirs):
+            if Path(d).name == project:
+                return i
+        for i, d in enumerate(dirs):
+            if project.lower() in Path(d).name.lower():
+                return i
+        return None
 
     def _notify_change(self, event_type: str):
         """Push an event to all connected web UI clients."""
@@ -250,6 +326,10 @@ class NoteManagerDaemon:
             return self.get_status()
         elif action == "stop":
             return self.stop_daemon()
+        elif action == "search":
+            return self.handle_search(cmd)
+        elif action == "default":
+            return self.handle_default(cmd)
         else:
             return {"ok": False, "error": f"未知命令: {action}"}
 

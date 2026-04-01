@@ -7,7 +7,7 @@ import json
 import os
 import urllib.parse
 import weakref
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import threading
 import time
@@ -149,6 +149,8 @@ class WebHandler(BaseHTTPRequestHandler):
         elif path == "/api/rebuild":
             directory = data.get("directory", "")
             resp = self.daemon_ref.rebuild_directory(directory)
+        elif path == "/api/default":
+            resp = self.daemon_ref.handle_default(data)
         else:
             self._send_error(404, "Unknown API endpoint")
             return
@@ -245,8 +247,12 @@ def notify_event(event_type: str, data: dict = None):
 
 def start_web_server(daemon_ref, port: int) -> HTTPServer:
     """Start the HTTP server in a thread."""
+    class ReuseThreadingHTTPServer(ThreadingHTTPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+
     WebHandler.daemon_ref = daemon_ref
-    server = HTTPServer(("127.0.0.1", port), WebHandler)
+    server = ReuseThreadingHTTPServer(("127.0.0.1", port), WebHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server
@@ -256,6 +262,7 @@ def _render_panel(daemon_ref) -> str:
     """Render the control panel HTML."""
     with daemon_ref._lock:
         dirs = list(daemon_ref._observers.keys())
+    default_project = daemon_ref.config.get("default_project")
 
     projects_html = ""
     for i, d in enumerate(dirs):
@@ -270,20 +277,25 @@ def _render_panel(daemon_ref) -> str:
         name = Path(d).name
         files = detail.get("file_count", "?")
         labels = detail.get("label_count", "?")
+        index_count = detail.get("index_count", "?")
         last = detail.get("last_build", "?")
         err = detail.get("error")
         if err:
             status_text = f'<span class="error">{err}</span>'
         else:
-            status_text = f'{files} 文件, {labels} 标签, {last[:19]}'
+            status_text = f'{files} 文件, {labels} 标签, {index_count} 索引, {last[:19]}'
+        is_default = d == default_project
+        default_badge = ' <span class="default-badge">默认</span>' if is_default else ''
 
         projects_html += f"""\
 <tr data-dir="{d}">
-  <td><a href="/p/{i}/">{name}</a></td>
+  <td><a href="/p/{i}/">{name}</a>{default_badge}</td>
+  <td class="id">[{i}]</td>
   <td class="path">{d}</td>
   <td>{status_text}</td>
   <td>
     <button onclick="rebuildProject({i},'{d}')">重建</button>
+    <button onclick="setDefaultProject({i},'{d}')">默认</button>
     <button class="danger" onclick="removeProject({i},'{d}')">移除</button>
   </td>
 </tr>
@@ -342,6 +354,13 @@ td a {{ color: #0066cc; text-decoration: none; font-weight: 500; }}
 td a:hover {{ text-decoration: underline; }}
 .empty {{ text-align: center; color: #999; padding: 40px 0; }}
 .error {{ color: #cc3300; }}
+.default-badge {{
+    display: inline-block; font-size: 11px; padding: 1px 6px; margin-left: 4px;
+    background: #e3f2fd; color: #1565c0; border-radius: 8px;
+    font-weight: 500;
+}}
+.default-badge {{ display: inline-block; font-size: 11px; padding: 1px 6px; background: #e3f2fd; color: #1565c0;
+    border-radius: 3px; margin-left: 4px; font-weight: 600; }}
 #toast {{
     position: fixed; bottom: 20px; right: 20px;
     padding: 12px 20px; border-radius: 4px;
@@ -353,7 +372,6 @@ td a:hover {{ text-decoration: underline; }}
 <body>
 <div class="container">
 <h1>NoteManager</h1>
-
 <div class="card">
 <h2>添加目录</h2>
 <div class="add-form">
@@ -371,7 +389,6 @@ td a:hover {{ text-decoration: underline; }}
 </tbody>
 </table>
 </div>
-
 </div>
 <div id="toast"></div>
 
@@ -410,6 +427,17 @@ function removeProject(idx, dir) {{
     }});
 }}
 
+function setDefaultProject(idx, dir) {{
+    fetch('/api/default', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{project: idx}})
+    }}).then(function(r) {{ return r.json(); }}).then(function(d) {{
+        if (d.ok) showToast(d.message);
+        else showToast('错误: ' + d.error, 3000);
+    }});
+}}
+
 function rebuildProject(idx, dir) {{
     showToast('正在重建...');
     fetch('/api/rebuild', {{
@@ -428,6 +456,7 @@ function refreshProjects(data) {{
     var html = '';
     var dirs = data.directories;
     var details = data.details || {{}};
+    var defaultProject = data.default_project || null;
     if (dirs.length === 0) {{
         tbody.innerHTML = '<tr><td colspan="4" class="empty">暂无监控目录</td></tr>';
         return;
@@ -437,6 +466,7 @@ function refreshProjects(data) {{
         var name = d.split('/').pop();
         var detail = details[d] || {{}};
         var err = detail.error;
+        var isDefault = (d === defaultProject);
         var statusText;
         if (err) {{
             statusText = '<span class="error">' + err + '</span>';
@@ -446,9 +476,10 @@ function refreshProjects(data) {{
             var last = (detail.last_build || '?').substring(0, 19);
             statusText = files + ' 文件, ' + labels + ' 标签, ' + last;
         }}
+        var defaultBadge = isDefault ? ' <span class="default-badge">默认</span>' : '';
         html += '<tr data-dir="' + d + '">';
-        html += '<td><a href="/p/' + i + '/">' + name + '</a></td>';
-        html += '<td class="path">' + d + '</td>';
+        html += '<td><a href="/p/' + i + '/">' + name + '</a>' + defaultBadge + '</td>';
+        html += '<td class="path"><a href="/p/' + i + '/">' + d + '</a></td>';
         html += '<td>' + statusText + '</td>';
         html += '<td>';
         html += '<button onclick="rebuildProject(' + i + ',\\'' + d + '\\')">重建</button> ';
@@ -471,6 +502,16 @@ evtSource.addEventListener('build_complete', function(e) {{
 evtSource.addEventListener('init', function(e) {{
     var data = JSON.parse(e.data);
     refreshProjects(data);
+}});
+evtSource.addEventListener('default_changed', function(e) {{
+    var data = JSON.parse(e.data);
+    refreshProjects(data);
+}});
+evtSource.addEventListener('cli_search', function(e) {{
+    var data = JSON.parse(e.data);
+    if (!data || !data.query) return;
+    var project = (data.project !== undefined && data.project !== null) ? data.project : 0;
+    window.location.href = '/p/' + project + '/?q=' + encodeURIComponent(data.query);
 }});
 evtSource.onerror = function() {{
     // Reconnect is automatic for EventSource

@@ -62,7 +62,7 @@ def cmd_stop(args):
         return
     port = _get_daemon_port()
     try:
-        resp = send_command({"cmd": "stop"}, port=port)
+        resp = send_command({"cmd": "stop"}, port=port, timeout=3)
         print(resp.get("message", "已发送停止命令"))
     except ConnectionError:
         print("无法连接 Daemon，强制清理")
@@ -77,7 +77,7 @@ def cmd_status(args):
         return
     port = _get_daemon_port()
     try:
-        resp = send_command({"cmd": "status"}, port=port)
+        resp = send_command({"cmd": "status"}, port=port, timeout=3)
         if not resp.get("ok"):
             print(f"错误: {resp.get('error')}")
             return
@@ -86,16 +86,22 @@ def cmd_status(args):
         print(f"监听端口: {data['port']}")
         print(f"Web UI: http://localhost:{data['web_port']}")
         print(f"监控目录数: {data['directory_count']}")
-        for d in data["directories"]:
+        default = data.get("default_project")
+        for i, d in enumerate(data["directories"]):
             detail = data.get("details", {}).get(d, {})
             files = detail.get("file_count", "?")
             labels = detail.get("label_count", "?")
+            index_count = detail.get("index_count", "?")
             last = detail.get("last_build", "?")
             err = detail.get("error")
+            marker = " *" if d == default else ""
+            name = Path(d).name
             if err:
-                print(f"  {d} — {err}")
+                print(f"  [{i}] {name}{marker} — {err}")
             else:
-                print(f"  {d} — {files} 文件, {labels} 标签, {last[:19]}")
+                print(f"  [{i}] {name}{marker} — {files} 文件, {labels} 标签, {index_count} 索引, {last[:19]}")
+        if default:
+            print("  * = 默认工程")
     except ConnectionError:
         print("无法连接 Daemon（PID 存在但连接失败）")
 
@@ -131,7 +137,7 @@ def cmd_remove(args):
         sys.exit(1)
     port = _get_daemon_port()
     try:
-        resp = send_command({"cmd": "remove", "directory": directory}, port=port)
+        resp = send_command({"cmd": "remove", "directory": directory}, port=port, timeout=5)
         if resp.get("ok"):
             print(resp["message"])
         else:
@@ -147,7 +153,7 @@ def cmd_list(args):
         return
     port = _get_daemon_port()
     try:
-        resp = send_command({"cmd": "list"}, port=port)
+        resp = send_command({"cmd": "list"}, port=port, timeout=3)
         if not resp.get("ok"):
             print(f"错误: {resp.get('error')}")
             return
@@ -155,14 +161,108 @@ def cmd_list(args):
         if data["count"] == 0:
             print("没有监控中的目录")
             return
+        default = data.get("default_project")
         print(f"监控目录 ({data['count']}):")
-        for d in data["directories"]:
-            print(f"  {d}")
+        for i, d in enumerate(data["directories"]):
+            marker = " *" if d == default else ""
+            print(f"  [{i}] {Path(d).name}{marker} ({d})")
+        if default:
+            print("  * = 默认工程")
         web_port = get_daemon_web_port()
         if web_port:
             print(f"\nWeb UI: http://localhost:{web_port}")
     except ConnectionError:
         print("错误: 无法连接 Daemon")
+
+
+def _resolve_project(args):
+    """Resolve --project flag to a project index. Returns index or exits."""
+    port = _get_daemon_port()
+    try:
+        resp = send_command({"cmd": "list"}, port=port, timeout=3)
+    except ConnectionError:
+        print("错误: 无法连接 Daemon")
+        sys.exit(1)
+    if not resp.get("ok"):
+        print(f"错误: {resp.get('error')}")
+        sys.exit(1)
+    dirs = resp["data"]["directories"]
+    if not dirs:
+        print("错误: 没有监控中的目录，请先使用 notemanager add 添加")
+        sys.exit(1)
+
+    project = getattr(args, "project", None)
+    if project:
+        # Try as index number
+        try:
+            idx = int(project)
+            if 0 <= idx < len(dirs):
+                return idx
+        except ValueError:
+            pass
+        for i, d in enumerate(dirs):
+            if Path(d).name == project:
+                return i
+        for i, d in enumerate(dirs):
+            if project.lower() in Path(d).name.lower():
+                return i
+        print(f"错误: 未找到工程 '{project}'")
+        print("可用工程:")
+        for i, d in enumerate(dirs):
+            print(f"  [{i}] {Path(d).name}")
+        sys.exit(1)
+
+    # Use default project if set
+    default = resp["data"].get("default_project")
+    if default and default in dirs:
+        return dirs.index(default)
+    return 0
+
+
+def cmd_search(args):
+    """Send search query to the running web UI."""
+    if not _ensure_daemon():
+        print("错误: 无法启动 Daemon")
+        sys.exit(1)
+
+    idx = _resolve_project(args)
+    port = _get_daemon_port()
+    try:
+        resp = send_command(
+            {"cmd": "search", "query": args.query, "project": idx},
+            port=port,
+            timeout=5,
+        )
+    except ConnectionError:
+        print("错误: 无法连接 Daemon")
+        sys.exit(1)
+
+    if resp.get("ok"):
+        print(resp["message"])
+    else:
+        print(f"错误: {resp.get('error')}")
+        sys.exit(1)
+
+
+def cmd_default(args):
+    """Set or show the default project."""
+    pid = is_daemon_running()
+    if not pid:
+        print("Daemon 未运行")
+        sys.exit(1)
+    port = _get_daemon_port()
+    try:
+        resp = send_command({"cmd": "default", "project": args.project or ""},
+                            port=port, timeout=3)
+    except ConnectionError:
+        print("错误: 无法连接 Daemon")
+        sys.exit(1)
+
+    if resp.get("ok"):
+        print(resp["message"])
+    else:
+        print(f"错误: {resp.get('error')}")
+        sys.exit(1)
 
 
 def main():
@@ -189,6 +289,14 @@ def main():
 
     subparsers.add_parser("list", help="列出所有监控中的目录")
 
+    search_p = subparsers.add_parser("search", help="在 Web UI 中搜索并显示结果")
+    search_p.add_argument("query", help="搜索关键词 (支持正则和类型前缀如 chapter:xxx)")
+    search_p.add_argument("--project", "-p", help="指定工程 (编号或目录名)")
+
+    default_p = subparsers.add_parser("default", help="设置或查看默认工程")
+    default_p.add_argument("project", nargs="?", default="",
+                           help="工程编号或目录名 (省略则查看当前默认)")
+
     args = parser.parse_args()
     commands = {
         "start": cmd_start,
@@ -197,6 +305,8 @@ def main():
         "add": cmd_add,
         "remove": cmd_remove,
         "list": cmd_list,
+        "search": cmd_search,
+        "default": cmd_default,
     }
     handler = commands.get(args.command)
     if handler:

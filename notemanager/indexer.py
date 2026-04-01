@@ -108,6 +108,7 @@ def build_index(
         json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    return len(entries)
 
 
 def _extract_chapters(entries: list, path: str, html: str) -> None:
