@@ -19,3 +19,4 @@ include = ["notemanager*"]
 
 [project.scripts]
 notemanager = "notemanager.cli:main"
+nmr = "notemanager.cli:main"
