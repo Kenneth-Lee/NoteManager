@@ -69,6 +69,8 @@ class WebHandler(BaseHTTPRequestHandler):
             self._handle_sse()
         elif path.startswith("/api/"):
             self._handle_api_get(path)
+        elif path.startswith("/temp/"):
+            self._serve_temp_file(path)
         elif path.startswith("/p/"):
             self._serve_project_file(path)
         else:
@@ -238,6 +240,21 @@ class WebHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.end_headers()
         self.wfile.write(message.encode("utf-8"))
+
+    def _serve_temp_file(self, path):
+        """Serve temporary rendered single-file pages."""
+        temp_root = self.daemon_ref.get_temp_view_dir().resolve()
+        rel = urllib.parse.unquote(path[len("/temp/"):])
+        if not rel:
+            rel = "index.html"
+        target = (temp_root / rel).resolve()
+        if not str(target).startswith(str(temp_root)):
+            self._send_error(403, "Forbidden")
+            return
+        if not target.is_file():
+            self._send_error(404, "File not found")
+            return
+        self._send_file(target)
 
 
 def notify_event(event_type: str, data: dict = None):
@@ -512,6 +529,11 @@ evtSource.addEventListener('cli_search', function(e) {{
     if (!data || !data.query) return;
     var project = (data.project !== undefined && data.project !== null) ? data.project : 0;
     window.location.href = '/p/' + project + '/?q=' + encodeURIComponent(data.query);
+}});
+evtSource.addEventListener('cli_view', function(e) {{
+    var data = JSON.parse(e.data);
+    if (!data || !data.url) return;
+    window.location.href = data.url;
 }});
 evtSource.onerror = function() {{
     // Reconnect is automatic for EventSource

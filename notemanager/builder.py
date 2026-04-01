@@ -658,6 +658,11 @@ _DEFAULT_JS = """\
             });
             window.focus();
         });
+        evtSource.addEventListener('cli_view', function(e) {
+            var data = JSON.parse(e.data);
+            if (!data || !data.url) return;
+            window.location.href = data.url;
+        });
     })();
 })();
 """

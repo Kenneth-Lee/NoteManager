@@ -2,6 +2,10 @@
 
 import argparse
 import json
+import os
+import re
+import shlex
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -226,6 +230,7 @@ def cmd_search(args):
         sys.exit(1)
 
     idx = _resolve_project(args)
+    project_dir = Path(_resolve_project_dir(args))
     port = _get_daemon_port()
     try:
         resp = send_command(
@@ -239,6 +244,29 @@ def cmd_search(args):
 
     if resp.get("ok"):
         print(resp["message"])
+        index_file = project_dir / ".NoteManager" / "html" / "_index" / "search_index.json"
+        if not index_file.is_file():
+            print(f"未找到索引文件: {index_file}")
+            return
+        data = json.loads(index_file.read_text(encoding="utf-8"))
+        docs = data.get("documents", [])
+        results = _search_entries(docs, args.query)
+        paths = []
+        seen = set()
+        for item in results:
+            src = _resolve_source_from_result(project_dir, item.get("path", ""))
+            if src is None:
+                continue
+            full = str(src.resolve())
+            if full not in seen:
+                seen.add(full)
+                paths.append(full)
+        if not paths:
+            print("命令行结果: 无可映射源文件")
+            return
+        print("命令行结果（源文件绝对路径）:")
+        for p in paths:
+            print(p)
     else:
         print(f"错误: {resp.get('error')}")
         sys.exit(1)
@@ -260,6 +288,124 @@ def cmd_default(args):
 
     if resp.get("ok"):
         print(resp["message"])
+    else:
+        print(f"错误: {resp.get('error')}")
+        sys.exit(1)
+
+
+def _resolve_project_dir(args) -> str:
+    idx = _resolve_project(args)
+    port = _get_daemon_port()
+    resp = send_command({"cmd": "list"}, port=port, timeout=3)
+    return resp["data"]["directories"][idx]
+
+
+def _parse_query(query: str):
+    m = re.match(r"^(chapter|label|index|dtag):(.+)$", query, re.IGNORECASE)
+    if m:
+        return m.group(1).lower(), m.group(2)
+    return None, query
+
+
+def _search_entries(entries, query: str):
+    typ, core = _parse_query(query)
+    if not core:
+        return []
+    try:
+        rex = re.compile(core, re.IGNORECASE)
+    except re.error:
+        rex = re.compile(re.escape(core), re.IGNORECASE)
+    results = []
+    for e in entries:
+        if typ and e.get("type") != typ:
+            continue
+        title = e.get("title", "")
+        text = e.get("text", "")
+        if rex.search(title) or rex.search(text):
+            results.append(e)
+            if len(results) >= 200:
+                break
+    return results
+
+
+def _resolve_source_from_result(project_dir: Path, result_path: str) -> Path | None:
+    html_rel = result_path.split("#", 1)[0]
+    if not html_rel.endswith(".html"):
+        return None
+    base_rel = Path(html_rel).with_suffix("")
+    rst = (project_dir / base_rel).with_suffix(".rst")
+    md = (project_dir / base_rel).with_suffix(".md")
+    if rst.is_file():
+        return rst
+    if md.is_file():
+        return md
+    return None
+
+
+def cmd_searche(args):
+    """Search and choose an entry to cd/edit source file."""
+    if not _ensure_daemon():
+        print("错误: 无法启动 Daemon")
+        sys.exit(1)
+
+    project_dir = Path(_resolve_project_dir(args))
+    index_file = project_dir / ".NoteManager" / "html" / "_index" / "search_index.json"
+    if not index_file.is_file():
+        print(f"错误: 搜索索引不存在: {index_file}")
+        sys.exit(1)
+
+    data = json.loads(index_file.read_text(encoding="utf-8"))
+    docs = data.get("documents", [])
+    results = _search_entries(docs, args.query)
+    if not results:
+        print("没有搜索结果")
+        return
+
+    print(f"找到 {len(results)} 个结果（显示前 30 条）：")
+    shown = results[:30]
+    for i, item in enumerate(shown, start=1):
+        print(f"[{i}] {item.get('title', '')} ({item.get('type', '')})")
+        print(f"    {item.get('path', '')}")
+
+    sel = input("选择编号（输入数字直接编辑，0 取消）: ").strip().lower()
+    if not sel or sel == "0":
+        return
+    m = re.match(r"^(\d+)$", sel)
+    if not m:
+        print("输入无效")
+        return
+    idx = int(m.group(1)) - 1
+    if idx < 0 or idx >= len(shown):
+        print("编号越界")
+        return
+
+    target = _resolve_source_from_result(project_dir, shown[idx].get("path", ""))
+    if target is None:
+        print("该结果无法映射到源文件")
+        return
+
+    editor = os.environ.get("EDITOR")
+    if not editor:
+        print("错误: 未设置 $EDITOR")
+        sys.exit(1)
+    cmd = shlex.split(editor) + [str(target)]
+    subprocess.run(cmd)
+
+
+def cmd_view(args):
+    """Open a source file in web UI, render temp page if unmanaged."""
+    if not _ensure_daemon():
+        print("错误: 无法启动 Daemon")
+        sys.exit(1)
+    src = str(Path(args.file).expanduser().resolve())
+    port = _get_daemon_port()
+    try:
+        resp = send_command({"cmd": "view", "file": src}, port=port, timeout=8)
+    except ConnectionError:
+        print("错误: 无法连接 Daemon")
+        sys.exit(1)
+    if resp.get("ok"):
+        print(resp.get("message", "已发送查看请求"))
     else:
         print(f"错误: {resp.get('error')}")
         sys.exit(1)
@@ -292,6 +438,11 @@ def main():
     search_p = subparsers.add_parser("search", help="在 Web UI 中搜索并显示结果")
     search_p.add_argument("query", help="搜索关键词 (支持正则和类型前缀如 chapter:xxx)")
     search_p.add_argument("--project", "-p", help="指定工程 (编号或目录名)")
+    searche_p = subparsers.add_parser("searche", help="搜索并交互选择后进入目录或编辑")
+    searche_p.add_argument("query", help="搜索关键词 (支持正则和类型前缀如 chapter:xxx)")
+    searche_p.add_argument("--project", "-p", help="指定工程 (编号或目录名)")
+    view_p = subparsers.add_parser("view", help="在 Web UI 查看指定 md/rst 文件")
+    view_p.add_argument("file", help="要查看的 md/rst 文件路径")
 
     default_p = subparsers.add_parser("default", help="设置或查看默认工程")
     default_p.add_argument("project", nargs="?", default="",
@@ -306,6 +457,8 @@ def main():
         "remove": cmd_remove,
         "list": cmd_list,
         "search": cmd_search,
+        "searche": cmd_searche,
+        "view": cmd_view,
         "default": cmd_default,
     }
     handler = commands.get(args.command)

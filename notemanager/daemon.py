@@ -11,12 +11,16 @@ import socketserver
 import sys
 import threading
 import datetime
+import hashlib
 from pathlib import Path
 
 from notemanager.protocol import DEFAULT_HOST, DEFAULT_PORT, recv_command, send_response
 from notemanager.builder import full_build
 from notemanager.watcher import start_watcher
 from notemanager.web import notify_event
+from notemanager.renderer.rst_renderer import render_rst
+from notemanager.renderer.md_renderer import render_md
+from notemanager.renderer.template import wrap_html
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +279,76 @@ class NoteManagerDaemon:
         self._notify_change("default_changed")
         return {"ok": True, "message": f"已设置默认工程: [{idx}] {Path(dirs[idx]).name}"}
 
+    def handle_view(self, cmd: dict) -> dict:
+        """Handle CLI 'view' command: open a source file in web UI."""
+        file_path = cmd.get("file", "")
+        if not file_path:
+            return {"ok": False, "error": "缺少文件路径"}
+        source = Path(file_path).expanduser().resolve()
+        if not source.is_file():
+            return {"ok": False, "error": f"文件不存在: {source}"}
+        if source.suffix.lower() not in (".md", ".rst"):
+            return {"ok": False, "error": "仅支持 .md/.rst 文件"}
+
+        with self._lock:
+            dirs = list(self._observers.keys())
+
+        # If file belongs to a managed project, jump to that project HTML directly.
+        for idx, d in enumerate(dirs):
+            root = Path(d)
+            try:
+                rel = source.relative_to(root)
+            except ValueError:
+                continue
+            target = f"/p/{idx}/{rel.with_suffix('.html').as_posix()}"
+            notify_event("cli_view", {"url": target})
+            return {"ok": True, "message": f"已跳转: {target}"}
+
+        # Otherwise render a temporary single-file page.
+        temp_url = self._render_temp_view(source)
+        notify_event("cli_view", {"url": temp_url})
+        return {"ok": True, "message": f"已临时渲染: {temp_url}"}
+
+    def get_temp_view_dir(self) -> Path:
+        """Directory for temporary rendered single-file pages."""
+        temp_dir = HOME_NM_DIR / "temp_views"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        return temp_dir
+
+    def _render_temp_view(self, source: Path) -> str:
+        """Render one unmanaged source file to temporary HTML."""
+        content = source.read_text(encoding="utf-8")
+        if source.suffix.lower() == ".rst":
+            rendered = render_rst(content, str(source))
+        else:
+            rendered = render_md(content, str(source))
+
+        title = source.stem
+        body = rendered.get("body", "")
+        toc = rendered.get("toc", "")
+        warnings = rendered.get("warnings", [])
+        html = wrap_html(
+            body=body,
+            title=title,
+            html_rel_path="index.html",
+            toc=toc,
+            source=content,
+            warnings=warnings,
+            source_path=str(source),
+            dtags=rendered.get("dtags", []),
+        )
+
+        temp_dir = self.get_temp_view_dir()
+        static_dir = temp_dir / "_static"
+        static_dir.mkdir(parents=True, exist_ok=True)
+        from notemanager.builder import _copy_static_assets  # local import
+        _copy_static_assets(static_dir)
+
+        key = hashlib.sha1(str(source).encode("utf-8")).hexdigest()[:16]
+        out_name = f"{key}.html"
+        (temp_dir / out_name).write_text(html, encoding="utf-8")
+        return f"/temp/{out_name}"
+
     def _resolve_project_index(self, project, dirs):
         """Resolve a project identifier (index, name, or None) to an index."""
         if project is None or (isinstance(project, int) and project == 0):
@@ -330,6 +404,8 @@ class NoteManagerDaemon:
             return self.handle_search(cmd)
         elif action == "default":
             return self.handle_default(cmd)
+        elif action == "view":
+            return self.handle_view(cmd)
         else:
             return {"ok": False, "error": f"未知命令: {action}"}
 
