@@ -6,6 +6,7 @@ Serves a control panel, project HTML files, and SSE event stream.
 import json
 import os
 import urllib.parse
+from html import escape as html_escape
 import weakref
 from http.server import HTTPServer, BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -304,16 +305,18 @@ def _render_panel(daemon_ref) -> str:
         is_default = d == default_project
         default_badge = ' <span class="default-badge">默认</span>' if is_default else ''
 
+        d_attr = html_escape(d, quote=True)
+        d_js = json.dumps(d)
         projects_html += f"""\
-<tr data-dir="{d}">
+<tr data-dir="{d_attr}">
   <td><a href="/p/{i}/">{name}</a>{default_badge}</td>
   <td class="id">[{i}]</td>
-  <td class="path">{d}</td>
+  <td class="path">{html_escape(d)}</td>
   <td>{status_text}</td>
   <td>
-    <button onclick="rebuildProject({i},'{d}')">重建</button>
-    <button onclick="setDefaultProject({i},'{d}')">默认</button>
-    <button class="danger" onclick="removeProject({i},'{d}')">移除</button>
+    <button onclick='rebuildProject({i}, {d_js})'>重建</button>
+    <button onclick='setDefaultProject({i}, {d_js})'>默认</button>
+    <button class="danger" onclick='removeProject({i}, {d_js})'>移除</button>
   </td>
 </tr>
 """
@@ -343,6 +346,7 @@ h1 {{ margin-bottom: 20px; font-size: 24px; }}
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }}
 .card h2 {{ font-size: 16px; color: #666; margin-bottom: 12px; }}
+.table-wrap {{ overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }}
 .add-form {{ display: flex; gap: 8px; }}
 .add-form input {{
     flex: 1;
@@ -364,9 +368,12 @@ button:hover {{ background: #0052a3; }}
 button.danger {{ background: #cc3300; }}
 button.danger:hover {{ background: #a32800; }}
 table {{ width: 100%; border-collapse: collapse; }}
-th, td {{ text-align: left; padding: 10px 8px; border-bottom: 1px solid #eee; }}
+th, td {{ text-align: left; padding: 10px 8px; border-bottom: 1px solid #eee; vertical-align: top; }}
 th {{ color: #666; font-weight: 600; font-size: 13px; }}
-td.path {{ font-family: monospace; font-size: 12px; color: #888; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+td.id {{ white-space: nowrap; font-family: monospace; font-size: 12px; color: #888; width: 3em; }}
+td.path {{ font-family: monospace; font-size: 12px; color: #888; overflow-wrap: anywhere; word-break: break-word; max-width: 28em; }}
+td.actions {{ white-space: nowrap; }}
+td.actions button {{ margin: 2px 4px 2px 0; }}
 td a {{ color: #0066cc; text-decoration: none; font-weight: 500; }}
 td a:hover {{ text-decoration: underline; }}
 .empty {{ text-align: center; color: #999; padding: 40px 0; }}
@@ -399,12 +406,14 @@ td a:hover {{ text-decoration: underline; }}
 
 <div class="card">
 <h2>监控目录</h2>
+<div class="table-wrap">
 <table>
-<thead><tr><th>名称</th><th>路径</th><th>状态</th><th>操作</th></tr></thead>
+<thead><tr><th>名称</th><th>#</th><th>路径</th><th>状态</th><th>操作</th></tr></thead>
 <tbody id="projects">
-{projects_html if projects_html else '<tr><td colspan="4" class="empty">暂无监控目录</td></tr>'}
+{projects_html if projects_html else '<tr><td colspan="5" class="empty">暂无监控目录</td></tr>'}
 </tbody>
 </table>
+</div>
 </div>
 </div>
 <div id="toast"></div>
@@ -475,12 +484,18 @@ function refreshProjects(data) {{
     var details = data.details || {{}};
     var defaultProject = data.default_project || null;
     if (dirs.length === 0) {{
-        tbody.innerHTML = '<tr><td colspan="4" class="empty">暂无监控目录</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">暂无监控目录</td></tr>';
         return;
+    }}
+    function escAttr(s) {{
+        return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+    }}
+    function escOnclick(s) {{
+        return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
     }}
     for (var i = 0; i < dirs.length; i++) {{
         var d = dirs[i];
-        var name = d.split('/').pop();
+        var name = d.split(/[/\\\\]/).pop();
         var detail = details[d] || {{}};
         var err = detail.error;
         var isDefault = (d === defaultProject);
@@ -490,17 +505,23 @@ function refreshProjects(data) {{
         }} else {{
             var files = detail.file_count || '?';
             var labels = detail.label_count || '?';
+            var indexCount = detail.index_count || '?';
             var last = (detail.last_build || '?').substring(0, 19);
-            statusText = files + ' 文件, ' + labels + ' 标签, ' + last;
+            statusText = files + ' 文件, ' + labels + ' 标签, ' + indexCount + ' 索引, ' + last;
         }}
         var defaultBadge = isDefault ? ' <span class="default-badge">默认</span>' : '';
-        html += '<tr data-dir="' + d + '">';
-        html += '<td><a href="/p/' + i + '/">' + name + '</a>' + defaultBadge + '</td>';
-        html += '<td class="path"><a href="/p/' + i + '/">' + d + '</a></td>';
+        html += '<tr data-dir="' + escAttr(d) + '">';
+        html += '<td><a href="/p/' + i + '/">' + escAttr(name) + '</a>' + defaultBadge + '</td>';
+        html += '<td class="id">[' + i + ']</td>';
+        html += '<td class="path">' + escAttr(d) + '</td>';
         html += '<td>' + statusText + '</td>';
-        html += '<td>';
-        html += '<button onclick="rebuildProject(' + i + ',\\'' + d + '\\')">重建</button> ';
-        html += '<button class="danger" onclick="removeProject(' + i + ',\\'' + d + '\\')">移除</button>';
+        html += '<td class="actions">';
+        var ocRebuild = 'rebuildProject(' + i + ', ' + JSON.stringify(d) + ')';
+        var ocDefault = 'setDefaultProject(' + i + ', ' + JSON.stringify(d) + ')';
+        var ocRemove = 'removeProject(' + i + ', ' + JSON.stringify(d) + ')';
+        html += '<button onclick="' + escOnclick(ocRebuild) + '">重建</button> ';
+        html += '<button onclick="' + escOnclick(ocDefault) + '">默认</button> ';
+        html += '<button class="danger" onclick="' + escOnclick(ocRemove) + '">移除</button>';
         html += '</td></tr>';
     }}
     tbody.innerHTML = html;

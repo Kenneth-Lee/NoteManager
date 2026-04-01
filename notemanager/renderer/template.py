@@ -151,7 +151,12 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .section-number {{ color: #666; margin-right: 0.5em; }}
 /* Main content area with tabs */
 .nm-main {{ margin-left: 280px; min-height: 100vh; display: flex; flex-direction: column; }}
-.nm-tabs {{ display: flex; border-bottom: 1px solid #e0e0e0; background: #fafafa; padding: 0 20px; }}
+.nm-tabs {{ display: flex; align-items: center; justify-content: space-between;
+           border-bottom: 1px solid #e0e0e0; background: #fafafa; padding: 0 20px; }}
+.nm-tabs-left {{ display: flex; align-items: center; gap: 0; }}
+.nm-global-btn {{ text-decoration: none; font-size: 12px; color: #1565c0; border: 1px solid #bbdefb;
+                  background: #e3f2fd; border-radius: 4px; padding: 4px 10px; }}
+.nm-global-btn:hover {{ background: #bbdefb; color: #0d47a1; }}
 .nm-tab {{ padding: 8px 16px; cursor: pointer; border: 1px solid transparent; border-bottom: none;
            background: none; font-size: 13px; color: #666; border-radius: 4px 4px 0 0; margin-top: 4px; }}
 .nm-tab:hover {{ color: #333; background: #f0f0f0; }}
@@ -212,9 +217,12 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 </div>
 <div class="nm-main">
 <div class="nm-tabs">
+<div class="nm-tabs-left">
 <button class="nm-tab active" data-tab="render">渲染</button>
 <button class="nm-tab" data-tab="source">源文件</button>
 <button class="nm-tab" data-tab="warnings">诊断</button>
+</div>
+<a class="nm-global-btn" href="/" title="返回全局控制台">全局</a>
 </div>
 <div class="nm-tab-panels">
 <div id="nm-panel-render" class="nm-tab-panel active">

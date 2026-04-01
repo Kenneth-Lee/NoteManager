@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -62,6 +63,33 @@ def _get_daemon_socket_path() -> str:
         except (json.JSONDecodeError, KeyError):
             pass
     return str(DEFAULT_UNIX_SOCKET)
+
+
+def _parse_editor_command(editor: str) -> list[str]:
+    """Split EDITOR like a shell command; Windows needs posix=False for shlex."""
+    posix = os.name != "nt"
+    return shlex.split(editor, posix=posix)
+
+
+def _resolve_windows_editor(parts: list[str]) -> list[str]:
+    """Resolve editor executable on Windows (e.g. code -> code.cmd/full path)."""
+    if os.name != "nt" or not parts:
+        return parts
+    exe = parts[0]
+    if shutil.which(exe):
+        return parts
+    if exe.lower() == "code" and shutil.which("code.cmd"):
+        return ["code.cmd"] + parts[1:]
+    if exe.lower() in ("code", "code.cmd", "code.exe"):
+        candidates = [
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Microsoft VS Code" / "bin" / "code.cmd",
+            Path(os.environ.get("PROGRAMFILES", "")) / "Microsoft VS Code" / "bin" / "code.cmd",
+            Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Microsoft VS Code" / "bin" / "code.cmd",
+        ]
+        for p in candidates:
+            if p.is_file():
+                return [str(p)] + parts[1:]
+    return parts
 
 
 def cmd_start(args):
@@ -445,10 +473,33 @@ def cmd_searche(args):
 
     editor = os.environ.get("EDITOR")
     if not editor:
-        print("错误: 未设置 $EDITOR")
+        print("错误: 未设置 EDITOR 环境变量")
         sys.exit(1)
-    cmd = shlex.split(editor) + [str(target)]
-    subprocess.run(cmd)
+    try:
+        editor_parts = _parse_editor_command(editor)
+    except ValueError as e:
+        print(f"错误: 无法解析 EDITOR（检查引号与空格）: {e}")
+        sys.exit(1)
+    if not editor_parts:
+        print("错误: EDITOR 解析结果为空")
+        sys.exit(1)
+    editor_parts = _resolve_windows_editor(editor_parts)
+    cmd = editor_parts + [str(target)]
+    try:
+        subprocess.run(cmd, check=False)
+    except FileNotFoundError:
+        if os.name == "nt":
+            shell_cmd = editor + " " + subprocess.list2cmdline([str(target)])
+            try:
+                subprocess.run(["cmd", "/c", shell_cmd], check=False)
+                return
+            except OSError:
+                pass
+        exe = cmd[0] if cmd else editor
+        print(f"错误: 找不到编辑器「{exe}」。请确认其在 PATH 中。")
+        if os.name == "nt":
+            print("提示: VS Code 可设置 EDITOR=\"code --wait\"，或直接设为 code.cmd 的完整路径。")
+        sys.exit(1)
 
 
 def cmd_view(args):
