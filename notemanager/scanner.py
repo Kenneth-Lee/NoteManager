@@ -25,6 +25,7 @@ class FileInfo:
     rel_path: Path    # Relative to project root
     ext: str          # .rst or .md
     mtime: float      # Modification time
+    size: int         # File size in bytes
 
 
 def scan_directory(project_root: str | Path) -> list[FileInfo]:
@@ -53,11 +54,13 @@ def scan_directory(project_root: str | Path) -> list[FileInfo]:
         ext = path.suffix.lower()
         if ext in INCLUDE_EXTENSIONS:
             rel = path.relative_to(root)
+            st = path.stat()
             files.append(FileInfo(
                 path=path,
                 rel_path=rel,
                 ext=ext,
-                mtime=path.stat().st_mtime,
+                mtime=st.st_mtime,
+                size=st.st_size,
             ))
 
     return sorted(files, key=lambda f: f.rel_path)

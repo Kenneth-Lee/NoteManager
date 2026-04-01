@@ -22,6 +22,7 @@ from notemanager.protocol import (
     use_unix_socket,
 )
 from notemanager.builder import full_build
+from notemanager.scan_manifest import MANIFEST_VERSION, live_payload_and_files, read_scan_manifest
 from notemanager.watcher import start_watcher
 from notemanager.web import notify_event
 from notemanager.renderer.rst_renderer import render_rst
@@ -143,6 +144,62 @@ def _pid_exists(pid: int) -> bool:
         return True
     except (OSError, ProcessLookupError):
         return False
+
+
+def _need_rebuild_on_startup(directory: str | Path) -> bool:
+    """Whether a project needs full rebuild before watcher restore."""
+    root = Path(directory).resolve()
+    nm_dir = root / ".NoteManager"
+    status_file = nm_dir / "status.json"
+    search_index_file = nm_dir / "html" / "_index" / "search_index.json"
+    if not status_file.is_file() or not search_index_file.is_file():
+        return True
+
+    try:
+        status = json.loads(status_file.read_text(encoding="utf-8"))
+        last_build_raw = status.get("last_build")
+        last_build = datetime.datetime.fromisoformat(last_build_raw)
+        built_file_count = int(status.get("file_count", -1))
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return True
+
+    saved = read_scan_manifest(nm_dir)
+    if saved is not None and int(saved.get("version", -1)) == MANIFEST_VERSION:
+        try:
+            root_stat = root.stat()
+            r_ns = getattr(root_stat, "st_mtime_ns", int(root_stat.st_mtime * 1_000_000_000))
+            root_anchor = f"{r_ns}:{root_stat.st_ino}"
+            if (
+                root_anchor == saved.get("root_anchor")
+                and int(saved.get("file_count", -1)) == built_file_count
+            ):
+                return False
+        except (OSError, ValueError, TypeError):
+            pass
+
+    try:
+        live, files = live_payload_and_files(root)
+    except Exception:
+        return True
+
+    if (
+        saved is not None
+        and int(saved.get("version", -1)) == MANIFEST_VERSION
+        and live["tree_rollup"] == saved.get("tree_rollup")
+        and live["file_count"] == int(saved.get("file_count", -1))
+        and live["file_count"] == built_file_count
+    ):
+        return False
+
+    if saved is not None and int(saved.get("version", -1)) == MANIFEST_VERSION:
+        return True
+
+    if live["file_count"] != built_file_count:
+        return True
+    if not files:
+        return False
+
+    return any(datetime.datetime.fromtimestamp(f.mtime) > last_build for f in files)
 
 
 class NoteManagerDaemon:
@@ -520,7 +577,11 @@ class NoteManagerDaemon:
             if Path(directory).is_dir():
                 logger.info("恢复监控: %s", directory)
                 try:
-                    full_build(directory)
+                    if _need_rebuild_on_startup(directory):
+                        logger.info("检测到变更，执行重建: %s", directory)
+                        full_build(directory)
+                    else:
+                        logger.info("未检测到变更，跳过重建: %s", directory)
                     observer = start_watcher(directory)
                     observer.start()
                     with self._lock:

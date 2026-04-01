@@ -9,6 +9,7 @@ import datetime
 from pathlib import Path
 
 from notemanager.scanner import scan_directory, FileInfo
+from notemanager.scan_manifest import build_manifest_payload, write_scan_manifest
 from notemanager.renderer.rst_renderer import render_rst
 from notemanager.renderer.md_renderer import render_md
 from notemanager.renderer.template import wrap_html
@@ -92,6 +93,8 @@ def full_build(project_root: str | Path) -> Path:
     # Write status
     _write_status(nm_dir, len(files), len(ref_labels), index_count)
 
+    write_scan_manifest(nm_dir, build_manifest_payload(project_root, files))
+
     return nm_dir
 
 
@@ -129,11 +132,13 @@ def update_file(project_root: str | Path, file_path: str | Path) -> None:
     files = scan_directory(project_root)
 
     # Re-render just this file
+    st = file_path.stat()
     fi = FileInfo(
         path=file_path,
         rel_path=rel_path,
         ext=ext,
-        mtime=file_path.stat().st_mtime,
+        mtime=st.st_mtime,
+        size=st.st_size,
     )
     rendered = _render_file(fi)
 
@@ -184,6 +189,7 @@ def update_file(project_root: str | Path, file_path: str | Path) -> None:
 
     # Update status
     _write_status(nm_dir, len(files), len(ref_labels), index_count)
+    write_scan_manifest(nm_dir, build_manifest_payload(project_root, files))
 
     logger.info("已更新: %s", rel_path)
 
@@ -234,6 +240,7 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
 
     _generate_landing_page(html_dir, documents)
     _write_status(nm_dir, len(files), len(ref_labels), index_count)
+    write_scan_manifest(nm_dir, build_manifest_payload(project_root, files))
 
 
 def _render_file(fi: FileInfo) -> dict:
