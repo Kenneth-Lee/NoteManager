@@ -8,10 +8,12 @@ import json
 import logging
 import os
 import socketserver
+import subprocess
 import sys
 import threading
 import datetime
 import hashlib
+import time
 from pathlib import Path
 
 from notemanager.protocol import (
@@ -517,33 +519,74 @@ class NoteManagerDaemon:
         self.run()
 
     def run_background(self) -> None:
-        """Fork to background and run daemon."""
-        pid = os.fork()
-        if pid > 0:
-            import time
-            time.sleep(0.5)
-            if _pid_exists(pid):
-                print(f"Daemon 已启动 (PID: {pid})")
-                print(f"Web UI: http://localhost:{self.web_port}")
-            else:
-                print("Daemon 启动失败", file=sys.stderr)
-                sys.exit(1)
+        """Run daemon in background (POSIX fork or Windows detached process)."""
+        if hasattr(os, "fork"):
+            pid = os.fork()
+            if pid > 0:
+                time.sleep(0.5)
+                if _pid_exists(pid):
+                    print(f"Daemon 已启动 (PID: {pid})")
+                    print(f"Web UI: http://localhost:{self.web_port}")
+                else:
+                    print("Daemon 启动失败", file=sys.stderr)
+                    sys.exit(1)
+                return
+
+            os.setsid()
+
+            pid = os.fork()
+            if pid > 0:
+                os._exit(0)
+
+            sys.stdin.close()
+            HOME_NM_DIR.mkdir(parents=True, exist_ok=True)
+            log_file = HOME_NM_DIR / "daemon.log"
+            sys.stdout = open(log_file, "a", encoding="utf-8")
+            sys.stderr = open(log_file, "a", encoding="utf-8")
+
+            self._setup_logging(stream=sys.stderr)
+            self.run()
             return
 
-        os.setsid()
-
-        pid = os.fork()
-        if pid > 0:
-            os._exit(0)
-
-        sys.stdin.close()
+        # Windows: start a fully detached Python child process.
         HOME_NM_DIR.mkdir(parents=True, exist_ok=True)
         log_file = HOME_NM_DIR / "daemon.log"
-        sys.stdout = open(log_file, "a", encoding="utf-8")
-        sys.stderr = open(log_file, "a", encoding="utf-8")
+        child_cmd = [
+            sys.executable,
+            "-c",
+            (
+                "from notemanager.daemon import NoteManagerDaemon; "
+                f"NoteManagerDaemon(port={self.port}, web_port={self.web_port}).run_foreground()"
+            ),
+        ]
+        creationflags = (
+            subprocess.CREATE_NEW_PROCESS_GROUP
+            | subprocess.DETACHED_PROCESS
+            | subprocess.CREATE_NO_WINDOW
+        )
 
-        self._setup_logging(stream=sys.stderr)
-        self.run()
+        log_fp = open(log_file, "a", encoding="utf-8")
+        try:
+            proc = subprocess.Popen(
+                child_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=log_fp,
+                stderr=log_fp,
+                creationflags=creationflags,
+                close_fds=True,
+            )
+        finally:
+            log_fp.close()
+
+        for _ in range(20):
+            time.sleep(0.2)
+            if is_daemon_running():
+                print(f"Daemon 已启动 (PID: {proc.pid})")
+                print(f"Web UI: http://localhost:{self.web_port}")
+                return
+
+        print("Daemon 启动失败", file=sys.stderr)
+        sys.exit(1)
 
     @staticmethod
     def _setup_logging(stream=None) -> None:
