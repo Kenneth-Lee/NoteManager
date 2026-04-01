@@ -196,7 +196,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 </head>
 <body>
 <div class="nm-sidebar">
-<div class="nm-sidebar-home"><a href="{prefix}index.html">Home</a></div>
+<div class="nm-sidebar-home"><a id="nm-home-link" href="{prefix}index.html">Home</a></div>
 <div class="nm-sidebar-search">
 <input type="text" id="nm-search" placeholder="搜索...">
 <button class="nm-search-help" onclick="nmToggleHelp()" title="搜索语法帮助">?</button>

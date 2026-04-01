@@ -613,13 +613,15 @@ _DEFAULT_JS = """\
             });
         }
     })();
-    // Show "global" anchor only when served by daemon /p/* route.
+    // Daemon-served pages (/p/*, /temp/*): show global anchor and fix Home link.
     (function() {
         var anchor = document.getElementById('nm-global-anchor');
-        if (!anchor) return;
+        var home = document.getElementById('nm-home-link');
         var p = window.location.pathname || '';
-        if (p.indexOf('/p/') === 0) {
-            anchor.style.display = 'inline-block';
+        var daemonPage = (p.indexOf('/p/') === 0 || p.indexOf('/temp/') === 0);
+        if (daemonPage) {
+            if (anchor) anchor.style.display = 'inline-block';
+            if (home) home.setAttribute('href', '/');
         }
     })();
     // Dtag badge click: search for that tag
