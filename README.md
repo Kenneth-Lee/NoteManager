@@ -131,6 +131,38 @@ pip install -e .
 
 依赖：Python >= 3.10，自动安装 `docutils`、`Markdown`、`pygments`、`watchdog`。
 
+### 从源码生成安装包（wheel / sdist）
+
+在仓库根目录（含 `pyproject.toml`）执行：
+
+```bash
+pip install build
+python -m build
+```
+
+完成后在 `dist/` 目录会得到：
+
+| 文件 | 说明 |
+|------|------|
+| `notemanager-<版本>-py3-none-any.whl` | Wheel，可直接分发或 `pip install` |
+| `notemanager-<版本>.tar.gz` | 源码发行包（sdist），供索引或再次构建 |
+
+本地安装刚生成的 wheel 做验证：
+
+```bash
+pip install dist/notemanager-*-py3-none-any.whl
+```
+
+若需上传到 PyPI（需 [PyPI](https://pypi.org/) 账号与 API token）：
+
+```bash
+pip install twine
+twine check dist/*
+twine upload dist/*
+```
+
+上传前通常会先清理旧产物：`rm -rf dist/ build/ *.egg-info`，再重新执行 `python -m build`。
+
 ## 使用
 
 ### 启动
