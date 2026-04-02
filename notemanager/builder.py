@@ -21,6 +21,21 @@ from notemanager.indexer import extract_dtags_from_sources
 logger = logging.getLogger(__name__)
 
 
+def _merge_dtag_lists(
+    from_source: list[str] | None,
+    from_render: list[str] | None,
+) -> list[str]:
+    """合并源码抽取与渲染器得到的标签，保序去重。"""
+    out: list[str] = []
+    seen: set[str] = set()
+    for t in (from_source or []) + (from_render or []):
+        t = (t or "").strip()
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
 def full_build(
     project_root: str | Path,
     *,
@@ -67,17 +82,24 @@ def full_build(
     # Extract .. index:: directives from RST sources
     rst_index_dirs = extract_rst_index_directives(files)
 
+    # 文档标签：以源码抽取为准（含 Markdown #标签、reST :dtag:），并与渲染结果合并；
+    # 避免仅依赖 render_md 返回值时，旧安装或未同步代码导致 rebuild 后 dtag 索引为空。
+    dtags_extracted = extract_dtags_from_sources(files)
+
     # Second pass: resolve references and write HTML
     documents = []
-    all_dtags = {}  # rel_path -> list of tag strings
+    all_dtags: dict[str, list[str]] = {}
     last_report = 0
     step = max(1, n // 15) if n else 1
     for j, fi in enumerate(files):
         r = rendered[fi.rel_path]
-        doc = _write_html(html_dir, fi, r, ref_labels)
+        key = str(fi.rel_path)
+        merged = _merge_dtag_lists(dtags_extracted.get(key), r.get("dtags"))
+        if merged:
+            all_dtags[key] = merged
+        r_out = {**r, "dtags": merged}
+        doc = _write_html(html_dir, fi, r_out, ref_labels)
         documents.append(doc)
-        if r.get("dtags"):
-            all_dtags[str(fi.rel_path)] = r["dtags"]
         k = j + 1
         if n and (k == n or k <= 2 or k - last_report >= step):
             p(f"  生成 HTML {k}/{n} {fi.rel_path}")
@@ -114,7 +136,13 @@ def full_build(
     _generate_landing_page(html_dir, documents)
 
     # Write status
-    _write_status(nm_dir, len(files), len(ref_labels), index_count)
+    _write_status(
+        nm_dir,
+        len(files),
+        len(ref_labels),
+        index_count,
+        _unique_dtag_count(all_dtags),
+    )
 
     write_scan_manifest(nm_dir, build_manifest_payload(project_root, files))
 
@@ -174,6 +202,10 @@ def update_file(project_root: str | Path, file_path: str | Path) -> None:
     # Re-extract dtags from source
     dtags_per_doc = extract_dtags_from_sources(files)
 
+    # 侧栏徽章与索引一致：合并源码抽取与渲染结果
+    merged = _merge_dtag_lists(dtags_per_doc.get(str(rel_path)), rendered.get("dtags"))
+    rendered = {**rendered, "dtags": merged}
+
     # Write this file's HTML
     _write_html(html_dir, fi, rendered, ref_labels)
 
@@ -211,7 +243,13 @@ def update_file(project_root: str | Path, file_path: str | Path) -> None:
     _generate_landing_page(html_dir, documents)
 
     # Update status
-    _write_status(nm_dir, len(files), len(ref_labels), index_count)
+    _write_status(
+        nm_dir,
+        len(files),
+        len(ref_labels),
+        index_count,
+        _unique_dtag_count(dtags_per_doc),
+    )
     write_scan_manifest(nm_dir, build_manifest_payload(project_root, files))
 
     logger.info("已更新: %s", rel_path)
@@ -261,8 +299,20 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
         encoding="utf-8",
     )
 
+    dtag_index = _build_dtag_index(dtags_per_doc)
+    (index_dir / "dtag_index.json").write_text(
+        json.dumps(dtag_index, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
     _generate_landing_page(html_dir, documents)
-    _write_status(nm_dir, len(files), len(ref_labels), index_count)
+    _write_status(
+        nm_dir,
+        len(files),
+        len(ref_labels),
+        index_count,
+        _unique_dtag_count(dtags_per_doc),
+    )
     write_scan_manifest(nm_dir, build_manifest_payload(project_root, files))
 
 
@@ -436,12 +486,33 @@ def _render_tree(node, depth):
     return "\n".join(parts)
 
 
-def _write_status(nm_dir, file_count, label_count, index_count=0):
-    """Write build status file."""
+def _unique_dtag_count(dtags_per_doc: dict[str, list[str]]) -> int:
+    """工程内不重复的文档标记（dtag / #标签）个数。"""
+    seen: set[str] = set()
+    for tags in dtags_per_doc.values():
+        for t in tags:
+            t = (t or "").strip()
+            if t:
+                seen.add(t)
+    return len(seen)
+
+
+def _write_status(
+    nm_dir,
+    file_count,
+    label_count,
+    index_count=0,
+    dtag_count: int = 0,
+):
+    """Write build status file.
+
+    ``label_count`` 为 reST 交叉引用锚点数量；``dtag_count`` 为文档标记去重后的个数。
+    """
     status = {
         "last_build": datetime.datetime.now().isoformat(),
         "file_count": file_count,
         "label_count": label_count,
+        "dtag_count": dtag_count,
         "index_count": index_count,
     }
     (nm_dir / "status.json").write_text(
@@ -660,9 +731,14 @@ _DEFAULT_JS = """\
         return html;
     }
 
-    function showSearchResults(query) {
-        var results = regexSearch(query);
-        var html = renderResults(query, results);
+    function showSearchResults(query, openFirst) {
+        var q = String(query || '').trim();
+        var results = regexSearch(q);
+        if (openFirst && results.length === 1) {
+            window.location.href = docHref(results[0].path);
+            return;
+        }
+        var html = renderResults(q, results);
         if (sidebarToc) sidebarToc.style.display = 'none';
         if (sidebarResults) {
             sidebarResults.innerHTML = html;
@@ -687,9 +763,21 @@ _DEFAULT_JS = """\
         }
         debounceTimer = setTimeout(function() {
             loadIndex().then(function() {
-                showSearchResults(searchInput.value.trim());
+                showSearchResults(searchInput.value.trim(), false);
             }).catch(showIndexLoadError);
         }, 200);
+    });
+
+    searchInput.addEventListener('keydown', function(e) {
+        if (e.key !== 'Enter') return;
+        if (e.isComposing) return;
+        e.preventDefault();
+        var q = searchInput.value.trim();
+        if (!q) return;
+        clearTimeout(debounceTimer);
+        loadIndex().then(function() {
+            showSearchResults(q, true);
+        }).catch(showIndexLoadError);
     });
 
     (function() {
@@ -698,7 +786,7 @@ _DEFAULT_JS = """\
         if (q) {
             searchInput.value = q;
             loadIndex().then(function() {
-                showSearchResults(q);
+                showSearchResults(q, true);
             }).catch(showIndexLoadError);
         }
     })();
@@ -720,7 +808,7 @@ _DEFAULT_JS = """\
             if (tag) {
                 searchInput.value = 'dtag:' + tag;
                 loadIndex().then(function() {
-                    showSearchResults('dtag:' + tag);
+                    showSearchResults('dtag:' + tag, true);
                 }).catch(showIndexLoadError);
             }
         });
@@ -730,11 +818,15 @@ _DEFAULT_JS = """\
         try { evtSource = new EventSource('/api/events'); } catch(e) { return; }
         evtSource.addEventListener('cli_search', function(e) {
             var data = JSON.parse(e.data);
+            if (data.open_url) {
+                window.location.href = data.open_url;
+                return;
+            }
             var query = data.query || '';
             if (!query) return;
             var parts = window.location.pathname.split('/');
             if (parts.length > 2 && parts[1] === 'p') {
-                if (data.project !== undefined && parseInt(parts[2]) !== data.project) {
+                if (data.project !== undefined && parseInt(parts[2], 10) !== data.project) {
                     window.location.href = '/p/' + data.project + '/?q=' + encodeURIComponent(query);
                     return;
                 }
@@ -742,7 +834,7 @@ _DEFAULT_JS = """\
             searchInput.value = query;
             clearTimeout(debounceTimer);
             loadIndex().then(function() {
-                showSearchResults(query);
+                showSearchResults(query, true);
             }).catch(showIndexLoadError);
             window.focus();
         });

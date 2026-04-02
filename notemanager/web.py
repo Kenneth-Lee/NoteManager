@@ -328,14 +328,20 @@ def _render_panel(daemon_ref) -> str:
 
         name = Path(d).name
         files = detail.get("file_count", "?")
-        labels = detail.get("label_count", "?")
+        ref_lbl = detail.get("label_count", "?")
+        dtags = detail.get("dtag_count")
+        if dtags is None:
+            dtags = "?"
         index_count = detail.get("index_count", "?")
         last = detail.get("last_build", "?")
         err = detail.get("error")
         if err:
             status_text = f'<span class="error">{err}</span>'
         else:
-            status_text = f'{files} 文件, {labels} 标签, {index_count} 索引, {last[:19]}'
+            status_text = (
+                f"{files} 文件, {ref_lbl} 交叉引用, {dtags} 文档标记, "
+                f"{index_count} 索引, {last[:19]}"
+            )
         is_default = d == default_project
         default_badge = ' <span class="default-badge">默认</span>' if is_default else ''
 
@@ -547,10 +553,13 @@ function refreshProjects(data) {{
             statusText = '<span class="error">' + err + '</span>';
         }} else {{
             var files = detail.file_count || '?';
-            var labels = detail.label_count || '?';
+            var refLbl = detail.label_count || '?';
+            var dtags = (detail.dtag_count !== undefined && detail.dtag_count !== null)
+                ? detail.dtag_count : '?';
             var indexCount = detail.index_count || '?';
             var last = (detail.last_build || '?').substring(0, 19);
-            statusText = files + ' 文件, ' + labels + ' 标签, ' + indexCount + ' 索引, ' + last;
+            statusText = files + ' 文件, ' + refLbl + ' 交叉引用, ' + dtags
+                + ' 文档标记, ' + indexCount + ' 索引, ' + last;
         }}
         var defaultBadge = isDefault ? ' <span class="default-badge">默认</span>' : '';
         html += '<tr data-dir="' + escAttr(d) + '">';
@@ -590,7 +599,12 @@ evtSource.addEventListener('default_changed', function(e) {{
 }});
 evtSource.addEventListener('cli_search', function(e) {{
     var data = JSON.parse(e.data);
-    if (!data || !data.query) return;
+    if (!data) return;
+    if (data.open_url) {{
+        window.location.href = data.open_url;
+        return;
+    }}
+    if (!data.query) return;
     var project = (data.project !== undefined && data.project !== null) ? data.project : 0;
     window.location.href = '/p/' + project + '/?q=' + encodeURIComponent(data.query);
 }});

@@ -4,6 +4,7 @@ import re
 
 import markdown
 
+from notemanager.indexer import extract_md_hashtags
 from notemanager.renderer.postproc import add_section_numbers, add_toc_numbers
 
 
@@ -62,7 +63,7 @@ def render_md(content: str, source_path: str = "<string>") -> dict:
     if toc_html and id_to_number:
         toc_html = add_toc_numbers(toc_html, id_to_number)
 
-    return {"body": body, "toc": toc_html, "warnings": [], "dtags": []}
+    return {"body": body, "toc": toc_html, "warnings": [], "dtags": extract_md_hashtags(content)}
 
 
 def _convert_links(html: str) -> str:

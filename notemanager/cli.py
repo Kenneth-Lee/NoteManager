@@ -157,7 +157,10 @@ def cmd_status(args):
         for i, d in enumerate(data["directories"]):
             detail = data.get("details", {}).get(d, {})
             files = detail.get("file_count", "?")
-            labels = detail.get("label_count", "?")
+            ref_lbl = detail.get("label_count", "?")
+            dtags = detail.get("dtag_count")
+            if dtags is None:
+                dtags = "?"
             index_count = detail.get("index_count", "?")
             last = detail.get("last_build", "?")
             err = detail.get("error")
@@ -166,7 +169,10 @@ def cmd_status(args):
             if err:
                 print(f"  [{i}] {name}{marker} — {err}")
             else:
-                print(f"  [{i}] {name}{marker} — {files} 文件, {labels} 标签, {index_count} 索引, {last[:19]}")
+                print(
+                    f"  [{i}] {name}{marker} — {files} 文件, {ref_lbl} 交叉引用, "
+                    f"{dtags} 文档标记, {index_count} 索引, {last[:19]}"
+                )
         if default:
             print("  * = 默认工程")
     except ConnectionError:

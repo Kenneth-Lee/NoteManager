@@ -207,10 +207,10 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 <li><code>chapter:关键词</code> — 仅搜索章节标题</li>
 <li><code>label:关键词</code> — 仅搜索锚点标签</li>
 <li><code>index:关键词</code> — 仅搜索索引条目</li>
-<li><code>dtag:关键词</code> — 仅搜索文档标签</li>
+<li><code>dtag:关键词</code> — 仅搜索文档标签（reST 用 <code>:dtag:`标签`</code>；Markdown 用行内 <code>#标签</code>，须跟在空格或 <code>，。：</code> 等标点之后）</li>
 <li><code>grep:正则</code> — 在当前工程内全局搜索<strong>已渲染正文块</strong>（非源码）</li>
 </ul>
-<div style="margin-top:6px;color:#888;">支持正则；本页搜索即当前工程内全局搜索</div>
+<div style="margin-top:6px;color:#888;">支持正则；键入时更新侧栏列表；仅当命中<strong>恰好 1 条</strong>时，按 <strong>Enter</strong> 或 <code>nmr search</code> 才会自动打开该页，否则保留列表供点击选择。</div>
 </div>
 </div>
 <div id="nm-sidebar-toc" class="nm-sidebar-toc">{toc}</div>

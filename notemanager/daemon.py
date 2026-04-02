@@ -15,6 +15,7 @@ import datetime
 import hashlib
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 from notemanager.protocol import (
     DEFAULT_HOST, DEFAULT_PORT, DEFAULT_UNIX_SOCKET, recv_command, send_response,
@@ -25,6 +26,7 @@ from notemanager.builder import full_build
 from notemanager.scan_manifest import MANIFEST_VERSION, live_payload_and_files, read_scan_manifest
 from notemanager.watcher import start_watcher
 from notemanager.web import notify_event
+from notemanager.indexer import filter_search_documents
 from notemanager.renderer.rst_renderer import render_rst
 from notemanager.renderer.md_renderer import render_md
 from notemanager.renderer.template import wrap_html
@@ -32,6 +34,35 @@ from notemanager.renderer.template import wrap_html
 logger = logging.getLogger(__name__)
 
 DEFAULT_WEB_PORT = 19833
+
+
+def _first_search_hit_open_url(project_idx: int, project_dir: Path, query: str) -> str | None:
+    """仅当搜索恰好命中 1 条时返回该条目的 URL；多条命中返回 None，由前端展示列表。"""
+    index_file = project_dir / ".NoteManager" / "html" / "_index" / "search_index.json"
+    if not index_file.is_file():
+        return None
+    try:
+        data = json.loads(index_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    docs = data.get("documents") or []
+    if not docs:
+        return None
+    results = filter_search_documents(docs, query, limit=200)
+    if len(results) != 1:
+        return None
+    rel = (results[0].get("path") or "").strip()
+    if not rel:
+        return None
+    base, _, frag = rel.partition("#")
+    base = base.strip().strip("/")
+    if not base:
+        return None
+    path_enc = "/".join(quote(seg, safe="") for seg in Path(base).parts)
+    url = f"/p/{project_idx}/{path_enc}"
+    if frag:
+        url += "#" + quote(frag, safe="")
+    return url
 
 # 父进程等子进程写完索引再返回；首次 full_build 可能远超 1 分钟。
 _DAEMON_PARENT_STARTUP_POLL_S = 0.2
@@ -486,7 +517,12 @@ class NoteManagerDaemon:
         if idx is None:
             return {"ok": False, "error": f"无效的工程标识: {project}"}
 
-        notify_event("cli_search", {"query": query, "project": idx})
+        project_dir = Path(dirs[idx])
+        payload: dict = {"query": query, "project": idx}
+        open_url = _first_search_hit_open_url(idx, project_dir, query)
+        if open_url:
+            payload["open_url"] = open_url
+        notify_event("cli_search", payload)
         return {"ok": True, "message": f"已发送搜索: {query}"}
 
     def handle_default(self, cmd: dict) -> dict:

@@ -309,6 +309,26 @@ def _extract_index_terms(entries: list, path: str, html: str) -> None:
             })
 
 
+def extract_md_hashtags(content: str) -> list[str]:
+    """从 Markdown 源码中抽取行内 ``#标签``（社交/笔记式标签）。
+
+    ``#`` 须出现在行首、空白或常见中英文标点后，避免把 ``[](#锚点)``、ATX 标题
+    ``# 标题``（``#`` 后为空格）等误判为标签。
+    """
+    content = content.lstrip("\ufeff")
+    _MD_HASHTAG_RE = re.compile(
+        r"(?:^|[\s:：，。、；！？「」])#([\w\u4e00-\u9fff]+(?:[/+_.-][\w\u4e00-\u9fff]+)*)"
+    )
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in _MD_HASHTAG_RE.finditer(content):
+        tag = m.group(1).strip()
+        if tag and tag not in seen:
+            seen.add(tag)
+            out.append(tag)
+    return out
+
+
 def extract_dtags_from_sources(files) -> dict[str, list[str]]:
     """Extract :dtag: entries from source files.
 
@@ -319,20 +339,21 @@ def extract_dtags_from_sources(files) -> dict[str, list[str]]:
         Dict mapping relative source path -> list of dtag strings.
     """
     _DTAG_ROLE_RE = re.compile(r":dtag:`([^`]+)`")
-    result = {}
+    result: dict[str, list[str]] = {}
     for fi in files:
-        if fi.ext != ".rst":
-            continue
         try:
             content = fi.path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        tags = []
-        for m in _DTAG_ROLE_RE.finditer(content):
-            for tag in m.group(1).split(","):
-                tag = tag.strip()
-                if tag and tag not in tags:
-                    tags.append(tag)
+        tags: list[str] = []
+        if fi.ext == ".rst":
+            for m in _DTAG_ROLE_RE.finditer(content):
+                for tag in m.group(1).split(","):
+                    tag = tag.strip()
+                    if tag and tag not in tags:
+                        tags.append(tag)
+        elif fi.ext == ".md":
+            tags = extract_md_hashtags(content)
         if tags:
             result[str(fi.rel_path)] = tags
     return result
