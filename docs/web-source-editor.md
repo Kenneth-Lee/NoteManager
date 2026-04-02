@@ -33,6 +33,8 @@
 
 主题选用 **dracula**，与原有深色「源文件」面板风格接近。
 
+**Vim 键位（可选）**：通过工具栏「Vim 键位」复选框启用 CodeMirror 5 自带的 `keymap/vim` 子集（非完整 Neovim）；**默认关闭**，勾选后在本机 `localStorage` 记住偏好。依赖 `addon/dialog`、`addon/search/searchcursor` 等脚本，与主编辑器脚本一并由 `_static` 提供。启用 Vim 后约定：`:w` / `:write` 与工具栏保存相同（写盘并整页刷新）；`:q` / `:quit` 切到「渲染」页签，若有未保存修改会先确认；`:wq` 等价于先保存（与 `:w` 相同，刷新后默认落在渲染页）。
+
 ## API 设计
 
 ### `POST /api/save_source`

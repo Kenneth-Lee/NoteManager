@@ -79,7 +79,8 @@ def wrap_html(body: str, title: str, html_rel_path: str,
         highlighted_source = ""
         cm_head = (
             f'<link rel="stylesheet" href="{prefix}_static/codemirror/lib/codemirror.css">\n'
-            f'<link rel="stylesheet" href="{prefix}_static/codemirror/theme/dracula.css">'
+            f'<link rel="stylesheet" href="{prefix}_static/codemirror/theme/dracula.css">\n'
+            f'<link rel="stylesheet" href="{prefix}_static/codemirror/addon/dialog/dialog.css">'
         )
         sjson = json.dumps(source, ensure_ascii=False)
         meta = json.dumps(
@@ -93,6 +94,8 @@ def wrap_html(body: str, title: str, html_rel_path: str,
         source_panel_inner = (
             '<div class="nm-source-toolbar">'
             '<button type="button" class="nm-source-save" id="nm-source-save">保存并刷新渲染</button>'
+            '<label class="nm-source-vim-wrap" title="启用 CodeMirror 内置 Vim 子集（默认关闭；偏好会保存在本机）">'
+            '<input type="checkbox" id="nm-source-vim" autocomplete="off"> Vim 键位</label>'
             '<span class="nm-source-status" id="nm-source-status"></span></div>'
             f'<div class="nm-source-path">{source_path_display}</div>'
             f'<script type="application/json" id="nm-page-meta">{meta}</script>'
@@ -103,6 +106,10 @@ def wrap_html(body: str, title: str, html_rel_path: str,
             f'<script src="{prefix}_static/codemirror/lib/codemirror.js"></script>\n'
             f'<script src="{prefix}_static/codemirror/mode/xml/xml.js"></script>\n'
             f'<script src="{prefix}_static/codemirror/mode/markdown/markdown.js"></script>\n'
+            f'<script src="{prefix}_static/codemirror/addon/edit/matchbrackets.js"></script>\n'
+            f'<script src="{prefix}_static/codemirror/addon/search/searchcursor.js"></script>\n'
+            f'<script src="{prefix}_static/codemirror/addon/dialog/dialog.js"></script>\n'
+            f'<script src="{prefix}_static/codemirror/keymap/vim.js"></script>\n'
             f'<script src="{prefix}_static/nm-editor.js"></script>'
         )
     else:
@@ -211,6 +218,9 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .nm-source-path {{ color: #98c379; font-size: 12px; font-family: 'SFMono-Regular', Consolas, monospace;
                    margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #555; }}
 .nm-source-toolbar {{ margin-bottom: 10px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }}
+.nm-source-vim-wrap {{ font-size: 13px; color: #abb2bf; cursor: pointer; user-select: none; display: inline-flex;
+    align-items: center; gap: 6px; }}
+.nm-source-vim-wrap input {{ margin: 0; cursor: pointer; }}
 .nm-source-save {{ padding: 6px 14px; background: #98c379; color: #1e1e1e; border: none; border-radius: 4px;
                    cursor: pointer; font-size: 13px; font-weight: 600; }}
 .nm-source-save:hover {{ filter: brightness(1.08); }}

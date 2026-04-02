@@ -1,5 +1,22 @@
 /* NoteManager: in-browser source editor (CodeMirror 5) + save + paste image */
 (function () {
+  var VIM_LS = 'nm-editor-vim';
+
+  function readVimPref() {
+    try {
+      return window.localStorage.getItem(VIM_LS) === '1';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function writeVimPref(on) {
+    try {
+      if (on) window.localStorage.setItem(VIM_LS, '1');
+      else window.localStorage.removeItem(VIM_LS);
+    } catch (e) {}
+  }
+
   function projectFromPath() {
     var m = window.location.pathname.match(/^\/p\/(\d+)\//);
     return m ? parseInt(m[1], 10) : -1;
@@ -94,6 +111,23 @@
     var editorHeight = Math.max(360, window.innerHeight - 220) + 'px';
     cm.setSize(null, editorHeight);
 
+    var vimCb = document.getElementById('nm-source-vim');
+    function vimKeyMapAvailable() {
+      return !!(CodeMirror.keyMap && CodeMirror.keyMap.vim);
+    }
+    function applyVimKeyMap(useVim) {
+      var on = !!(useVim && vimKeyMapAvailable());
+      cm.setOption('keyMap', on ? 'vim' : 'default');
+      if (vimCb) vimCb.checked = on;
+      writeVimPref(on);
+    }
+    applyVimKeyMap(readVimPref());
+    if (vimCb) {
+      vimCb.addEventListener('change', function () {
+        applyVimKeyMap(vimCb.checked);
+      });
+    }
+
     window.__nmCM = cm;
     window.__nmInitialSource = initial;
     window.__nmDirty = false;
@@ -175,41 +209,81 @@
       statusEl.style.color = isErr ? '#f88' : '#98c379';
     }
 
+    function saveSource() {
+      setStatus('保存中…');
+      fetch('/api/save_source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({
+          project: project,
+          source_rel_path: cfg.source_rel,
+          content: cm.getValue(),
+        }),
+      })
+        .then(function (r) {
+          if (!r.ok) {
+            return r.text().then(function (t) {
+              throw new Error(t || 'HTTP ' + r.status);
+            });
+          }
+          return r.json();
+        })
+        .then(function (d) {
+          if (d.ok) {
+            window.__nmInitialSource = cm.getValue();
+            window.__nmDirty = false;
+            setStatus('已保存，正在刷新…');
+            window.location.reload();
+          } else {
+            setStatus(d.error || '保存失败', true);
+          }
+        })
+        .catch(function (err) {
+          setStatus(err && err.message ? err.message : '网络错误', true);
+        });
+    }
+
     if (saveBtn) {
       saveBtn.addEventListener('click', function () {
-        setStatus('保存中…');
-        fetch('/api/save_source', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json; charset=utf-8' },
-          body: JSON.stringify({
-            project: project,
-            source_rel_path: cfg.source_rel,
-            content: cm.getValue(),
-          }),
-        })
-          .then(function (r) {
-            if (!r.ok) {
-              return r
-                .text()
-                .then(function (t) {
-                  throw new Error(t || 'HTTP ' + r.status);
-                });
-            }
-            return r.json();
-          })
-          .then(function (d) {
-            if (d.ok) {
-              window.__nmInitialSource = cm.getValue();
-              window.__nmDirty = false;
-              setStatus('已保存，正在刷新…');
-              window.location.reload();
-            } else {
-              setStatus(d.error || '保存失败', true);
-            }
-          })
-          .catch(function (err) {
-            setStatus(err && err.message ? err.message : '网络错误', true);
-          });
+        saveSource();
+      });
+    }
+
+    function switchToRenderTab() {
+      document.querySelectorAll('.nm-tab').forEach(function (t) {
+        t.classList.remove('active');
+      });
+      document.querySelectorAll('.nm-tab-panel').forEach(function (p) {
+        p.classList.remove('active');
+      });
+      var renderTab = document.querySelector('.nm-tab[data-tab="render"]');
+      var renderPanel = document.getElementById('nm-panel-render');
+      if (renderTab) renderTab.classList.add('active');
+      if (renderPanel) renderPanel.classList.add('active');
+    }
+
+    function quitToRender() {
+      if (window.__nmDirty) {
+        if (
+          !window.confirm(
+            '源文件有未保存的修改，切换到「渲染」将丢弃这些修改。\n\n点「取消」留在源文件；请先 :w 或点「保存并刷新渲染」。'
+          )
+        ) {
+          return;
+        }
+      }
+      switchToRenderTab();
+    }
+
+    if (CodeMirror.Vim && typeof CodeMirror.Vim.defineEx === 'function') {
+      CodeMirror.commands.save = function () {
+        saveSource();
+      };
+      CodeMirror.Vim.defineEx('quit', 'q', function () {
+        quitToRender();
+      });
+      CodeMirror.Vim.defineEx('wq', 'wq', function () {
+        saveSource();
       });
     }
 
