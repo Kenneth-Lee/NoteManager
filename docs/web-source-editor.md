@@ -1,0 +1,93 @@
+# Web 源码编辑器与粘贴截图（设计说明）
+
+## 目标
+
+- 在工程内通过 nmrd Web 打开的笔记页面中，将「源文件」页签从只读高亮升级为**可编辑**。
+- **保存**后写回磁盘上的 `.md` / `.rst`，并触发与文件监控一致的**增量重建**，刷新「渲染」页签内容。
+- 在编辑器内 **粘贴剪贴板中的截图**（`image/png` 等）时，将图片**保存到当前源文件同一目录**，并在光标处插入对应引用（Markdown / reST）。
+
+## 约束与假设
+
+- nmrd 的 HTTP 服务绑定 **`127.0.0.1`**，仅本机访问；不单独实现登录，依赖操作系统对本机端口的访问控制。
+- 仅对**已纳入监控的工程**中、通过正常构建生成的页面开启编辑；**临时预览**（`/temp/...`，源路径为绝对路径）**不开启**写盘能力。
+- 写入路径必须解析后仍位于该工程根目录之下，禁止 `..` 穿越。
+
+## 架构
+
+| 层级 | 职责 |
+|------|------|
+| 浏览器 | CodeMirror 5 编辑区；`paste` 拦截图片 → `multipart/form-data` 上传；保存 → `POST /api/save_source` JSON。 |
+| `web.py` | 路由：`/api/save_source`、`/api/paste_image`；解析 multipart；调用 daemon。 |
+| `daemon` | 校验工程索引与相对路径；写文件；调用 `builder.update_file` 触发重建。 |
+
+保存成功后由前端 **`location.reload()`** 刷新整页，使「渲染」与侧栏索引与最新静态资源一致（实现简单，与现有 `build_complete` 行为兼容）。
+
+从「渲染」切到「源文件」时，编辑器在先前为 `display:none` 的容器中初始化会导致布局宽度为 0，需在页签可见后调用 **`refresh()`**（见 `nm-editor.js` 的 `IntersectionObserver` 与页签点击回调）。离开「源文件」前往「渲染/诊断」且未保存时，应 **`confirm`** 以免误丢编辑。粘贴图片成功后除写入源码目录外，会 **`_copy_project_assets`** 同步到 `.NoteManager/html/`，便于保存前相对路径已指向磁盘上存在的文件；仍须 **保存源码** 后整页刷新，渲染区才会出现 `<img>`。
+
+## 编辑器选型（轻量、无打包）
+
+- 采用 **CodeMirror 5**（UMD 单文件 + mode 脚本），与现有 **KaTeX / highlight.js** 一样放入 `notemanager/renderer/assets/`，由 `builder._copy_static_assets` 复制到各工程 `_static/`。
+- **未采用 CodeMirror 6**：其以 ESM 为主，在「无 bundler、纯静态 HTML」下集成成本更高。
+- **Markdown**：`mode/markdown` + 依赖的 `mode/xml`。
+- **reStructuredText**：无官方 CM5 高亮 mode，使用**无 mode** 的纯文本编辑（仍保留行号、主题、粘贴逻辑）。
+
+主题选用 **dracula**，与原有深色「源文件」面板风格接近。
+
+## API 设计
+
+### `POST /api/save_source`
+
+`Content-Type: application/json`
+
+```json
+{
+  "project": 0,
+  "source_rel_path": "notes/foo.md",
+  "content": "……全文……"
+}
+```
+
+- `project`：与 URL `/p/{project}/...` 一致。
+- `source_rel_path`：相对工程根的正斜杠路径，后缀须为 `.md` 或 `.rst`。
+
+成功：`{"ok": true}`；失败：`{"ok": false, "error": "…"}`。
+
+### `POST /api/paste_image`
+
+`Content-Type: multipart/form-data`
+
+字段：
+
+- `project`：字符串或数字，工程索引。
+- `source_rel_path`：当前正在编辑的源文件相对路径（用于确定**保存目录** = 该文件所在目录）。
+- `file`：二进制图片。
+
+服务端根据 `Content-Type` 限制为 `image/png`、`image/jpeg`、`image/webp`、`image/gif`，大小上限（如 8MiB）。文件名采用 `nm-paste-{时间戳}-{随机}.{ext}`，避免覆盖。
+
+响应示例：
+
+```json
+{
+  "ok": true,
+  "insert_markdown": "![](nm-paste-20260202-120000-a1b2c3d4.png)",
+  "insert_rst": ".. image:: nm-paste-20260202-120000-a1b2c3d4.png"
+}
+```
+
+插入串为**相对于源文件所在目录**的相对路径（POSIX），与常见 `![](同目录图)` 写法一致。
+
+## 粘贴行为说明
+
+- 仅当剪贴板项含 **`image/*`** 时拦截默认粘贴并上传；普通文本/代码粘贴仍走 CodeMirror 默认逻辑。
+- 上传成功后**只插入引用行**，不自动调用「保存」：用户可继续编辑后一次保存，减少半成稿状态。
+- 图片先落盘；若用户未保存源码，可能出现「磁盘上有图、文中未引用」的孤立文件，属可接受的简化行为。
+
+## 与现有构建链的关系
+
+- `update_file` 开头会执行 `_copy_project_assets`，故同目录下新生成的 `png` 等会在本次（或下次）构建中复制到 `html/` 输出树，渲染页可引用。
+
+## 后续可扩展（非本期范围）
+
+- 冲突检测（mtime / 版本号）。
+- 自动压缩大图、WebP 转换。
+- 仅 `localhost` 以外的部署时增加认证或 CSRF 防护。

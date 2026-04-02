@@ -5,6 +5,7 @@ Serves a control panel, project HTML files, and SSE event stream.
 
 import json
 import os
+import re
 import urllib.parse
 from html import escape as html_escape
 import weakref
@@ -52,6 +53,53 @@ class EventBroadcaster:
 broadcaster = EventBroadcaster()
 
 
+def _parse_multipart_form(content_type: str, body: bytes) -> dict:
+    """解析 multipart/form-data，字段名为 str，文件字段为 (bytes, filename, content_type)。"""
+    m = re.search(r"boundary=([^;\s]+)", content_type, re.I)
+    if not m:
+        raise ValueError("multipart 缺少 boundary")
+    boundary = m.group(1).strip().strip('"').encode("ascii")
+    delim = b"--" + boundary
+    parts = body.split(delim)
+    out: dict = {}
+    for raw in parts:
+        chunk = raw.strip()
+        if not chunk or chunk == b"--":
+            continue
+        if chunk.startswith(b"\r\n"):
+            chunk = chunk[2:]
+        sep = chunk.find(b"\r\n\r\n")
+        if sep < 0:
+            continue
+        headers_blob = chunk[:sep].decode("latin-1", errors="replace")
+        content = chunk[sep + 4 :]
+        if content.endswith(b"\r\n"):
+            content = content[:-2]
+        cd_line = ""
+        ct_part = "application/octet-stream"
+        for line in headers_blob.split("\r\n"):
+            ll = line.lower()
+            if ll.startswith("content-disposition:"):
+                cd_line = line
+            elif ll.startswith("content-type:"):
+                ct_part = line.split(":", 1)[1].strip()
+        if not cd_line:
+            continue
+        nm = re.search(r'name="([^"]+)"', cd_line)
+        if not nm:
+            continue
+        name = nm.group(1)
+        fn_m = re.search(r'filename="([^"]*)"', cd_line)
+        if fn_m:
+            out[name] = (content, fn_m.group(1), ct_part)
+        else:
+            try:
+                out[name] = content.decode("utf-8")
+            except UnicodeDecodeError:
+                out[name] = content.decode("latin-1", errors="replace")
+    return out
+
+
 class WebHandler(BaseHTTPRequestHandler):
     """HTTP handler for control panel, project files, and SSE."""
 
@@ -78,10 +126,14 @@ class WebHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
-        if path.startswith("/api/"):
-            self._handle_api_post(path)
-        else:
+        if not path.startswith("/api/"):
             self._send_error(404, "Not Found")
+            return
+        ctype = self.headers.get("Content-Type", "")
+        if path == "/api/paste_image" and "multipart/form-data" in ctype.lower():
+            self._handle_paste_image_post(ctype)
+            return
+        self._handle_api_post(path)
 
     def _handle_sse(self):
         """Handle SSE connection: keep alive and push events."""
@@ -153,9 +205,45 @@ class WebHandler(BaseHTTPRequestHandler):
             resp = self.daemon_ref.rebuild_directory(directory)
         elif path == "/api/default":
             resp = self.daemon_ref.handle_default(data)
+        elif path == "/api/save_source":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            resp = self.daemon_ref.save_managed_source(
+                pj,
+                str(data.get("source_rel_path", "")),
+                str(data.get("content", "")),
+            )
         else:
             self._send_error(404, "Unknown API endpoint")
             return
+        self._send_json(resp)
+
+    def _handle_paste_image_post(self, content_type: str):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length > 0 else b""
+            fields = _parse_multipart_form(content_type, body)
+        except (ValueError, OSError) as e:
+            self._send_json({"ok": False, "error": str(e)})
+            return
+        try:
+            project = int(fields.get("project", -1))
+        except (TypeError, ValueError):
+            self._send_json({"ok": False, "error": "无效工程编号"})
+            return
+        rel = str(fields.get("source_rel_path", ""))
+        file_entry = fields.get("file")
+        if not isinstance(file_entry, tuple) or len(file_entry) != 3:
+            self._send_json({"ok": False, "error": "缺少文件字段"})
+            return
+        raw, _filename, ct = file_entry
+        if not isinstance(raw, bytes):
+            self._send_json({"ok": False, "error": "无效文件数据"})
+            return
+        resp = self.daemon_ref.save_paste_image(project, rel, raw, ct)
         self._send_json(resp)
 
     def _serve_project_file(self, path):
@@ -229,6 +317,16 @@ class WebHandler(BaseHTTPRequestHandler):
         mime = mime_types.get(ext, "application/octet-stream")
         self.send_response(200)
         self.send_header("Content-Type", mime)
+        if ext in (
+            ".html",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".webp",
+            ".gif",
+            ".svg",
+        ):
+            self.send_header("Cache-Control", "no-cache, must-revalidate")
         size = path.stat().st_size
         self.send_header("Content-Length", str(size))
         self.end_headers()

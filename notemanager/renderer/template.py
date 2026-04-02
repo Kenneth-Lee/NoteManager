@@ -1,5 +1,6 @@
 """HTML template wrapper for rendered content."""
 
+import json
 import re
 from pathlib import Path
 
@@ -50,7 +51,8 @@ def _static_prefix(html_rel_path: str) -> str:
 
 def wrap_html(body: str, title: str, html_rel_path: str,
               toc: str = "", source: str = "", warnings: list | None = None,
-              source_path: str = "", dtags: list | None = None) -> str:
+              source_path: str = "", dtags: list | None = None,
+              *, source_editable: bool = False) -> str:
     """Wrap an HTML body fragment in a full HTML5 page.
 
     Args:
@@ -62,6 +64,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
         warnings: Optional list of warning strings for diagnostics view.
         source_path: Optional original source file path for display.
         dtags: Optional list of dtag strings for this document.
+        source_editable: When True, source tab uses CodeMirror + save API (managed projects only).
 
     Returns:
         Complete HTML document string.
@@ -70,11 +73,47 @@ def wrap_html(body: str, title: str, html_rel_path: str,
     warnings = warnings or []
     dtags = dtags or []
 
-    # Highlight source server-side with Pygments
     source_path_display = _escape(source_path) if source_path else ""
-    highlighted_source = _highlight_source(source, source_path) if source else ""
-    # Escape curly braces for f-string embedding
-    highlighted_source = highlighted_source.replace("{", "{{").replace("}", "}}")
+
+    if source_editable and source_path:
+        highlighted_source = ""
+        cm_head = (
+            f'<link rel="stylesheet" href="{prefix}_static/codemirror/lib/codemirror.css">\n'
+            f'<link rel="stylesheet" href="{prefix}_static/codemirror/theme/dracula.css">'
+        )
+        sjson = json.dumps(source, ensure_ascii=False)
+        meta = json.dumps(
+            {
+                "editable": True,
+                "source_rel": source_path.replace("\\", "/"),
+                "source_ext": Path(source_path).suffix.lower(),
+            },
+            ensure_ascii=False,
+        )
+        source_panel_inner = (
+            '<div class="nm-source-toolbar">'
+            '<button type="button" class="nm-source-save" id="nm-source-save">保存并刷新渲染</button>'
+            '<span class="nm-source-status" id="nm-source-status"></span></div>'
+            f'<div class="nm-source-path">{source_path_display}</div>'
+            f'<script type="application/json" id="nm-page-meta">{meta}</script>'
+            f'<script type="application/json" id="nm-source-json">{sjson}</script>'
+            '<div id="nm-editor-mount"></div>'
+        )
+        cm_foot = (
+            f'<script src="{prefix}_static/codemirror/lib/codemirror.js"></script>\n'
+            f'<script src="{prefix}_static/codemirror/mode/xml/xml.js"></script>\n'
+            f'<script src="{prefix}_static/codemirror/mode/markdown/markdown.js"></script>\n'
+            f'<script src="{prefix}_static/nm-editor.js"></script>'
+        )
+    else:
+        cm_head = ""
+        cm_foot = ""
+        highlighted_source = _highlight_source(source, source_path) if source else ""
+        highlighted_source = highlighted_source.replace("{", "{{").replace("}", "}}")
+        source_panel_inner = (
+            f'<div class="nm-source-path">{source_path_display}</div>\n'
+            f"<pre><code>{highlighted_source}</code></pre>"
+        )
     warnings_text = "\\n".join(warnings) if warnings else "无诊断信息"
 
     # Build dtag badge HTML
@@ -97,6 +136,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 <title>{_escape(title)}</title>
 <link rel="stylesheet" href="{prefix}_static/notemanager.css">
 <link rel="stylesheet" href="{prefix}_static/katex.min.css">
+{cm_head}
 <style>
 {_PYGMENTS_CSS}
 /* Sidebar */
@@ -170,6 +210,26 @@ def wrap_html(body: str, title: str, html_rel_path: str,
     white-space: pre-wrap; font-size: 13px; line-height: 1.5; }}
 .nm-source-path {{ color: #98c379; font-size: 12px; font-family: 'SFMono-Regular', Consolas, monospace;
                    margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #555; }}
+.nm-source-toolbar {{ margin-bottom: 10px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }}
+.nm-source-save {{ padding: 6px 14px; background: #98c379; color: #1e1e1e; border: none; border-radius: 4px;
+                   cursor: pointer; font-size: 13px; font-weight: 600; }}
+.nm-source-save:hover {{ filter: brightness(1.08); }}
+.nm-source-status {{ font-size: 12px; min-height: 1.2em; }}
+/* CodeMirror：避免在 display:none 中初始化后行号与正文重叠；由 JS refresh 配合 */
+.nm-source-panel.nm-tab-panel {{ overflow-x: hidden; }}
+#nm-editor-mount .CodeMirror {{
+  border: 1px solid #444; border-radius: 4px; font-size: 13px;
+  height: auto !important;
+}}
+#nm-editor-mount .CodeMirror-scroll {{ min-height: 320px; overflow-y: auto !important; }}
+#nm-editor-mount .CodeMirror-gutters {{
+  background: #21222c !important; border-right: 1px solid #444 !important;
+  width: auto !important; min-width: 3.2em;
+}}
+#nm-editor-mount .CodeMirror-linenumber {{
+  color: #6272a4 !important; padding: 0 10px 0 6px !important; text-align: right;
+}}
+#nm-editor-mount .CodeMirror-sizer {{ min-width: 0 !important; }}
 /* Warnings panel */
 .nm-warnings-panel {{ white-space: pre-wrap; font-family: 'SFMono-Regular', Consolas, monospace;
                       font-size: 13px; line-height: 1.5; background: #fffaf0; color: #5f4b32; }}
@@ -231,8 +291,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 {body}
 </div>
 <div id="nm-panel-source" class="nm-tab-panel nm-source-panel">
-<div class="nm-source-path">{source_path_display}</div>
-<pre><code>{highlighted_source}</code></pre>
+{source_panel_inner}
 </div>
 <div id="nm-panel-warnings" class="nm-tab-panel nm-warnings-panel">
 {_escape(warnings_text)}
@@ -240,6 +299,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 </div>
 </div>
 <script>window.NM_PREFIX="{prefix}";</script>
+{cm_foot}
 <script src="{prefix}_static/notemanager.js"></script>
 <script src="{prefix}_static/katex.min.js"></script>
 <script src="{prefix}_static/katex-auto-render.min.js"></script>

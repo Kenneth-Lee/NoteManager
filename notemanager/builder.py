@@ -344,6 +344,7 @@ def _write_html(html_dir, fi, rendered, ref_labels):
         warnings=rendered.get("warnings", []),
         source_path=str(fi.rel_path),
         dtags=rendered.get("dtags", []),
+        source_editable=True,
     )
     html_path.write_text(full_html, encoding="utf-8")
 

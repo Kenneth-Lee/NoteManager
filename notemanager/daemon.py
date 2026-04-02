@@ -7,6 +7,7 @@ and on HTTP for web UI, manages watchers for all registered directories.
 import json
 import logging
 import os
+import secrets
 import socketserver
 import subprocess
 import sys
@@ -34,6 +35,15 @@ from notemanager.renderer.template import wrap_html
 logger = logging.getLogger(__name__)
 
 DEFAULT_WEB_PORT = 19833
+
+_PASTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+_PASTE_IMAGE_TYPES: dict[str, str] = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 
 
 def _first_search_hit_open_url(project_idx: int, project_dir: Path, query: str) -> str | None:
@@ -606,6 +616,7 @@ class NoteManagerDaemon:
             warnings=warnings,
             source_path=str(source),
             dtags=rendered.get("dtags", []),
+            source_editable=False,
         )
 
         temp_dir = self.get_temp_view_dir()
@@ -618,6 +629,98 @@ class NoteManagerDaemon:
         out_name = f"{key}.html"
         (temp_dir / out_name).write_text(html, encoding="utf-8")
         return f"/temp/{out_name}"
+
+    def _validated_source_rel(
+        self, project_root: Path, source_rel_posix: str,
+    ) -> tuple[Path, Path] | tuple[None, None]:
+        """若合法则返回 (工程根 pathlib.Path, 源文件相对 Path)，否则 (None, None)。"""
+        rel = Path(source_rel_posix.replace("\\", "/"))
+        if rel.is_absolute() or any(p == ".." for p in rel.parts):
+            return None, None
+        if rel.suffix.lower() not in (".md", ".rst"):
+            return None, None
+        root = project_root.resolve()
+        abs_src = (root / rel).resolve()
+        if not str(abs_src).startswith(str(root)):
+            return None, None
+        return root, rel
+
+    def save_managed_source(self, project_idx: int, source_rel_posix: str, content: str) -> dict:
+        """将源码写回磁盘并增量重建该文件。"""
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root, rel = self._validated_source_rel(Path(dirs[project_idx]), source_rel_posix)
+        if rel is None:
+            return {"ok": False, "error": "非法源文件路径"}
+        abs_src = (root / rel).resolve()
+        try:
+            abs_src.write_text(content, encoding="utf-8", newline="\n")
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+        try:
+            from notemanager.builder import update_file
+
+            update_file(root, abs_src)
+        except Exception as e:
+            logger.exception("保存后重建失败")
+            return {"ok": False, "error": f"重建失败: {e}"}
+        return {"ok": True}
+
+    def save_paste_image(
+        self,
+        project_idx: int,
+        source_rel_posix: str,
+        data: bytes,
+        raw_content_type: str,
+    ) -> dict:
+        """把粘贴的图片存到源文件同目录，返回插入片段。"""
+        ct = raw_content_type.split(";")[0].strip().lower()
+        ext = _PASTE_IMAGE_TYPES.get(ct)
+        if ext is None:
+            return {"ok": False, "error": f"不支持的图片类型: {ct}"}
+        if len(data) > _PASTE_IMAGE_MAX_BYTES:
+            return {"ok": False, "error": "图片过大"}
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root, rel = self._validated_source_rel(Path(dirs[project_idx]), source_rel_posix)
+        if rel is None:
+            return {"ok": False, "error": "非法源文件路径"}
+        dest_dir = (root / rel.parent).resolve()
+        root_r = root.resolve()
+        if not str(dest_dir).startswith(str(root_r)):
+            return {"ok": False, "error": "非法保存目录"}
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        fn = f"nm-paste-{stamp}-{secrets.token_hex(4)}{ext}"
+        out = (dest_dir / fn).resolve()
+        if not str(out).startswith(str(root_r)):
+            return {"ok": False, "error": "拒绝路径"}
+        try:
+            out.write_bytes(data)
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+        src_dir = (root / rel.parent).resolve()
+        try:
+            rel_insert = Path(os.path.relpath(out, src_dir)).as_posix()
+        except ValueError:
+            rel_insert = fn
+        html_dir = root / ".NoteManager" / "html"
+        if html_dir.is_dir():
+            try:
+                from notemanager.builder import _copy_project_assets
+
+                _copy_project_assets(root, html_dir)
+            except Exception as ex:
+                logger.warning("粘贴图片后同步 html 资源目录失败: %s", ex)
+        return {
+            "ok": True,
+            "insert_markdown": f"![]({rel_insert})",
+            "insert_rst": f".. image:: {rel_insert}",
+        }
 
     def _resolve_project_index(self, project, dirs):
         """Resolve a project identifier (index, name, or None) to an index."""
