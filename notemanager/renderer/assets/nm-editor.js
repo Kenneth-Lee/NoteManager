@@ -5,6 +5,11 @@
     return m ? parseInt(m[1], 10) : -1;
   }
 
+  /** 仅 nmrd Web 以 /p/<工程号>/ 提供页面时可编辑；拷贝出去的 html 目录走只读降级 */
+  function isNmWebUiPath() {
+    return /^\/p\/\d+\//.test(window.location.pathname || '');
+  }
+
   function scheduleRefresh(cm) {
     if (!cm) return;
     var h = Math.max(360, window.innerHeight - 220) + 'px';
@@ -18,6 +23,20 @@
     });
   }
 
+  function mountReadonlyFallback(mount, initial) {
+    var tb = document.querySelector('.nm-source-toolbar');
+    if (tb) tb.style.display = 'none';
+    var hint = document.createElement('div');
+    hint.className = 'nm-source-readonly-hint';
+    hint.textContent =
+      '当前页面不是通过 NoteManager 控制台打开（或无法访问 /p/… 路径），源文件以只读方式显示；编辑与保存需在本机使用 Web 控制台浏览工程。';
+    mount.appendChild(hint);
+    var pre = document.createElement('pre');
+    pre.className = 'nm-source-static-fallback';
+    pre.textContent = initial;
+    mount.appendChild(pre);
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     var metaEl = document.getElementById('nm-page-meta');
     if (!metaEl) return;
@@ -28,10 +47,6 @@
       return;
     }
     if (!cfg.editable) return;
-    if (typeof CodeMirror === 'undefined') return;
-
-    var project = projectFromPath();
-    if (project < 0) return;
 
     var srcEl = document.getElementById('nm-source-json');
     if (!srcEl) return;
@@ -45,6 +60,19 @@
 
     var mount = document.getElementById('nm-editor-mount');
     if (!mount) return;
+
+    var webUi = isNmWebUiPath();
+    var hasCM = typeof CodeMirror !== 'undefined';
+    if (!webUi || !hasCM) {
+      mountReadonlyFallback(mount, initial);
+      return;
+    }
+
+    var project = projectFromPath();
+    if (project < 0) {
+      mountReadonlyFallback(mount, initial);
+      return;
+    }
 
     var preCode = document.querySelector('#nm-panel-source pre');
     if (preCode) preCode.style.display = 'none';
@@ -76,6 +104,12 @@
 
     cm.on('change', function () {
       recomputeDirty();
+    });
+
+    window.addEventListener('beforeunload', function (e) {
+      if (!window.__nmDirty) return;
+      e.preventDefault();
+      e.returnValue = '';
     });
 
     var sourcePanel = document.getElementById('nm-panel-source');
@@ -154,6 +188,13 @@
           }),
         })
           .then(function (r) {
+            if (!r.ok) {
+              return r
+                .text()
+                .then(function (t) {
+                  throw new Error(t || 'HTTP ' + r.status);
+                });
+            }
             return r.json();
           })
           .then(function (d) {
@@ -166,8 +207,8 @@
               setStatus(d.error || '保存失败', true);
             }
           })
-          .catch(function () {
-            setStatus('网络错误', true);
+          .catch(function (err) {
+            setStatus(err && err.message ? err.message : '网络错误', true);
           });
       });
     }
@@ -188,6 +229,11 @@
         setStatus('上传截图…');
         fetch('/api/paste_image', { method: 'POST', body: fd })
           .then(function (r) {
+            if (!r.ok) {
+              return r.text().then(function (t) {
+                throw new Error(t || 'HTTP ' + r.status);
+              });
+            }
             return r.json();
           })
           .then(function (d) {
@@ -201,8 +247,8 @@
             recomputeDirty();
             setStatus('已插入图片引用，请点击「保存并刷新渲染」');
           })
-          .catch(function () {
-            setStatus('上传失败', true);
+          .catch(function (err) {
+            setStatus(err && err.message ? err.message : '上传失败', true);
           });
         return;
       }

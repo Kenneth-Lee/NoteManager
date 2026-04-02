@@ -84,7 +84,24 @@
 
 ## 与现有构建链的关系
 
-- `update_file` 开头会执行 `_copy_project_assets`，故同目录下新生成的 `png` 等会在本次（或下次）构建中复制到 `html/` 输出树，渲染页可引用。
+- `update_file` 会执行 `_copy_project_assets`，故同目录下新生成的 `png` 等会复制到 `html/` 输出树，渲染页可引用。
+
+## 未保存离开：页签切换与刷新/关闭
+
+- 切换到「渲染 / 诊断」时由 **`confirm`** 拦截（捕获阶段）。
+- **刷新、关闭标签页**由 **`beforeunload`** 提示（现代浏览器只显示通用文案，无法自定义句子）；有未保存修改时（`__nmDirty`）会触发。
+
+## 保存耗时（瓶颈说明）
+
+每次保存仍会执行 **`update_file` 的完整链路**：扫描工程、**全量** `extract_labels` / dtags / `.. index::`、为**每个**已生成 HTML 读盘并 **`build_index`**、写 `dtag_index`、更新首页与 `status.json` 等。工程越大，这部分越占时间。
+
+Web 保存路径已设 **`refresh_static_assets=False`**，跳过每次把 **整个 `_static`（含 CodeMirror 等大目录）** 再拷入 `html`，通常能明显减少秒级等待；其余全量索引逻辑若需再缩短，需要增量索引等更大改造。
+
+## 拷贝 `html` 目录离线浏览（无 `/p/…`）
+
+承诺「整份 `html` 可拷走分享」时，页面 URL **不再是** `http://127.0.0.1:<端口>/p/<工程号>/...`，浏览器 **`pathname`** 无法匹配 `/p/\\d+/`。
+
+`nm-editor.js` 在此情况下 **不初始化 CodeMirror**，隐藏保存工具栏，仅用内嵌 JSON 中的源码渲染 **`<pre>` 只读** 并显示简短说明；**不请求** `/api/save_source`，避免因 404/跨域产生未捕获异常。侧栏搜索等仍依赖 `_index/search_index.json` 的相对路径；若用 `file://` 打开，部分浏览器对 `fetch` 有限制，属静态站点通用限制。
 
 ## 后续可扩展（非本期范围）
 

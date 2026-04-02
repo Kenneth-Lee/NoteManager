@@ -662,7 +662,7 @@ class NoteManagerDaemon:
         try:
             from notemanager.builder import update_file
 
-            update_file(root, abs_src)
+            update_file(root, abs_src, refresh_static_assets=False)
         except Exception as e:
             logger.exception("保存后重建失败")
             return {"ok": False, "error": f"重建失败: {e}"}

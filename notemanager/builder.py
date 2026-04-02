@@ -149,11 +149,20 @@ def full_build(
     return nm_dir
 
 
-def update_file(project_root: str | Path, file_path: str | Path) -> None:
+def update_file(
+    project_root: str | Path,
+    file_path: str | Path,
+    *,
+    refresh_static_assets: bool = True,
+) -> None:
     """Incrementally update a single file.
 
     Re-renders the file, rebuilds the full index and ref_labels
     (since labels may have changed).
+
+    Args:
+        refresh_static_assets: 为 False 时跳过将 _static（含 CodeMirror 等）拷入 html；
+            Web 保存源码时设为 False 可明显缩短耗时。文件监控触发的更新仍应用默认 True。
     """
     project_root = Path(project_root).resolve()
     file_path = Path(file_path).resolve()
@@ -174,9 +183,9 @@ def update_file(project_root: str | Path, file_path: str | Path) -> None:
         full_build(project_root)
         return
 
-    # Refresh static assets (JS/CSS may have been updated)
     static_dir.mkdir(parents=True, exist_ok=True)
-    _copy_static_assets(static_dir)
+    if refresh_static_assets:
+        _copy_static_assets(static_dir)
     _copy_project_assets(project_root, html_dir)
 
     # Re-scan to get current file list

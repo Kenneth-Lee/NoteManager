@@ -230,6 +230,15 @@ def wrap_html(body: str, title: str, html_rel_path: str,
   color: #6272a4 !important; padding: 0 10px 0 6px !important; text-align: right;
 }}
 #nm-editor-mount .CodeMirror-sizer {{ min-width: 0 !important; }}
+.nm-source-readonly-hint {{
+  font-size: 12px; color: #bd93f9; margin-bottom: 10px; line-height: 1.5;
+  padding: 8px 10px; background: #3d3f4a; border-radius: 4px; border: 1px solid #6272a4;
+}}
+.nm-source-static-fallback {{
+  white-space: pre-wrap; word-break: break-word; font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 13px; line-height: 1.5; color: #f8f8f2; margin: 0; padding: 12px;
+  background: #21222c; border: 1px solid #444; border-radius: 4px; max-height: 70vh; overflow: auto;
+}}
 /* Warnings panel */
 .nm-warnings-panel {{ white-space: pre-wrap; font-family: 'SFMono-Regular', Consolas, monospace;
                       font-size: 13px; line-height: 1.5; background: #fffaf0; color: #5f4b32; }}
