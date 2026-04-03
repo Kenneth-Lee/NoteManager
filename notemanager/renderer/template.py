@@ -171,6 +171,11 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .nm-search-help-popup code {{ background: #f0f0f0; padding: 1px 4px; border-radius: 2px; font-size: 11px; }}
 .nm-search-help-popup ul {{ margin: 4px 0; padding-left: 16px; }}
 .nm-search-help-popup li {{ margin: 2px 0; }}
+.nm-sidebar-switch {{ padding: 8px 12px; border-bottom: 1px solid #e0e0e0; display: flex; gap: 8px; }}
+.nm-sidebar-switch-btn {{ flex: 1; padding: 6px 8px; border: 1px solid #bbdefb; border-radius: 4px;
+    background: #fff; color: #1565c0; cursor: pointer; font-size: 12px; }}
+.nm-sidebar-switch-btn:hover {{ background: #e3f2fd; }}
+.nm-sidebar-switch-btn.active {{ background: #e3f2fd; font-weight: 600; }}
 .nm-sidebar-toc {{ flex: 1; overflow-y: auto; padding: 8px 12px; }}
 .nm-sidebar-search-results {{ display: none; flex: 1; overflow-y: auto; padding: 0; }}
 .nm-sidebar-search-results .nm-result-item {{ display: block; padding: 8px 12px; text-decoration: none;
@@ -298,6 +303,10 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 </ul>
 <div style="margin-top:6px;color:#888;">支持正则；可写多条件（空格分隔，AND），如 <code>dtag:数学 grep:\"pi.*=\"</code>；值含空格请用引号。带映射条件键入即查；含 <code>grep:</code> 时按 Enter 执行并渐进返回结果。</div>
 </div>
+</div>
+<div class="nm-sidebar-switch">
+<button id="nm-sidebar-view-toc" class="nm-sidebar-switch-btn active" data-view="toc" type="button">目录</button>
+<button id="nm-sidebar-view-results" class="nm-sidebar-switch-btn" data-view="results" type="button">搜索结果</button>
 </div>
 <div id="nm-sidebar-toc" class="nm-sidebar-toc">{toc}</div>
 <div id="nm-sidebar-search-results" class="nm-sidebar-search-results"></div>

@@ -685,6 +685,10 @@ def _copy_static_assets(static_dir):
     if _ASSETS_SRC.is_dir():
         import shutil
         for item in _ASSETS_SRC.iterdir():
+            # Do not overwrite the generated sidebar JS/CSS from _DEFAULT_JS/_DEFAULT_CSS.
+            # renderer/assets/notemanager.js is a legacy copy.
+            if item.is_file() and item.name in {"notemanager.js", "notemanager.css"}:
+                continue
             if item.is_file():
                 shutil.copy2(item, static_dir / item.name)
             elif item.is_dir():
@@ -889,6 +893,8 @@ _DEFAULT_JS = """\
 
     var sidebarToc = document.getElementById('nm-sidebar-toc');
     var sidebarResults = document.getElementById('nm-sidebar-search-results');
+    var sidebarViewTocBtn = document.getElementById('nm-sidebar-view-toc');
+    var sidebarViewResultsBtn = document.getElementById('nm-sidebar-view-results');
 
     var searchData = null;
     var searchDataPrefix = null;
@@ -915,11 +921,43 @@ _DEFAULT_JS = """\
 
     function showIndexLoadError(err) {
         console.error(err || 'search index load failed');
-        if (sidebarToc) sidebarToc.style.display = 'none';
+        setSidebarView('results');
         if (sidebarResults) {
             sidebarResults.innerHTML = '<div class="nm-no-results">无法加载搜索索引（请确认已构建并执行 nmr rebuild）</div>';
-            sidebarResults.style.display = 'block';
         }
+    }
+
+    function setSidebarView(view) {
+        if (view === 'results') {
+            if (sidebarToc) sidebarToc.style.display = 'none';
+            if (sidebarResults) sidebarResults.style.display = 'block';
+            if (sidebarViewResultsBtn) sidebarViewResultsBtn.classList.add('active');
+            if (sidebarViewTocBtn) sidebarViewTocBtn.classList.remove('active');
+        } else {
+            if (sidebarToc) sidebarToc.style.display = '';
+            if (sidebarResults) sidebarResults.style.display = 'none';
+            if (sidebarViewResultsBtn) sidebarViewResultsBtn.classList.remove('active');
+            if (sidebarViewTocBtn) sidebarViewTocBtn.classList.add('active');
+        }
+    }
+
+    // Keep q in URL so that when user opens a search result and comes back,
+    // the sidebar can re-show the same search results.
+    function upsertQParam(url, q) {
+        if (!q) return url;
+        var u = String(url || '');
+        var hash = '';
+        var hi = u.indexOf('#');
+        if (hi >= 0) {
+            hash = u.slice(hi);
+            u = u.slice(0, hi);
+        }
+        if (/[?&]q=/.test(u)) {
+            u = u.replace(/([?&])q=[^&#]*/g, '$1q=' + encodeURIComponent(q));
+            return u + hash;
+        }
+        var sep = u.indexOf('?') >= 0 ? '&' : '?';
+        return u + sep + 'q=' + encodeURIComponent(q) + hash;
     }
 
     function loadIndex() {
@@ -994,7 +1032,9 @@ _DEFAULT_JS = """\
             } catch(e) {
                 snippet = escapeHtml(snippet);
             }
-            html += '<a class="nm-result-item" href="' + escAttr(docHref(doc.path)) + '">' +
+            var href = docHref(doc.path);
+            href = upsertQParam(href, query);
+            html += '<a class="nm-result-item" href="' + escAttr(href) + '">' +
                 '<div class="nm-result-title">' + typeBadge(doc.type) + escapeHtml(doc.title || '') + '</div>' +
                 '<div class="nm-result-path">' + escapeHtml(doc.path || '') + '</div>' +
                 '<div class="nm-result-snippet">' + snippet + '</div>' +
@@ -1007,23 +1047,18 @@ _DEFAULT_JS = """\
         var q = String(query || '').trim();
         var results = regexSearch(q);
         if (openFirst && results.length === 1) {
-            window.location.href = docHref(results[0].path);
+            // Avoid auto-navigation to prevent "q=..." reload loops.
+            // Keep showing the single result instead.
+            // window.location.href = upsertQParam(docHref(results[0].path), q);
             return;
         }
         var html = renderResults(q, results);
-        if (sidebarToc) sidebarToc.style.display = 'none';
-        if (sidebarResults) {
-            sidebarResults.innerHTML = html;
-            sidebarResults.style.display = 'block';
-        }
+        if (sidebarResults) sidebarResults.innerHTML = html;
+        setSidebarView('results');
     }
 
     function hideSearchResults() {
-        if (sidebarToc) sidebarToc.style.display = '';
-        if (sidebarResults) {
-            sidebarResults.style.display = 'none';
-            sidebarResults.innerHTML = '';
-        }
+        setSidebarView('toc');
     }
 
     searchInput.addEventListener('input', function() {
@@ -1048,7 +1083,7 @@ _DEFAULT_JS = """\
         if (!q) return;
         clearTimeout(debounceTimer);
         loadIndex().then(function() {
-            showSearchResults(q, true);
+            showSearchResults(q, false);
         }).catch(showIndexLoadError);
     });
 
@@ -1058,10 +1093,19 @@ _DEFAULT_JS = """\
         if (q) {
             searchInput.value = q;
             loadIndex().then(function() {
-                showSearchResults(q, true);
+                showSearchResults(q, false);
             }).catch(showIndexLoadError);
         }
     })();
+
+    // Sidebar view switches: keep search results and TOC independent.
+    if (sidebarViewTocBtn) {
+        sidebarViewTocBtn.addEventListener('click', function() { setSidebarView('toc'); });
+    }
+    if (sidebarViewResultsBtn) {
+        sidebarViewResultsBtn.addEventListener('click', function() { setSidebarView('results'); });
+    }
+    setSidebarView('toc');
     (function() {
         var p = window.location.pathname || '';
         if (p.indexOf('/temp/') === 0) {
@@ -1080,7 +1124,7 @@ _DEFAULT_JS = """\
             if (tag) {
                 searchInput.value = 'dtag:' + tag;
                 loadIndex().then(function() {
-                    showSearchResults('dtag:' + tag, true);
+                    showSearchResults('dtag:' + tag, false);
                 }).catch(showIndexLoadError);
             }
         });
@@ -1106,7 +1150,7 @@ _DEFAULT_JS = """\
             searchInput.value = query;
             clearTimeout(debounceTimer);
             loadIndex().then(function() {
-                showSearchResults(query, true);
+                showSearchResults(query, false);
             }).catch(showIndexLoadError);
             window.focus();
         });
@@ -1123,6 +1167,17 @@ _DEFAULT_JS = """\
             if (parts.length < 2 || parts[0] !== 'p') return;
             var cur = parseInt(parts[1], 10);
             if (isNaN(cur) || cur !== data.project) return;
+            // Break potential reload loops: if build_complete is emitted on
+            // reconnect or too frequently, we only reload once per time window.
+            try {
+                var key = 'nm_build_reload_ts';
+                var last = parseInt(sessionStorage.getItem(key) || '0', 10) || 0;
+                var now = Date.now();
+                if (now - last < 10000) return;
+                sessionStorage.setItem(key, String(now));
+            } catch (err) {
+                // Ignore sessionStorage errors; fall back to a plain reload.
+            }
             window.location.reload();
         });
     })();
