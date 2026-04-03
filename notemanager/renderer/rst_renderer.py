@@ -48,6 +48,9 @@ def _collect_rst_separator_title_candidates(source: str) -> list[dict]:
     lines = source.splitlines()
     out: list[dict] = []
     for i, line in enumerate(lines):
+        # "from line start": section adornments must not be indented.
+        if line != line.lstrip():
+            continue
         stripped = line.strip()
         if not _is_rst_separator_line(stripped):
             continue
@@ -174,6 +177,112 @@ def _rst_diagnostic_html_blocks(
     return blocks
 
 
+def _rst_diagnostic_after_heading_repair(body: str) -> str:
+    fixed = _extract_html_heading_levels_in_order(body)
+    lines = [
+        "[RST诊断] 经 _rst_repair_heading_levels_by_source_hierarchy 后的 <h1>…<h6>（DOM 顺序）:"
+    ]
+    if not fixed:
+        lines.append("  (无)")
+    else:
+        for lv, text in fixed:
+            lines.append(f"  h{lv}  {text!r}")
+    return "\n".join(lines)
+
+
+def _normalize_heading_text(text: str) -> str:
+    """Normalize heading plain text for robust matching."""
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _rst_repair_heading_levels_by_source_hierarchy(
+    source: str, html: str
+) -> str:
+    """Repair <h1>..<h6> levels based on RST adornment hierarchy.
+
+    We first deduce the ordered set of adornment characters from the source
+    (candidates where a separator line matches and its adjacent line is a title).
+    Each distinct adornment char is mapped to an expected level: 1,2,3...
+
+    Then we match each HTML heading (DOM order) to the next source candidate
+    with the same text, and rewrite that heading's <hN> tag accordingly.
+
+    This is done before TOC/section-numbering extraction so that TOC can be
+    refreshed together with repaired levels.
+    """
+    candidates = _collect_rst_separator_title_candidates(source)
+    if not candidates:
+        return html
+
+    distinct: list[str] = []
+    seen: set[str] = set()
+    for c in candidates:
+        ch = c.get("underline_char") or ""
+        if ch and ch not in seen:
+            distinct.append(ch)
+            seen.add(ch)
+
+    expected_level_by_char: dict[str, int] = {ch: i + 1 for i, ch in enumerate(distinct)}
+    if not expected_level_by_char:
+        return html
+
+    heading_re = re.compile(
+        r"<h([1-6])([^>]*)>(.*?)</h\1>",
+        re.DOTALL | re.IGNORECASE,
+    )
+
+    def _extract_class(attrs: str) -> str:
+        m = re.search(r"\bclass\s*=\s*([\"'])(.*?)\1", attrs, re.DOTALL | re.IGNORECASE)
+        return (m.group(2) if m else "").strip()
+
+    def _strip_tags(s: str) -> str:
+        return re.sub(r"<[^>]+>", "", s)
+
+    out: list[str] = []
+    last = 0
+    cand_i = 0
+    for m in heading_re.finditer(html):
+        out.append(html[last : m.start()])
+        cur_lv = int(m.group(1))
+        attrs = m.group(2)
+        inner = m.group(3)
+
+        cls = _extract_class(attrs)
+        is_title = cls == "title" or "title" in cls.split()
+        desired_lv: int | None = None
+
+        if is_title:
+            desired_lv = 1
+        else:
+            hv = _normalize_heading_text(_strip_tags(inner))
+            # Find the next matching candidate in order.
+            found = False
+            for k in range(cand_i, len(candidates)):
+                cand_text = _normalize_heading_text(candidates[k]["title"])
+                if cand_text == hv:
+                    underline_char = candidates[k]["underline_char"]
+                    desired_lv = expected_level_by_char.get(underline_char)
+                    cand_i = k + 1
+                    found = True
+                    break
+            if not found:
+                desired_lv = None
+
+        if desired_lv is None:
+            out.append(m.group(0))
+        else:
+            desired_lv = max(1, min(6, int(desired_lv)))
+            if desired_lv == cur_lv:
+                out.append(m.group(0))
+            else:
+                out.append(f"<h{desired_lv}{attrs}>{inner}</h{desired_lv}>")
+        last = m.end()
+
+    out.append(html[last:])
+    return "".join(out)
+
+
 def _ensure_roles_registered():
     """Register custom roles and directives once."""
     global _roles_registered
@@ -265,6 +374,11 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
     body = _clean_paragraph_linebreaks(body)
     body = _inject_term_anchors(body)
 
+    # Repair heading levels (and therefore TOC levels) based on source hierarchy
+    # before we extract headings and generate TOC/section numbers.
+    body = _rst_repair_heading_levels_by_source_hierarchy(processed, body)
+
+    # (Optional) keep a debug snapshot of final heading levels.
     # Extract heading info for TOC (before numbering)
     headings = _extract_headings(body)
 
@@ -280,6 +394,7 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
         warnings.extend(
             _rst_diagnostic_html_blocks(html_before_heading_fix, html_after_heading_fix)
         )
+        warnings.append(_rst_diagnostic_after_heading_repair(body))
 
     return {"body": body, "toc": toc_html, "warnings": warnings, "dtags": dtags}
 

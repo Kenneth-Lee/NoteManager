@@ -394,6 +394,7 @@ def _rst_line_is_adornment(line: str) -> str | None:
 
 def _rst_collect_headings(lines: list[str]) -> list[tuple[str, str, int]]:
     """收集 RST 过渡标题：(标题文本, 装饰字符, 标题行行号)。含上划线+下划线形式。"""
+    import re
     headings: list[tuple[str, str, int]] = []
     n = len(lines)
     i = 0
@@ -402,7 +403,12 @@ def _rst_collect_headings(lines: list[str]) -> list[tuple[str, str, int]]:
         if not stripped:
             i += 1
             continue
-        if stripped.startswith("..") or stripped.startswith(":"):
+        if stripped.startswith(".."):
+            i += 1
+            continue
+        # Skip RST field lists like ":Authors: Name" but keep role-markup
+        # titles like ":index:`bash` 技巧" (no whitespace after second colon).
+        if stripped.startswith(":") and re.match(r"^:[A-Za-z][\w-]*:\s+", stripped):
             i += 1
             continue
 
@@ -436,34 +442,60 @@ def _rst_collect_headings(lines: list[str]) -> list[tuple[str, str, int]]:
     return headings
 
 
+def _rst_clean_title_text(text: str) -> str:
+    """Clean RST title text (remove :index:`...` etc)."""
+    import re
+
+    t = (text or "").strip()
+    # Prefer role-like titles: :index:`bash`
+    m = re.search(r":[A-Za-z][\w-]*:`([^`]+)`", t)
+    if not m:
+        # Fallback: any inline code: `bash`
+        m = re.search(r"`([^`]+)`", t)
+    if m:
+        t = m.group(1)
+
+    # RST escaping: "\ " -> space
+    t = re.sub(r"\\\s*", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
 def _rst_pick_document_title(
     headings: list[tuple[str, str, int]], stem: str = ""
 ) -> str | None:
     """在收集到的节标题中选「文档标题」。
 
-    docutils 常见写法里 ``====`` 表示文档/顶层标题，``----`` 表示小节。若文中先出现
-    ``----`` 再出现 ``====``（例如先导小节名误写在上），仍应以第一个 ``=`` 装饰行为准。
-    若全篇没有 ``=``，则退回第一个过渡标题（与 docutils 首次出现即最高级的规则一致）。
+    以前的规则偏好 ``=`` 装饰，但你的笔记里顶层标题可能用 ``*`` 等其它装饰符，
+    且标题行可能以 ``:index:`` 开头。
 
-    ``stem`` 为源文件名（不含扩展名）时：若文中存在与 stem 完全相同的节标题（大小写不敏感），
-    优先于「按出现顺序的第一个节」——用于 ``bash.rst`` 里先写 ``基础逻辑``/``----``、再写
-    ``bash``/``----`` 等常见笔记结构。
+    这里改为：按装饰符的首次出现顺序推断层级，取“最顶层”（装饰符层级最小）的标题。
+    同时对 ``:index:`...` `` 等内容做清洗后再返回。
     """
     if not headings:
         return None
+
+    # Determine adornment rank by first appearance in the source.
+    ordered = sorted(headings, key=lambda h: h[2])
+    distinct: list[str] = []
+    seen: set[str] = set()
+    for _text, ch, _ln in ordered:
+        if ch and ch not in seen:
+            distinct.append(ch)
+            seen.add(ch)
+
+    rank = {ch: i for i, ch in enumerate(distinct)}  # smaller => higher level
+    min_rank = min(rank.get(ch, 10**9) for _text, ch, _ln in ordered)
+    picked = min(
+        (h for h in ordered if rank.get(h[1], 10**9) == min_rank),
+        key=lambda h: h[2],
+    )
+
+    cleaned = _rst_clean_title_text(picked[0])
     stem_key = (stem or "").strip().lower()
-    if stem_key:
-        for text, ch, _ln in headings:
-            if ch == "=" and text.strip().lower() == stem_key:
-                return text
-        for text, _ch, _ln in headings:
-            if text.strip().lower() == stem_key:
-                return text
-    eq = [h for h in headings if h[1] == "="]
-    if eq:
-        eq.sort(key=lambda h: h[2])
-        return eq[0][0]
-    return headings[0][0]
+    if stem_key and cleaned.lower().startswith(stem_key):
+        return stem
+    return cleaned or picked[0]
 
 
 def _md_strip_yaml_frontmatter(content: str) -> str:

@@ -44,7 +44,10 @@ def fix_docutils_html5_heading_levels(html: str) -> str:
                     self.parts.append(_fmt_tag("h1", attrs))
                     self._h_close_stack.append("h1")
                 else:
-                    level = min(6, self.section_depth + 1)
+                    # docutils html5_polyglot 会把顶层 section 的标题也包进
+                    # <section> 中，因此此时 self.section_depth==1。为了让顶层
+                    # 标题仍落到 h1（非 document title），这里把层级整体上移一档。
+                    level = min(6, self.section_depth)
                     nt = f"h{level}"
                     self.parts.append(_fmt_tag(nt, attrs))
                     self._h_close_stack.append(nt)
