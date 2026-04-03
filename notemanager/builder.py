@@ -999,6 +999,9 @@ _DEFAULT_JS = """\
         var docs = searchData.documents;
         for (var i = 0; i < docs.length; i++) {
             var doc = docs[i];
+            // Default (mapped) search: do NOT include grep/render blocks unless user
+            // explicitly uses `grep:`. This matches docs/搜索策略说明.md.
+            if (!parsed.type && doc.type === 'grep') continue;
             if (parsed.type && doc.type !== parsed.type) continue;
             var sn = doc.snippet || '';
             re.lastIndex = 0;
@@ -1034,7 +1037,8 @@ _DEFAULT_JS = """\
             }
             var href = docHref(doc.path);
             href = upsertQParam(href, query);
-            html += '<a class="nm-result-item" href="' + escAttr(href) + '">' +
+            var dp = escAttr(doc.path || '');
+            html += '<a class="nm-result-item" data-doc-path="' + dp + '" href="' + escAttr(href) + '">' +
                 '<div class="nm-result-title">' + typeBadge(doc.type) + escapeHtml(doc.title || '') + '</div>' +
                 '<div class="nm-result-path">' + escapeHtml(doc.path || '') + '</div>' +
                 '<div class="nm-result-snippet">' + snippet + '</div>' +
@@ -1055,10 +1059,85 @@ _DEFAULT_JS = """\
         var html = renderResults(q, results);
         if (sidebarResults) sidebarResults.innerHTML = html;
         setSidebarView('results');
+        restoreSearchScrollAndSelection(q);
     }
 
     function hideSearchResults() {
         setSidebarView('toc');
+    }
+
+    function searchKey(q) {
+        try { return encodeURIComponent(String(q || '')); } catch(e) { return String(q || ''); }
+    }
+    function selKey(q) { return 'nm_search_sel_' + searchKey(q); }
+    function scrollKey(q) { return 'nm_search_scroll_' + searchKey(q); }
+    function hoverYKey(q) { return 'nm_search_hover_y_' + searchKey(q); }
+    function selTopKey(q) { return 'nm_search_sel_top_' + searchKey(q); }
+
+    function restoreSearchScrollAndSelection(q) {
+        if (!sidebarResults) return;
+        // Ensure we restore after layout.
+        try {
+            var sel = sessionStorage.getItem(selKey(q));
+            var st = parseInt(sessionStorage.getItem(scrollKey(q)) || '', 10);
+            var hoverY = parseFloat(sessionStorage.getItem(hoverYKey(q)) || 'NaN');
+            var selTop = parseFloat(sessionStorage.getItem(selTopKey(q)) || 'NaN');
+            if (isNaN(st)) st = null;
+            if (isNaN(hoverY)) hoverY = null;
+            if (isNaN(selTop)) selTop = null;
+            if (sel) {
+                var nodes = sidebarResults.querySelectorAll('.nm-result-item');
+                for (var i = 0; i < nodes.length; i++) {
+                    if (nodes[i].getAttribute('data-doc-path') === sel) {
+                        if (hoverY !== null && selTop !== null) {
+                            // itemTop is relative to scroll content; to make item stay under cursor
+                            // with the same relative offset (hoverY), we set scrollTop so that
+                            // itemTop - scrollTop == hoverY.
+                            var desired = selTop - hoverY;
+                            if (desired < 0) desired = 0;
+                            var max = sidebarResults.scrollHeight - sidebarResults.clientHeight;
+                            if (desired > max) desired = max;
+                            sidebarResults.scrollTop = desired;
+                        } else if (hoverY !== null) {
+                            // Fallback to approximate delta alignment.
+                            nodes[i].scrollIntoView({ block: 'nearest' });
+                        } else {
+                            nodes[i].scrollIntoView({ block: 'nearest' });
+                        }
+                        return;
+                    }
+                }
+            }
+            if (st !== null) sidebarResults.scrollTop = st;
+        } catch (err) {}
+    }
+
+    if (sidebarResults) {
+        sidebarResults.addEventListener('click', function(e) {
+            var a = e.target.closest('.nm-result-item');
+            if (!a) return;
+            var q = '';
+            // Derive current query from the input (preferred).
+            if (searchInput) q = String(searchInput.value || '').trim();
+            if (!q) {
+                // Fallback: attempt from URL param.
+                var params = new URLSearchParams(window.location.search);
+                q = params.get('q') || '';
+            }
+            var dp = a.getAttribute('data-doc-path') || '';
+            try {
+                sessionStorage.setItem(selKey(q), dp);
+                sessionStorage.setItem(scrollKey(q), String(sidebarResults.scrollTop || 0));
+                // Save the pointer Y offset relative to results container,
+                // and the selected item top relative to scroll content.
+                var cRect = sidebarResults.getBoundingClientRect();
+                var y = (typeof e.clientY === 'number' ? e.clientY : cRect.top) - cRect.top;
+                var nRect = a.getBoundingClientRect();
+                var itemTop = (nRect.top - cRect.top) + (sidebarResults.scrollTop || 0);
+                sessionStorage.setItem(hoverYKey(q), String(y));
+                sessionStorage.setItem(selTopKey(q), String(itemTop));
+            } catch (err) {}
+        });
     }
 
     searchInput.addEventListener('input', function() {
