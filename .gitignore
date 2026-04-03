@@ -6,3 +6,4 @@ __pycache__/
 dist/
 build/
 ref_project_md_viewer
+tags

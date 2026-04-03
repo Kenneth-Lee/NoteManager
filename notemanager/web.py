@@ -216,6 +216,54 @@ class WebHandler(BaseHTTPRequestHandler):
                 str(data.get("source_rel_path", "")),
                 str(data.get("content", "")),
             )
+        elif path == "/api/create_note":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            resp = self.daemon_ref.create_note_same_dir(
+                pj,
+                str(data.get("source_rel_path", "")),
+                str(data.get("filename", "")),
+                str(data.get("source_ext", ".md")),
+            )
+        elif path == "/api/delete_note":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            resp = self.daemon_ref.delete_managed_source(
+                pj,
+                str(data.get("source_rel_path", "")),
+            )
+        elif path == "/api/grep_start":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            query = str(data.get("query", ""))
+            filters = data.get("filters")
+            if not isinstance(filters, list):
+                filters = []
+            resp = self.daemon_ref.start_grep_search(pj, query, filters)
+        elif path == "/api/grep_status":
+            try:
+                jid = int(data.get("job_id", -1))
+                since = int(data.get("since", 0))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "参数错误"})
+                return
+            resp = self.daemon_ref.get_grep_status(jid, since)
+        elif path == "/api/grep_cancel":
+            try:
+                jid = int(data.get("job_id", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "参数错误"})
+                return
+            resp = self.daemon_ref.cancel_grep_search(jid)
         else:
             self._send_error(404, "Unknown API endpoint")
             return

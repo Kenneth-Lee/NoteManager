@@ -30,11 +30,18 @@ _DIRECT_HEADING_RE = re.compile(
     re.DOTALL,
 )
 
-# <span class="dtag">tag1, tag2</span>
-_DTAG_RE = re.compile(r'<span class="dtag">([^<]+)</span>')
+# Doc title in RST html5 output: <main id="doc-id"><h1 class="title">Title</h1>
+_DOC_TITLE_RE = re.compile(
+    r'<main[^>]*\bid="([^"]+)"[^>]*>\s*<h1[^>]*\bclass="[^"]*\btitle\b[^"]*"[^>]*>(.*?)</h1>',
+    re.DOTALL,
+)
+_MAIN_ID_RE = re.compile(r'<main[^>]*\bid="([^"]+)"', re.DOTALL)
 
-# <span class="index-term">term</span>
-_INDEX_TERM_RE = re.compile(r'<span class="index-term">([^<]+)</span>')
+# <span class="dtag" id="...">tag1, tag2</span>
+_DTAG_RE = re.compile(r'<span class="dtag"([^>]*)>([^<]+)</span>')
+
+# <span class="index-term" id="...">term</span>
+_INDEX_TERM_RE = re.compile(r'<span class="index-term"([^>]*)>([^<]+)</span>')
 
 # .. index:: term
 _RST_INDEX_DIRECTIVE_RE = re.compile(r'^\.\.\s+index::\s+(.+)$', re.MULTILINE)
@@ -178,13 +185,18 @@ def build_index(
             extracted from source before stripping.
     """
     entries = []
+    main_anchor_by_path: dict[str, str] = {}
 
     for doc in documents:
         path = doc["path"]
         body = doc["body"]
         if 'id="nm-panel-render"' in body:
             body = extract_render_panel_inner_html(body)
+        m_main = _MAIN_ID_RE.search(body)
+        if m_main:
+            main_anchor_by_path[path] = m_main.group(1)
         title = doc.get("title") or ""
+        _extract_fname(entries, path, title)
         _extract_chapters(entries, path, body)
         _extract_dtags(entries, path, body)
         _extract_index_terms(entries, path, body)
@@ -219,6 +231,8 @@ def build_index(
         seen = set()
         for rel_path, tags in dtags_per_doc.items():
             html_path = str(Path(rel_path).with_suffix(".html"))
+            main_anchor = main_anchor_by_path.get(html_path, "")
+            target = f"{html_path}#{main_anchor}" if main_anchor else html_path
             for tag in tags:
                 tag = tag.strip()
                 if tag and (html_path, tag) not in seen:
@@ -226,7 +240,7 @@ def build_index(
                     entries.append({
                         "type": "dtag",
                         "title": tag,
-                        "path": html_path,
+                        "path": target,
                         "text": tag,
                         "snippet": f"文档标签: {tag}",
                     })
@@ -243,11 +257,25 @@ def build_index(
 def _extract_chapters(entries: list, path: str, html: str) -> None:
     """Extract section headings from rendered HTML."""
     seen_ids = set()
+    # RST document title style: <main id="..."><h1 class="title">...</h1>
+    m = _DOC_TITLE_RE.search(html)
+    if m:
+        heading_id = m.group(1)
+        title = _normalize_heading_text(_strip_tags(m.group(2)))
+        if title:
+            seen_ids.add(heading_id)
+            entries.append({
+                "type": "chapter",
+                "title": title,
+                "path": f"{path}#{heading_id}",
+                "text": title,
+                "snippet": f"H1: {title}",
+            })
     # RST style: <section id="xxx">...<hN>title</hN>
     for match in _SECTION_HEADING_RE.finditer(html):
         section_id = match.group(1)
         level = int(match.group(2))
-        title = _strip_tags(match.group(3))
+        title = _normalize_heading_text(_strip_tags(match.group(3)))
         if not title:
             continue
         seen_ids.add(section_id)
@@ -262,7 +290,7 @@ def _extract_chapters(entries: list, path: str, html: str) -> None:
     for match in _DIRECT_HEADING_RE.finditer(html):
         level = int(match.group(1))
         heading_id = match.group(2)
-        title = _strip_tags(match.group(3))
+        title = _normalize_heading_text(_strip_tags(match.group(3)))
         if not title or heading_id in seen_ids:
             continue
         seen_ids.add(heading_id)
@@ -279,7 +307,11 @@ def _extract_dtags(entries: list, path: str, html: str) -> None:
     """Extract document tags from rendered HTML."""
     seen = set()
     for match in _DTAG_RE.finditer(html):
-        raw = match.group(1)
+        attrs = match.group(1) or ""
+        raw = match.group(2)
+        id_m = re.search(r'\bid="([^"]+)"', attrs)
+        anchor = id_m.group(1) if id_m else ""
+        target = f"{path}#{anchor}" if anchor else path
         for tag in raw.split(","):
             tag = tag.strip()
             if tag and (path, tag) not in seen:
@@ -287,7 +319,7 @@ def _extract_dtags(entries: list, path: str, html: str) -> None:
                 entries.append({
                     "type": "dtag",
                     "title": tag,
-                    "path": path,
+                    "path": target,
                     "text": tag,
                     "snippet": f"文档标签: {tag}",
                 })
@@ -297,16 +329,35 @@ def _extract_index_terms(entries: list, path: str, html: str) -> None:
     """Extract inline index terms from rendered HTML."""
     seen = set()
     for match in _INDEX_TERM_RE.finditer(html):
-        term = match.group(1).strip()
+        attrs = match.group(1) or ""
+        term = match.group(2).strip()
+        id_m = re.search(r'\bid="([^"]+)"', attrs)
+        anchor = id_m.group(1) if id_m else ""
+        target = f"{path}#{anchor}" if anchor else path
         if term and (path, term) not in seen:
             seen.add((path, term))
             entries.append({
                 "type": "index",
                 "title": term,
-                "path": path,
+                "path": target,
                 "text": term,
                 "snippet": f"索引条目: {term}",
             })
+
+
+def _extract_fname(entries: list, path: str, doc_title: str) -> None:
+    """Add filename-based entries for fast file-name lookup."""
+    p = Path(path)
+    stem = p.stem.strip()
+    name = p.name.strip()
+    title = (doc_title or stem or name).strip()
+    entries.append({
+        "type": "fname",
+        "title": stem or name,
+        "path": path,
+        "text": name,
+        "snippet": f"文件: {name} | 标题: {title}",
+    })
 
 
 def extract_md_hashtags(content: str) -> list[str]:
@@ -385,3 +436,9 @@ def extract_rst_index_directives(files) -> dict[str, list[str]]:
 def _strip_tags(html: str) -> str:
     """Remove HTML tags from a string."""
     return re.sub(r"<[^>]+>", "", html).strip()
+
+
+def _normalize_heading_text(text: str) -> str:
+    """Drop auto section-number prefixes like '1. ' / '1.2. '."""
+    t = (text or "").strip()
+    return re.sub(r"^\d+(?:\.\d+)*\.\s*", "", t).strip()

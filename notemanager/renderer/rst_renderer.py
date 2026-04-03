@@ -1,7 +1,9 @@
 """RST to HTML renderer using docutils."""
 
-import re
 import io
+import os
+import re
+from html.parser import HTMLParser
 
 from docutils.core import publish_parts
 
@@ -10,10 +12,166 @@ from notemanager.renderer.directives import register_directives
 from notemanager.renderer.postproc import (
     add_section_numbers,
     add_toc_numbers,
+    fix_docutils_html5_heading_levels,
     generate_toc_from_headings,
 )
 
 _roles_registered = False
+
+
+def _rst_diagnostics_enabled() -> bool:
+    """环境变量 ``NOTEMANAGER_RST_DIAG=1`` 时，在 ``warnings`` 中附加 RST 标题诊断块。"""
+    return os.environ.get("NOTEMANAGER_RST_DIAG", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _is_rst_separator_line(stripped: str) -> bool:
+    """整行（已 strip）为同一非标点字符的重复，且长度 ≥2，视作候选装饰线。"""
+    if len(stripped) < 2:
+        return False
+    c = stripped[0]
+    if c.isalnum():
+        return False
+    return all(ch == c for ch in stripped)
+
+
+def _collect_rst_separator_title_candidates(source: str) -> list[dict]:
+    """按「装饰线行 + 上一行不长于装饰行的一行文字」启发式收集候选节标题（与 docutils 无关）。
+
+    规则：若某行 strip 后为同一非标点字符填满，且上一行非空、本身不是装饰线、且
+    ``len(上一行) <= len(装饰行)``（常见 RST：下划线至少与标题等长），则把上一行记为候选标题。
+    """
+    lines = source.splitlines()
+    out: list[dict] = []
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not _is_rst_separator_line(stripped):
+            continue
+        if i == 0:
+            continue
+        prev_raw = lines[i - 1]
+        prev_stripped = prev_raw.strip()
+        if not prev_stripped:
+            continue
+        if _is_rst_separator_line(prev_stripped):
+            continue
+        if len(prev_stripped) > len(stripped):
+            continue
+        out.append(
+            {
+                "line": i + 1,
+                "title": prev_stripped,
+                "underline_char": stripped[0],
+                "underline_len": len(stripped),
+            }
+        )
+    return out
+
+
+class _DocutilsRawH1OutlineParser(HTMLParser):
+    """docutils html5 中节标题多为 ``<h1>``，用 ``<section>`` 嵌套深度表示层级。"""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.out: list[tuple[int, str]] = []
+        self._section_depth = 0
+        self._in_h1 = False
+        self._h1_buf: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "section":
+            self._section_depth += 1
+        elif tag == "h1":
+            self._in_h1 = True
+            self._h1_buf = []
+
+    def handle_endtag(self, tag):
+        if tag == "h1" and self._in_h1:
+            text = "".join(self._h1_buf)
+            text = re.sub(r"<[^>]+>", "", text).strip()
+            if text:
+                self.out.append((self._section_depth, text))
+            self._in_h1 = False
+        elif tag == "section":
+            self._section_depth = max(0, self._section_depth - 1)
+
+    def handle_data(self, data):
+        if self._in_h1:
+            self._h1_buf.append(data)
+
+
+def _extract_docutils_raw_h1_outline(html: str) -> list[tuple[int, str]]:
+    p = _DocutilsRawH1OutlineParser()
+    try:
+        p.feed(html)
+        p.close()
+    except Exception:
+        return []
+    return p.out
+
+
+def _extract_html_heading_levels_in_order(html: str) -> list[tuple[int, str]]:
+    """按 DOM 顺序列出 ``<h1>``…``<h6>`` 的级别与纯文本（用于对比 fix 后层级）。"""
+    pat = re.compile(r"<(h[1-6])\b[^>]*>(.*?)</\1>", re.DOTALL | re.IGNORECASE)
+    out: list[tuple[int, str]] = []
+    for m in pat.finditer(html):
+        level = int(m.group(1)[1])
+        text = re.sub(r"<[^>]+>", "", m.group(2)).strip()
+        if text:
+            out.append((level, text))
+    return out
+
+
+def _rst_diagnostic_source_block(source_path: str, processed: str) -> str:
+    """调用 docutils 之前即可写入的源码侧候选节列表。"""
+    cands = _collect_rst_separator_title_candidates(processed)
+    src_lines = [
+        f"[RST诊断] 源文件: {source_path}",
+        "  (与送入 docutils 的文本一致：已做不支持的 role 剥离)",
+        "  启发式候选节（装饰线行 + 上一行不长于装饰行且非装饰线）:",
+    ]
+    if not cands:
+        src_lines.append("  (无)")
+    else:
+        for c in cands:
+            src_lines.append(
+                f"  L{c['line']}: 标题={c['title']!r}  下划线={c['underline_char']!r}×{c['underline_len']}"
+            )
+    return "\n".join(src_lines)
+
+
+def _rst_diagnostic_html_blocks(
+    html_before_heading_fix: str,
+    html_after_heading_fix: str,
+) -> list[str]:
+    """docutils 输出并经层级修正后的 HTML 标题诊断（在 ``publish_parts`` 之后追加）。"""
+    blocks: list[str] = []
+    raw_outline = _extract_docutils_raw_h1_outline(html_before_heading_fix)
+    raw_lines = [
+        "[RST诊断] docutils 原始 HTML（节内标题均为 <h1>；depth = 进入该 <h1> 前未闭合的 <section> 层数）:",
+    ]
+    if not raw_outline:
+        raw_lines.append("  (未解析到 <h1>，或 HTML 结构非预期)")
+    else:
+        for depth, text in raw_outline:
+            raw_lines.append(f"  depth={depth}  {text!r}")
+    blocks.append("\n".join(raw_lines))
+
+    fixed = _extract_html_heading_levels_in_order(html_after_heading_fix)
+    fix_lines = [
+        "[RST诊断] 经 fix_docutils_html5_heading_levels 后的 <h1>…<h6>（DOM 顺序）:",
+    ]
+    if not fixed:
+        fix_lines.append("  (无)")
+    else:
+        for lv, text in fixed:
+            fix_lines.append(f"  h{lv}  {text!r}")
+    blocks.append("\n".join(fix_lines))
+    return blocks
 
 
 def _ensure_roles_registered():
@@ -27,6 +185,11 @@ def _ensure_roles_registered():
 
 def render_rst(content: str, source_path: str = "<string>") -> dict:
     """Render RST content to HTML.
+
+    设置环境变量 ``NOTEMANAGER_RST_DIAG=1``（或 ``true``/``yes``/``on``）时，会在
+    ``warnings`` 末尾附加多段 ``[RST诊断]`` 文本：源码启发式候选节、docutils 原始
+    ``<h1>``+``<section>`` 深度、以及 ``fix_docutils_html5_heading_levels`` 之后的
+    ``<h1>``…``<h6>`` 列表，便于与 docutils 行为对照。
 
     Args:
         content: The RST source text.
@@ -51,6 +214,9 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
             warnings.append(msg)
 
     warning_stream = io.StringIO()
+
+    if _rst_diagnostics_enabled():
+        warnings.append(_rst_diagnostic_source_block(source_path, processed))
 
     settings = {
         "input_encoding": "utf-8",
@@ -86,6 +252,10 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
     # Post-processing pipeline
     body = _strip_system_messages(body)
     body = _strip_problematic_spans(body)
+    html_before_heading_fix = body
+    # docutils html5_polyglot uses <h1> for every section; fix before TOC/numbering
+    body = fix_docutils_html5_heading_levels(body)
+    html_after_heading_fix = body
     body, docinfo = _extract_and_strip_docinfo(body)
     if docinfo:
         warnings.append(f"文档信息: {docinfo}")
@@ -93,6 +263,7 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
     body = _strip_dtags(body)
     body = _normalize_literal_block_markers(body)
     body = _clean_paragraph_linebreaks(body)
+    body = _inject_term_anchors(body)
 
     # Extract heading info for TOC (before numbering)
     headings = _extract_headings(body)
@@ -104,6 +275,11 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
     toc_html = generate_toc_from_headings(headings)
     if toc_html and id_to_number:
         toc_html = add_toc_numbers(toc_html, id_to_number)
+
+    if _rst_diagnostics_enabled():
+        warnings.extend(
+            _rst_diagnostic_html_blocks(html_before_heading_fix, html_after_heading_fix)
+        )
 
     return {"body": body, "toc": toc_html, "warnings": warnings, "dtags": dtags}
 
@@ -150,7 +326,7 @@ def _strip_unsupported_roles(text):
     if not known_roles:
         return text, []
 
-    passthrough_roles = {"index"}
+    passthrough_roles = set()
     ignored = []
 
     def _repl(match):
@@ -306,3 +482,29 @@ def _clean_paragraph_linebreaks(html):
     except Exception:
         return html
     return parser.result()
+
+
+def _inject_term_anchors(html: str) -> str:
+    """Inject stable ids for index-term / dtag spans to improve result jump precision."""
+    idx = 0
+    dtag = 0
+
+    def repl_index(m):
+        nonlocal idx
+        attrs = m.group(1) or ""
+        if re.search(r'\bid="[^"]+"', attrs):
+            return m.group(0)
+        idx += 1
+        return f'<span class="index-term" id="nm-index-{idx}"{attrs}>{m.group(2)}</span>'
+
+    def repl_dtag(m):
+        nonlocal dtag
+        attrs = m.group(1) or ""
+        if re.search(r'\bid="[^"]+"', attrs):
+            return m.group(0)
+        dtag += 1
+        return f'<span class="dtag" id="nm-dtag-{dtag}"{attrs}>{m.group(2)}</span>'
+
+    html = re.sub(r'<span class="index-term"([^>]*)>(.*?)</span>', repl_index, html, flags=re.DOTALL)
+    html = re.sub(r'<span class="dtag"([^>]*)>(.*?)</span>', repl_dtag, html, flags=re.DOTALL)
+    return html

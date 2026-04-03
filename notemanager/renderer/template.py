@@ -94,6 +94,8 @@ def wrap_html(body: str, title: str, html_rel_path: str,
         source_panel_inner = (
             '<div class="nm-source-toolbar">'
             '<button type="button" class="nm-source-save" id="nm-source-save">保存并刷新渲染</button>'
+            '<button type="button" class="nm-source-secondary" id="nm-source-new" title="在与当前笔记相同的目录下新建文件">新建笔记</button>'
+            '<button type="button" class="nm-source-secondary nm-source-delete" id="nm-source-delete" title="删除磁盘上的当前源文件">删除当前笔记</button>'
             '<label class="nm-source-vim-wrap" title="启用 CodeMirror 内置 Vim 子集（默认关闭；偏好会保存在本机）">'
             '<input type="checkbox" id="nm-source-vim" autocomplete="off"> Vim 键位</label>'
             '<span class="nm-source-status" id="nm-source-status"></span></div>'
@@ -224,6 +226,11 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .nm-source-save {{ padding: 6px 14px; background: #98c379; color: #1e1e1e; border: none; border-radius: 4px;
                    cursor: pointer; font-size: 13px; font-weight: 600; }}
 .nm-source-save:hover {{ filter: brightness(1.08); }}
+.nm-source-secondary {{ padding: 6px 12px; background: #3d4451; color: #e0e0e0; border: 1px solid #5c6370;
+    border-radius: 4px; cursor: pointer; font-size: 13px; }}
+.nm-source-secondary:hover {{ background: #4a5260; }}
+.nm-source-delete {{ color: #e5a3a3; border-color: #8b4d4d; }}
+.nm-source-delete:hover {{ background: #5c3d3d; }}
 .nm-source-status {{ font-size: 12px; min-height: 1.2em; }}
 /* CodeMirror：避免在 display:none 中初始化后行号与正文重叠；由 JS refresh 配合 */
 .nm-source-panel.nm-tab-panel {{ overflow-x: hidden; }}
@@ -287,9 +294,9 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 <li><code>label:关键词</code> — 仅搜索锚点标签</li>
 <li><code>index:关键词</code> — 仅搜索索引条目</li>
 <li><code>dtag:关键词</code> — 仅搜索文档标签（reST 用 <code>:dtag:`标签`</code>；Markdown 用行内 <code>#标签</code>，须跟在空格或 <code>，。：</code> 等标点之后）</li>
-<li><code>grep:正则</code> — 在当前工程内全局搜索<strong>已渲染正文块</strong>（非源码）</li>
+<li><code>grep:正则</code> — 在当前工程内全局扫描源码（按 Enter 触发，结果逐步更新）</li>
 </ul>
-<div style="margin-top:6px;color:#888;">支持正则；键入时更新侧栏列表；仅当命中<strong>恰好 1 条</strong>时，按 <strong>Enter</strong> 或 <code>nmr search</code> 才会自动打开该页，否则保留列表供点击选择。</div>
+<div style="margin-top:6px;color:#888;">支持正则；可写多条件（空格分隔，AND），如 <code>dtag:数学 grep:\"pi.*=\"</code>；值含空格请用引号。带映射条件键入即查；含 <code>grep:</code> 时按 Enter 执行并渐进返回结果。</div>
 </div>
 </div>
 <div id="nm-sidebar-toc" class="nm-sidebar-toc">{toc}</div>

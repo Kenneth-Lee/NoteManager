@@ -6,6 +6,7 @@ and triggers incremental updates.
 
 import logging
 import threading
+import time
 from pathlib import Path
 
 from watchdog.observers import Observer
@@ -14,6 +15,30 @@ from watchdog.events import FileSystemEventHandler
 from notemanager.scanner import INCLUDE_EXTENSIONS, SKIP_DIRS
 
 logger = logging.getLogger(__name__)
+
+_SUPPRESS_LOCK = threading.Lock()
+_SUPPRESSED_UNTIL: dict[str, float] = {}
+
+
+def suppress_path(path: str | Path, seconds: float = 2.0) -> None:
+    """Suppress watcher-triggered rebuild for a path in a short time window."""
+    abs_path = str(Path(path).resolve())
+    until = time.time() + max(0.1, float(seconds))
+    with _SUPPRESS_LOCK:
+        _SUPPRESSED_UNTIL[abs_path] = until
+
+
+def _is_suppressed(path: str | Path) -> bool:
+    abs_path = str(Path(path).resolve())
+    now = time.time()
+    with _SUPPRESS_LOCK:
+        until = _SUPPRESSED_UNTIL.get(abs_path)
+        if until is None:
+            return False
+        if until <= now:
+            _SUPPRESSED_UNTIL.pop(abs_path, None)
+            return False
+        return True
 
 
 class NoteEventHandler(FileSystemEventHandler):
@@ -40,6 +65,8 @@ class NoteEventHandler(FileSystemEventHandler):
     def _schedule_update(self, path: str, event_type: str):
         """Debounce rapid events for the same file."""
         abs_path = str(Path(path).resolve())
+        if _is_suppressed(abs_path):
+            return
 
         with self._lock:
             self._pending[abs_path] = event_type
@@ -61,7 +88,12 @@ class NoteEventHandler(FileSystemEventHandler):
                             remove_file(self.project_root, fpath)
                         else:
                             if Path(fpath).exists():
-                                update_file(self.project_root, fpath)
+                                update_file(
+                                    self.project_root,
+                                    fpath,
+                                    refresh_static_assets=False,
+                                    refresh_project_assets=False,
+                                )
                     except Exception as e:
                         logger.error("处理 %s 时出错: %s", fpath, e)
 

@@ -9,6 +9,84 @@ import re
 from html.parser import HTMLParser
 
 
+def fix_docutils_html5_heading_levels(html: str) -> str:
+    """Remap docutils ``html5_polyglot`` headings to a real hierarchy.
+
+    Docutils emits ``<h1>`` for every section title nested in ``<section>``,
+    which makes multiple RST section titles look like sibling top-level
+    headings (and breaks hierarchical section numbering).
+
+    We remap non-title ``<h1>`` inside nested ``<section>`` to
+    ``<h{depth+1}>`` (capped at 6) based on ``<section>`` nesting depth.
+    The document title ``<h1 class="title">`` is left as ``<h1>``.
+    """
+
+    class _DocutilsHeadingFixer(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=False)
+            self.parts: list[str] = []
+            self.section_depth = 0
+            self._h_close_stack: list[str] = []
+
+        def get_result(self) -> str:
+            return "".join(self.parts)
+
+        def handle_starttag(self, tag: str, attrs):
+            if tag == "section":
+                self.section_depth += 1
+            if tag == "h1":
+                ad = dict(attrs)
+                cls = ad.get("class", "")
+                if isinstance(cls, list):
+                    cls = " ".join(cls)
+                is_title = cls == "title" or "title" in cls.split()
+                if is_title or self.section_depth == 0:
+                    self.parts.append(_fmt_tag("h1", attrs))
+                    self._h_close_stack.append("h1")
+                else:
+                    level = min(6, self.section_depth + 1)
+                    nt = f"h{level}"
+                    self.parts.append(_fmt_tag(nt, attrs))
+                    self._h_close_stack.append(nt)
+                return
+            self.parts.append(_fmt_tag(tag, attrs))
+
+        def handle_endtag(self, tag: str):
+            if tag == "h1":
+                t = self._h_close_stack.pop() if self._h_close_stack else "h1"
+                self.parts.append(f"</{t}>")
+                return
+            if tag == "section":
+                self.section_depth = max(0, self.section_depth - 1)
+            self.parts.append(f"</{tag}>")
+
+        def handle_data(self, data: str):
+            self.parts.append(data)
+
+        def handle_entityref(self, name: str):
+            self.parts.append(f"&{name};")
+
+        def handle_charref(self, name: str):
+            self.parts.append(f"&#{name};")
+
+        def handle_comment(self, data: str):
+            self.parts.append(f"<!--{data}-->")
+
+        def handle_decl(self, decl: str):
+            self.parts.append(f"<!{decl}>")
+
+        def handle_pi(self, data: str):
+            self.parts.append(f"<?{data}>")
+
+    parser = _DocutilsHeadingFixer()
+    try:
+        parser.feed(html)
+        parser.close()
+    except Exception:
+        return html
+    return parser.get_result()
+
+
 class SectionNumberingParser(HTMLParser):
     """Add section numbers to HTML headings.
 
@@ -139,7 +217,11 @@ def generate_toc_from_headings(headings: list[dict]) -> str:
     """
     if not headings:
         return ""
-    lines = ['<div class="toc"><ul>']
+    # RST 文档标题常不在 section 里，首个条目可能是 h2/h3；归一化避免顶层多包一层 <ul>
+    min_lv = min(h["level"] for h in headings)
+    headings = [{**h, "level": h["level"] - min_lv + 1} for h in headings]
+    # 首项用 prev_level==0 分支展开 <ul>；不要在此处先写死一层 <ul>，否则会多嵌套一层
+    lines = ['<div class="toc">']
     prev_level = 0
     for h in headings:
         level = h["level"]

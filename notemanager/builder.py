@@ -15,6 +15,7 @@ from notemanager.renderer.rst_renderer import render_rst
 from notemanager.renderer.md_renderer import render_md
 from notemanager.renderer.template import wrap_html
 from notemanager.ref_resolver import extract_labels, resolve_references
+from notemanager.index_body import extract_render_panel_inner_html
 from notemanager.indexer import build_index, extract_rst_index_directives
 from notemanager.indexer import extract_dtags_from_sources
 
@@ -154,6 +155,7 @@ def update_file(
     file_path: str | Path,
     *,
     refresh_static_assets: bool = True,
+    refresh_project_assets: bool = False,
 ) -> None:
     """Incrementally update a single file.
 
@@ -163,6 +165,8 @@ def update_file(
     Args:
         refresh_static_assets: 为 False 时跳过将 _static（含 CodeMirror 等）拷入 html；
             Web 保存源码时设为 False 可明显缩短耗时。文件监控触发的更新仍应用默认 True。
+        refresh_project_assets: 为 True 时同步工程内静态资源（图片等）到 html 目录。
+            仅源码文本更新时通常不需要，默认关闭以减少全目录遍历。
     """
     project_root = Path(project_root).resolve()
     file_path = Path(file_path).resolve()
@@ -186,7 +190,8 @@ def update_file(
     static_dir.mkdir(parents=True, exist_ok=True)
     if refresh_static_assets:
         _copy_static_assets(static_dir)
-    _copy_project_assets(project_root, html_dir)
+    if refresh_project_assets:
+        _copy_project_assets(project_root, html_dir)
 
     # Re-scan to get current file list
     files = scan_directory(project_root)
@@ -225,9 +230,9 @@ def update_file(
         html_path = html_dir / html_rel
         if html_path.exists():
             body = html_path.read_text(encoding="utf-8")
-            content = f.path.read_text(encoding="utf-8")
+            title = _document_list_title(f, body)
             documents.append({
-                "title": _extract_title(content, f.ext),
+                "title": title,
                 "path": str(html_rel),
                 "body": body,
             })
@@ -293,9 +298,9 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
         html_p = html_dir / html_r
         if html_p.exists():
             body = html_p.read_text(encoding="utf-8")
-            content = f.path.read_text(encoding="utf-8")
+            title = _document_list_title(f, body)
             documents.append({
-                "title": _extract_title(content, f.ext),
+                "title": title,
                 "path": str(html_r),
                 "body": body,
             })
@@ -332,7 +337,7 @@ def _render_file(fi: FileInfo) -> dict:
         result = render_rst(content, str(fi.rel_path))
     else:
         result = render_md(content, str(fi.rel_path))
-    result["title"] = _extract_title_from_html(result.get("body", "")) or _extract_title(content, fi.ext)
+    result["title"] = _resolve_page_title(content, fi, result.get("body", ""))
     result["source"] = content
     return result
 
@@ -374,43 +379,268 @@ def _build_dtag_index(all_dtags: dict) -> dict:
     return index
 
 
-def _extract_title(content, ext):
-    """Extract the first heading from rst or markdown content."""
+def _rst_line_is_adornment(line: str) -> str | None:
+    """若整行由同一非标点以外的重复符号组成（docutils 节装饰线），返回该符号。"""
+    s = line.strip()
+    if len(s) < 2:
+        return None
+    c = s[0]
+    if c.isalnum():
+        return None
+    if all(ch == c for ch in s):
+        return c
+    return None
+
+
+def _rst_collect_headings(lines: list[str]) -> list[tuple[str, str, int]]:
+    """收集 RST 过渡标题：(标题文本, 装饰字符, 标题行行号)。含上划线+下划线形式。"""
+    headings: list[tuple[str, str, int]] = []
+    n = len(lines)
+    i = 0
+    while i < n:
+        stripped = lines[i].strip()
+        if not stripped:
+            i += 1
+            continue
+        if stripped.startswith("..") or stripped.startswith(":"):
+            i += 1
+            continue
+
+        adorn_top = _rst_line_is_adornment(lines[i])
+        if adorn_top is not None and i + 2 < n:
+            mid = lines[i + 1].strip()
+            bot = _rst_line_is_adornment(lines[i + 2])
+            if (
+                mid
+                and not mid.startswith("..")
+                and _rst_line_is_adornment(lines[i + 1]) is None
+                and bot == adorn_top
+            ):
+                headings.append((mid, adorn_top, i + 1))
+                i += 3
+                continue
+
+        if _rst_line_is_adornment(lines[i]) is not None:
+            i += 1
+            continue
+
+        if i + 1 < n:
+            adorn_next = _rst_line_is_adornment(lines[i + 1])
+            if adorn_next is not None:
+                headings.append((stripped, adorn_next, i))
+                i += 2
+                continue
+
+        i += 1
+
+    return headings
+
+
+def _rst_pick_document_title(
+    headings: list[tuple[str, str, int]], stem: str = ""
+) -> str | None:
+    """在收集到的节标题中选「文档标题」。
+
+    docutils 常见写法里 ``====`` 表示文档/顶层标题，``----`` 表示小节。若文中先出现
+    ``----`` 再出现 ``====``（例如先导小节名误写在上），仍应以第一个 ``=`` 装饰行为准。
+    若全篇没有 ``=``，则退回第一个过渡标题（与 docutils 首次出现即最高级的规则一致）。
+
+    ``stem`` 为源文件名（不含扩展名）时：若文中存在与 stem 完全相同的节标题（大小写不敏感），
+    优先于「按出现顺序的第一个节」——用于 ``bash.rst`` 里先写 ``基础逻辑``/``----``、再写
+    ``bash``/``----`` 等常见笔记结构。
+    """
+    if not headings:
+        return None
+    stem_key = (stem or "").strip().lower()
+    if stem_key:
+        for text, ch, _ln in headings:
+            if ch == "=" and text.strip().lower() == stem_key:
+                return text
+        for text, _ch, _ln in headings:
+            if text.strip().lower() == stem_key:
+                return text
+    eq = [h for h in headings if h[1] == "="]
+    if eq:
+        eq.sort(key=lambda h: h[2])
+        return eq[0][0]
+    return headings[0][0]
+
+
+def _md_strip_yaml_frontmatter(content: str) -> str:
+    """去掉开头的 YAML frontmatter（``---`` … ``---``），避免其中的 ``#``/``---`` 干扰标题解析。"""
+    lines = content.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return content
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            return "\n".join(lines[i + 1 :])
+    return content
+
+
+def _md_collect_headings(lines: list[str]) -> list[tuple[int, int, str]]:
+    """收集 Markdown 标题：(级别 1–6, 行号, 文本)。忽略 fenced code block 内行。"""
     import re
+
+    result: list[tuple[int, int, str]] = []
+    fence = False
+    i = 0
+    n = len(lines)
+    while i < n:
+        s = lines[i].strip()
+        if s.startswith("```"):
+            fence = not fence
+            i += 1
+            continue
+        if fence:
+            i += 1
+            continue
+        stripped = lines[i].lstrip()
+        if not stripped:
+            i += 1
+            continue
+        m = re.match(r"^(#{1,6})(?:\s+|$)(.*)$", stripped)
+        if m:
+            level = len(m.group(1))
+            rest = (m.group(2) or "").strip()
+            rest = re.sub(r"\s+#+\s*$", "", rest).strip()
+            if rest:
+                result.append((level, i, rest))
+            i += 1
+            continue
+        if i + 1 < n:
+            nxt = lines[i + 1].strip()
+            cur = stripped
+            if cur and not cur.startswith("#"):
+                if len(nxt) >= 3 and all(c == "=" for c in nxt):
+                    result.append((1, i, cur))
+                    i += 2
+                    continue
+                if len(nxt) >= 3 and all(c == "-" for c in nxt):
+                    result.append((2, i, cur))
+                    i += 2
+                    continue
+        i += 1
+    return result
+
+
+def _md_pick_document_title(headings: list[tuple[int, int, str]]) -> str | None:
+    """取「文档级」标题：全篇最低大纲级别中、最先出现的那一个（故 ``##`` 在前的先导小节
+    不会压过后面出现的 ``#`` 一级标题）。
+    """
+    if not headings:
+        return None
+    min_lv = min(h[0] for h in headings)
+    for level, _ln, text in headings:
+        if level == min_lv:
+            return text
+    return None
+
+
+def _extract_title(content, ext, stem: str = ""):
+    """从源码提取用于侧栏/索引的文档标题（非任意首段正文）。
+
+    ``stem``：源文件名不含扩展名；仅 RST 用于与节名对齐（见 `_rst_pick_document_title`）。
+    """
     if ext == ".rst":
         lines = content.split("\n")
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            if not stripped or stripped.startswith("..") or stripped.startswith(":"):
-                continue
-            if re.match(r'^[=\-~`!@#$%^&*+<>:"#]{3,}$', stripped):
-                if i + 1 < len(lines):
-                    text = lines[i + 1].strip()
-                    if text and not text.startswith("..") and not text.startswith(":"):
-                        return text
-                continue
-            if i + 1 < len(lines):
-                next_line = lines[i + 1].strip()
-                if re.match(r'^[=\-~`!@#$%^&*+<>:"#]{3,}$', next_line):
-                    return stripped
-            return stripped
-    else:
-        for line in content.split("\n"):
-            stripped = line.strip()
-            if stripped.startswith("# "):
-                return stripped[2:]
+        picked = _rst_pick_document_title(_rst_collect_headings(lines), stem)
+        return picked if picked else "Untitled"
+    if ext == ".md":
+        raw = _md_strip_yaml_frontmatter(content)
+        lines = raw.split("\n")
+        heads = _md_collect_headings(lines)
+        picked = _md_pick_document_title(heads)
+        return picked if picked else "Untitled"
     return "Untitled"
 
 
-def _extract_title_from_html(body):
-    """Extract the first heading text from rendered HTML body."""
+def _read_source_title_prefix(path: Path, ext: str, max_chars: int = 16000) -> str:
+    """Read only the beginning of a source file for title extraction (cheap)."""
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")[:max_chars]
+    except OSError:
+        return ""
+    t = _extract_title(raw, ext, stem=path.stem)
+    return "" if t == "Untitled" else t
+
+
+def _html_pick_document_heading(body: str) -> str | None:
+    """在 HTML 正文中按 DOM 顺序取「最低层级」的标题（先 h1 再 h2），避免先出现 ``<h2>`` 时误取二级节名。"""
     import re
-    m = re.search(r'<h1[^>]*>(.*?)</h1>', body, re.DOTALL)
-    if m:
-        text = re.sub(r"<[^>]+>", "", m.group(1)).strip()
+
+    pat = re.compile(r"<h([1-6])[^>]*>(.*?)</h[1-6]>", re.DOTALL | re.IGNORECASE)
+    found: list[tuple[int, int, str]] = []
+    for m in pat.finditer(body):
+        level = int(m.group(1))
+        inner = m.group(2)
+        text = re.sub(r"<[^>]+>", "", inner).strip()
+        text = re.sub(r"^\d+(?:\.\d+)*\.\s*", "", text).strip()
         if text:
+            found.append((level, m.start(), text))
+    if not found:
+        return None
+    min_lv = min(f[0] for f in found)
+    for level, _pos, text in found:
+        if level == min_lv:
             return text
     return None
+
+
+def _extract_title_from_html(body: str, ext: str = "") -> str | None:
+    """Extract document title from rendered HTML (fragment or full page).
+
+    For full ``wrap_html`` pages, only the ``#nm-panel-render`` region is used so
+    embedded JSON / sidebars cannot disturb matching.
+
+    对 ``.rst``：docutils 的文档标题为 ``<h1 class="...title...">``；经 postproc 后节标题
+    已降为 ``h2+``，故不得再退回「第一个裸 ``<h1>``」，否则会误取节名（如「介绍」）。
+    """
+    import re
+
+    if 'id="nm-panel-render"' in body:
+        body = extract_render_panel_inner_html(body)
+    m = re.search(
+        r'<h1[^>]*\bclass\s*=\s*"([^"]*\btitle\b[^"]*)"[^>]*>(.*?)</h1>',
+        body,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if not m:
+        m = re.search(
+            r"<h1[^>]*\bclass\s*=\s*'([^']*\btitle\b[^']*)'[^>]*>(.*?)</h1>",
+            body,
+            re.DOTALL | re.IGNORECASE,
+        )
+    if m:
+        inner = m.group(2)
+    elif ext == ".rst":
+        return None
+    else:
+        return _html_pick_document_heading(body)
+    text = re.sub(r"<[^>]+>", "", inner).strip()
+    text = re.sub(r"^\d+(?:\.\d+)*\.\s*", "", text).strip()
+    return text or None
+
+
+def _resolve_page_title(content: str, fi: FileInfo, rendered_body: str) -> str:
+    """Prefer RST/Markdown source-derived title; fall back to HTML / stem."""
+    st = _extract_title(content, fi.ext, fi.rel_path.stem)
+    if st == "Untitled":
+        st = ""
+    ht = _extract_title_from_html(rendered_body, fi.ext) or ""
+    return st or ht or fi.rel_path.stem
+
+
+def _document_list_title(fi: FileInfo, full_page_html: str) -> str:
+    """Title for search index + landing tree (may read only a source prefix)."""
+    stem = fi.rel_path.stem
+    st = _read_source_title_prefix(fi.path, fi.ext)
+    ht = _extract_title_from_html(full_page_html, fi.ext) or ""
+    if st:
+        return st
+    # 无标准 RST 下划线标题时，docutils 可能把先导段落抬成 <h1>，目录名会过长，回退文件名
+    if ht and len(ht) <= max(72, len(stem) + 40):
+        return ht
+    return stem
 
 
 def _copy_static_assets(static_dir):

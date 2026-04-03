@@ -17,9 +17,53 @@
     } catch (e) {}
   }
 
+  /** 旧版缓存的整页 HTML 可能没有这两个按钮；注入后只需更新 _static/nm-editor.js 即可生效 */
+  var NM_BTN_STYLE =
+    'padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;font-family:inherit;';
+  var NM_NEW_STYLE =
+    NM_BTN_STYLE + 'background:#3d4451;color:#e0e0e0;border:1px solid #5c6370;';
+  var NM_DEL_STYLE =
+    NM_BTN_STYLE +
+    'background:#3d4451;color:#e5a3a3;border:1px solid #8b4d4d;margin-left:0;';
+
+  function ensureNoteToolbarButtons() {
+    var tb = document.querySelector('.nm-source-toolbar');
+    if (!tb || document.getElementById('nm-source-new')) return;
+    var save = document.getElementById('nm-source-save');
+    if (!save) return;
+    var nb = document.createElement('button');
+    nb.type = 'button';
+    nb.id = 'nm-source-new';
+    nb.className = 'nm-source-secondary';
+    nb.title = '在与当前笔记相同的目录下新建文件';
+    nb.textContent = '新建笔记';
+    nb.style.cssText = NM_NEW_STYLE;
+    var db = document.createElement('button');
+    db.type = 'button';
+    db.id = 'nm-source-delete';
+    db.className = 'nm-source-secondary nm-source-delete';
+    db.title = '删除磁盘上的当前源文件';
+    db.textContent = '删除当前笔记';
+    db.style.cssText = NM_DEL_STYLE;
+    save.insertAdjacentElement('afterend', nb);
+    nb.insertAdjacentElement('afterend', db);
+  }
+
   function projectFromPath() {
     var m = window.location.pathname.match(/^\/p\/(\d+)\//);
     return m ? parseInt(m[1], 10) : -1;
+  }
+
+  function getSourceJumpParams() {
+    try {
+      var u = new URL(window.location.href);
+      var src = (u.searchParams.get('src') || '').trim();
+      var ln = parseInt(u.searchParams.get('line') || '0', 10);
+      if (!src) return null;
+      return { src: src.replace(/\\/g, '/'), line: ln > 0 ? ln : 1, url: u };
+    } catch (e) {
+      return null;
+    }
   }
 
   /** 仅 nmrd Web 以 /p/<工程号>/ 提供页面时可编辑；拷贝出去的 html 目录走只读降级 */
@@ -201,6 +245,7 @@
     });
 
     var saveBtn = document.getElementById('nm-source-save');
+    ensureNoteToolbarButtons();
     var statusEl = document.getElementById('nm-source-status');
 
     function setStatus(msg, isErr) {
@@ -284,6 +329,128 @@
       });
       CodeMirror.Vim.defineEx('wq', 'wq', function () {
         saveSource();
+      });
+    }
+
+    var jump = getSourceJumpParams();
+    if (jump && jump.src === String(cfg.source_rel || '').replace(/\\/g, '/')) {
+      setTimeout(function () {
+        var line0 = Math.max(0, jump.line - 1);
+        cm.focus();
+        cm.setCursor({ line: line0, ch: 0 });
+        cm.scrollIntoView({ line: line0, ch: 0 }, 120);
+        var srcTab = document.querySelector('.nm-tab[data-tab="source"]');
+        if (srcTab && typeof srcTab.click === 'function') srcTab.click();
+        try {
+          jump.url.searchParams.delete('src');
+          jump.url.searchParams.delete('line');
+          window.history.replaceState({}, '', jump.url.pathname + (jump.url.search ? jump.url.search : '') + jump.url.hash);
+        } catch (e) {}
+      }, 20);
+    }
+
+    function encodeHtmlRel(rel) {
+      if (!rel) return '';
+      return rel.split('/').map(function (seg) {
+        return encodeURIComponent(seg);
+      }).join('/');
+    }
+
+    var newBtn = document.getElementById('nm-source-new');
+    var delBtn = document.getElementById('nm-source-delete');
+
+    function warnLoseUnsaved(action) {
+      if (!window.__nmDirty) return true;
+      return window.confirm(
+        '当前笔记有未保存的修改；继续「' +
+          action +
+          '」将放弃这些修改（不会写入当前文件）。\n\n确定继续吗？'
+      );
+    }
+
+    if (newBtn) {
+      newBtn.addEventListener('click', function () {
+        if (!warnLoseUnsaved('新建笔记')) return;
+        var sugg = 'untitled' + ext;
+        var name = window.prompt(
+          '请输入新文件名（与当前笔记在同一目录）。\n使用 .md 或 .rst；不写后缀则与当前笔记类型相同。',
+          sugg
+        );
+        if (name === null) return;
+        name = (name || '').trim();
+        if (!name) {
+          setStatus('未输入文件名', true);
+          return;
+        }
+        setStatus('创建中…');
+        fetch('/api/create_note', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({
+            project: project,
+            source_rel_path: cfg.source_rel,
+            filename: name,
+            source_ext: ext,
+          }),
+        })
+          .then(function (r) {
+            if (!r.ok) {
+              return r.text().then(function (t) {
+                throw new Error(t || 'HTTP ' + r.status);
+              });
+            }
+            return r.json();
+          })
+          .then(function (d) {
+            if (!d.ok) {
+              setStatus(d.error || '创建失败', true);
+              return;
+            }
+            var hr = d.html_rel_path || '';
+            window.location.href = '/p/' + project + '/' + encodeHtmlRel(hr);
+          })
+          .catch(function (err) {
+            setStatus(err && err.message ? err.message : '网络错误', true);
+          });
+      });
+    }
+
+    if (delBtn) {
+      delBtn.addEventListener('click', function () {
+        var msg =
+          '确定删除当前笔记吗？将永久删除磁盘上的源文件及已生成的 HTML，此操作不可撤销。';
+        if (window.__nmDirty) {
+          msg = '当前有未保存的修改（删除后不会保存到磁盘）。\n\n' + msg;
+        }
+        if (!window.confirm(msg)) return;
+        setStatus('删除中…');
+        fetch('/api/delete_note', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({
+            project: project,
+            source_rel_path: cfg.source_rel,
+          }),
+        })
+          .then(function (r) {
+            if (!r.ok) {
+              return r.text().then(function (t) {
+                throw new Error(t || 'HTTP ' + r.status);
+              });
+            }
+            return r.json();
+          })
+          .then(function (d) {
+            if (!d.ok) {
+              setStatus(d.error || '删除失败', true);
+              return;
+            }
+            var red = d.redirect_html || 'index.html';
+            window.location.href = '/p/' + project + '/' + encodeHtmlRel(red);
+          })
+          .catch(function (err) {
+            setStatus(err && err.message ? err.message : '网络错误', true);
+          });
       });
     }
 

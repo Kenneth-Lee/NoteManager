@@ -7,6 +7,7 @@ and on HTTP for web UI, manages watchers for all registered directories.
 import json
 import logging
 import os
+import re
 import secrets
 import socketserver
 import subprocess
@@ -26,11 +27,13 @@ from notemanager.protocol import (
 from notemanager.builder import full_build
 from notemanager.scan_manifest import MANIFEST_VERSION, live_payload_and_files, read_scan_manifest
 from notemanager.watcher import start_watcher
+from notemanager.watcher import suppress_path
 from notemanager.web import notify_event
 from notemanager.indexer import filter_search_documents
 from notemanager.renderer.rst_renderer import render_rst
 from notemanager.renderer.md_renderer import render_md
 from notemanager.renderer.template import wrap_html
+from notemanager.scanner import INCLUDE_EXTENSIONS, SKIP_DIRS
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +269,209 @@ class NoteManagerDaemon:
         self._rebuild_jobs: dict[int, dict] = {}
         self._rebuild_next_id = 1
         self._rebuild_active_job_id: int | None = None
+        self._grep_job_lock = threading.Lock()
+        self._grep_jobs: dict[int, dict] = {}
+        self._grep_next_id = 1
+
+    @staticmethod
+    def _tokenize_search_query(query: str) -> list[str]:
+        toks: list[str] = []
+        cur = []
+        in_quote = False
+        esc = False
+        for ch in str(query or ""):
+            if esc:
+                cur.append(ch)
+                esc = False
+                continue
+            if ch == "\\":
+                esc = True
+                continue
+            if ch == '"':
+                in_quote = not in_quote
+                continue
+            if ch.isspace() and not in_quote:
+                if cur:
+                    toks.append("".join(cur).strip())
+                    cur = []
+                continue
+            cur.append(ch)
+        if cur:
+            toks.append("".join(cur).strip())
+        return [t for t in toks if t]
+
+    @staticmethod
+    def _parse_search_terms(query: str) -> list[dict]:
+        out: list[dict] = []
+        for tok in NoteManagerDaemon._tokenize_search_query(query):
+            m = re.match(r"^(chapter|label|index|dtag|fname|grep):(.*)$", tok, re.IGNORECASE)
+            if m:
+                typ = m.group(1).lower()
+                q = (m.group(2) or "").strip()
+            else:
+                typ = None
+                q = tok.strip()
+            if q:
+                out.append({"type": typ, "query": q})
+        return out
+
+    @staticmethod
+    def _build_regex(pattern: str):
+        try:
+            return re.compile(pattern, re.IGNORECASE)
+        except re.error:
+            return re.compile(re.escape(pattern), re.IGNORECASE)
+
+    def _grep_worker(self, job_id: int) -> None:
+        with self._grep_job_lock:
+            job = self._grep_jobs.get(job_id)
+        if not job:
+            return
+        project_root = Path(job["project_root"])
+        html_dir = project_root / ".NoteManager" / "html"
+        rgx = self._build_regex(job["pattern"])
+        filters = job.get("filters") or []
+        allowed_html: set[str] | None = None
+        try:
+            if filters:
+                idx_file = html_dir / "_index" / "search_index.json"
+                data = json.loads(idx_file.read_text(encoding="utf-8")) if idx_file.is_file() else {}
+                docs = data.get("documents") or []
+                matched_paths: set[str] | None = None
+                for f in filters:
+                    q = (f.get("query") or "").strip()
+                    if not q:
+                        continue
+                    ft = f.get("type")
+                    r = self._build_regex(q)
+                    cur = set()
+                    for d in docs:
+                        if ft and d.get("type") != ft:
+                            continue
+                        blob = " ".join([str(d.get("title", "")), str(d.get("text", "")), str(d.get("snippet", ""))])
+                        if r.search(blob):
+                            p = str(d.get("path", "")).split("#", 1)[0]
+                            if p:
+                                cur.add(p)
+                    if matched_paths is None:
+                        matched_paths = cur
+                    else:
+                        matched_paths &= cur
+                allowed_html = matched_paths if matched_paths is not None else set()
+            files: list[Path] = []
+            for p in project_root.rglob("*"):
+                if not p.is_file():
+                    continue
+                try:
+                    rel = p.relative_to(project_root)
+                except ValueError:
+                    continue
+                if any(part in SKIP_DIRS for part in rel.parts):
+                    continue
+                if p.suffix.lower() not in INCLUDE_EXTENSIONS:
+                    continue
+                html_rel = str(rel.with_suffix(".html").as_posix())
+                if allowed_html is not None and html_rel not in allowed_html:
+                    continue
+                files.append(p)
+            with job["lock"]:
+                job["total"] = len(files)
+            for i, fp in enumerate(files, start=1):
+                with job["lock"]:
+                    if job.get("cancelled"):
+                        job["done"] = True
+                        return
+                try:
+                    text = fp.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    with job["lock"]:
+                        job["scanned"] = i
+                    continue
+                m = rgx.search(text)
+                if m:
+                    line = text.count("\n", 0, m.start()) + 1
+                    s = max(0, m.start() - 60)
+                    e = min(len(text), m.end() + 100)
+                    sn = re.sub(r"\s+", " ", text[s:e]).strip()
+                    rel = fp.relative_to(project_root)
+                    html_path = rel.with_suffix(".html").as_posix()
+                    entry = {
+                        "type": "grep",
+                        "title": rel.stem,
+                        "path": html_path,
+                        "text": rel.as_posix(),
+                        "snippet": sn,
+                        "source_path": rel.as_posix(),
+                        "line_start": line,
+                    }
+                    with job["lock"]:
+                        if len(job["results"]) < 500:
+                            job["results"].append(entry)
+                with job["lock"]:
+                    job["scanned"] = i
+            with job["lock"]:
+                job["done"] = True
+        except Exception as e:
+            with job["lock"]:
+                job["error"] = str(e)
+                job["done"] = True
+
+    def start_grep_search(self, project_idx: int, query: str, filters: list[dict] | None = None) -> dict:
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        pattern = (query or "").strip()
+        if not pattern:
+            return {"ok": False, "error": "缺少 grep 查询"}
+        with self._grep_job_lock:
+            for jid in [k for k, v in self._grep_jobs.items() if v.get("done")]:
+                self._grep_jobs.pop(jid, None)
+            job_id = self._grep_next_id
+            self._grep_next_id += 1
+            self._grep_jobs[job_id] = {
+                "project_root": str(Path(dirs[project_idx]).resolve()),
+                "pattern": pattern,
+                "filters": filters or [],
+                "results": [],
+                "scanned": 0,
+                "total": 0,
+                "done": False,
+                "cancelled": False,
+                "error": None,
+                "lock": threading.Lock(),
+            }
+        t = threading.Thread(target=self._grep_worker, args=(job_id,), daemon=True)
+        t.start()
+        return {"ok": True, "job_id": job_id}
+
+    def get_grep_status(self, job_id: int, since: int = 0) -> dict:
+        with self._grep_job_lock:
+            job = self._grep_jobs.get(job_id)
+        if not job:
+            return {"ok": False, "error": "无效或已结束的 grep 任务"}
+        with job["lock"]:
+            rs = job["results"]
+            new = rs[since:] if since < len(rs) else []
+            return {
+                "ok": True,
+                "results": new,
+                "total_results": len(rs),
+                "scanned": job["scanned"],
+                "total": job["total"],
+                "done": bool(job["done"]),
+                "error": job["error"],
+            }
+
+    def cancel_grep_search(self, job_id: int) -> dict:
+        with self._grep_job_lock:
+            job = self._grep_jobs.get(job_id)
+        if not job:
+            return {"ok": True}
+        with job["lock"]:
+            job["cancelled"] = True
+            job["done"] = True
+        return {"ok": True}
 
     def _resolve_rebuild_targets(self, cmd: dict, dirs: list[str]) -> list[str]:
         """解析要重建的监控目录列表（全部 / 按 --project / 按 directory）。"""
@@ -656,17 +862,157 @@ class NoteManagerDaemon:
             return {"ok": False, "error": "非法源文件路径"}
         abs_src = (root / rel).resolve()
         try:
+            old = abs_src.read_text(encoding="utf-8")
+            if old == content:
+                return {"ok": True}
+        except OSError:
+            pass
+        try:
+            suppress_path(abs_src)
             abs_src.write_text(content, encoding="utf-8", newline="\n")
         except OSError as e:
             return {"ok": False, "error": str(e)}
         try:
             from notemanager.builder import update_file
 
-            update_file(root, abs_src, refresh_static_assets=False)
+            update_file(
+                root,
+                abs_src,
+                refresh_static_assets=False,
+                refresh_project_assets=False,
+            )
         except Exception as e:
             logger.exception("保存后重建失败")
             return {"ok": False, "error": f"重建失败: {e}"}
         return {"ok": True}
+
+    def create_note_same_dir(
+        self,
+        project_idx: int,
+        source_rel_posix: str,
+        filename: str,
+        default_ext: str,
+    ) -> dict:
+        """在与当前源文件同一目录下新建 .md / .rst 笔记并增量构建。"""
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root, rel = self._validated_source_rel(Path(dirs[project_idx]), source_rel_posix)
+        if rel is None:
+            return {"ok": False, "error": "非法源文件路径"}
+        ext = (default_ext or "").lower()
+        if ext not in (".md", ".rst"):
+            ext = ".md"
+        name = (filename or "").strip()
+        if not name:
+            return {"ok": False, "error": "文件名为空"}
+        if name in (".", ".."):
+            return {"ok": False, "error": "无效文件名"}
+        if any(c in name for c in '<>:"|?*\\\x00') or "/" in name or "\\" in name:
+            return {"ok": False, "error": "文件名含有非法字符或路径分隔符"}
+        bn = Path(name).name
+        if bn != name:
+            return {"ok": False, "error": "仅允许单个文件名，不要包含路径"}
+        low = name.lower()
+        if low.endswith(".md"):
+            out_name = name[:-3] + ".md"
+            out_ext = ".md"
+        elif low.endswith(".rst"):
+            out_name = name[:-4] + ".rst"
+            out_ext = ".rst"
+        else:
+            out_ext = ext
+            out_name = name + out_ext
+        parent = rel.parent
+        new_rel = (parent / out_name).as_posix()
+        try:
+            new_abs = (root / Path(new_rel)).resolve()
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+        root_r = root.resolve()
+        if not str(new_abs).startswith(str(root_r)):
+            return {"ok": False, "error": "拒绝路径"}
+        try:
+            new_abs.relative_to(root_r)
+        except ValueError:
+            return {"ok": False, "error": "拒绝路径"}
+        if new_abs.exists():
+            return {"ok": False, "error": "文件已存在"}
+        new_abs.parent.mkdir(parents=True, exist_ok=True)
+        stem = Path(out_name).stem.replace("_", " ").replace("-", " ").strip() or "Untitled"
+        today = datetime.date.today().isoformat()
+        if out_ext == ".rst":
+            title_line = "=" * max(len(stem), 3)
+            initial = (
+                f"{stem}\n"
+                f"{title_line}\n\n"
+                f":创建日期: {today}\n\n"
+                "TODO：\n\n"
+                "- [ ] TODO\n"
+            )
+        else:
+            initial = (
+                f"# {stem}\n\n"
+                f"创建日期：{today}\n\n"
+                "## TODO\n\n"
+                "- [ ] TODO\n"
+            )
+        try:
+            suppress_path(new_abs)
+            new_abs.write_text(initial, encoding="utf-8", newline="\n")
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+        try:
+            from notemanager.builder import update_file
+
+            update_file(
+                root,
+                new_abs,
+                refresh_static_assets=False,
+                refresh_project_assets=False,
+            )
+        except Exception as e:
+            try:
+                if new_abs.is_file():
+                    new_abs.unlink()
+            except OSError:
+                pass
+            logger.exception("新建笔记后重建失败")
+            return {"ok": False, "error": f"重建失败: {e}"}
+        html_rel = Path(new_rel).with_suffix(".html").as_posix()
+        self._notify_change("build_complete", {"directory": str(root_r)})
+        return {"ok": True, "source_rel_path": new_rel, "html_rel_path": html_rel}
+
+    def delete_managed_source(self, project_idx: int, source_rel_posix: str) -> dict:
+        """删除当前监控工程内的源文件并更新索引与 HTML。"""
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root, rel = self._validated_source_rel(Path(dirs[project_idx]), source_rel_posix)
+        if rel is None:
+            return {"ok": False, "error": "非法源文件路径"}
+        abs_src = (root / rel).resolve()
+        root_r = root.resolve()
+        if not str(abs_src).startswith(str(root_r)):
+            return {"ok": False, "error": "拒绝路径"}
+        if not abs_src.is_file():
+            return {"ok": False, "error": "文件不存在"}
+        try:
+            suppress_path(abs_src)
+            abs_src.unlink()
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+        try:
+            from notemanager.builder import remove_file
+
+            remove_file(root, abs_src)
+        except Exception as e:
+            logger.exception("删除笔记后更新索引失败")
+            return {"ok": False, "error": f"更新索引失败: {e}"}
+        self._notify_change("build_complete", {"directory": str(root_r)})
+        return {"ok": True, "redirect_html": "index.html"}
 
     def save_paste_image(
         self,
