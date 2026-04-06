@@ -671,6 +671,20 @@ class NoteManagerDaemon:
             logger.error("重建失败: %s: %s", path, e)
             return {"ok": False, "error": f"重建失败: {e}"}
 
+    def export_project_mobile_zip(self, project_idx: int) -> tuple[bytes, str]:
+        """生成供手机本地管家使用的 .html.zip（内存），不写入工程 .NoteManager/html。"""
+        from notemanager.export_bundle import export_mobile_html_zip_bytes
+
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not 0 <= project_idx < len(dirs):
+            raise ValueError("无效工程编号")
+        root = Path(dirs[project_idx])
+        logger.info("导出 mobile zip: %s", root)
+        return export_mobile_html_zip_bytes(
+            root, progress=lambda m: logger.info("%s", m),
+        )
+
     def list_directories(self) -> dict:
         """List all monitored directories."""
         with self._lock:

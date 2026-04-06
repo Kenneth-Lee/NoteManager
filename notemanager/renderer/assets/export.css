@@ -1,0 +1,306 @@
+/* html.zip：首页 = 查找 + 树；笔记页 = 首页链接 + 可选本页目录(details) + 正文；每次只呈现一层 */
+.nm-export {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+  color: #222;
+  background: #fff;
+  box-sizing: border-box;
+}
+.nm-export * {
+  box-sizing: border-box;
+}
+
+/* 固定顶栏 */
+.nm-exp-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 6px 10px;
+  background: #f5f5f5;
+  border-bottom: 1px solid #ddd;
+}
+.nm-exp-header-index {
+  justify-content: center;
+}
+.nm-exp-home {
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1565c0;
+  text-decoration: none;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+.nm-exp-home:active {
+  opacity: 0.75;
+}
+.nm-exp-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+.nm-exp-header:not(.nm-exp-header-index) .nm-exp-title {
+  text-align: left;
+}
+
+.nm-export-note {
+  padding-top: 52px;
+}
+.nm-export-index {
+  padding-top: 52px;
+}
+
+.nm-exp-main {
+  max-width: 100%;
+  padding: 12px 14px 32px;
+  overflow-x: auto;
+}
+
+/* 首页 */
+.nm-exp-index-main {
+  padding-top: 8px;
+}
+.nm-exp-index-lead {
+  font-size: 14px;
+  color: #444;
+  line-height: 1.55;
+  margin: 0 0 16px;
+  padding: 12px;
+  background: #f0f7ff;
+  border-radius: 8px;
+  border: 1px solid #bbdefb;
+}
+.nm-exp-block {
+  margin-bottom: 22px;
+}
+.nm-exp-block-title {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: #111;
+}
+.nm-exp-muted {
+  font-size: 13px;
+  color: #666;
+  margin: 0 0 10px;
+}
+.nm-exp-muted code {
+  background: #eee;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+/* 本页目录（笔记页，无弹层） */
+.nm-exp-toc-details {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  background: #fafafa;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+}
+.nm-exp-toc-summary {
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  list-style: none;
+}
+.nm-exp-toc-summary::-webkit-details-marker {
+  display: none;
+}
+.nm-exp-toc-summary::before {
+  content: "▸ ";
+  display: inline-block;
+  margin-right: 4px;
+  transition: transform 0.15s;
+}
+.nm-exp-toc-details[open] .nm-exp-toc-summary::before {
+  transform: rotate(90deg);
+}
+.nm-exp-toc-inner {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #eee;
+}
+.nm-exp-toc-inner.toc,
+.nm-exp-toc-inner .toc {
+  margin: 0;
+}
+.nm-exp-toc-inner .toc ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+.nm-exp-toc-inner .toc ul ul {
+  padding-left: 1rem;
+  margin-top: 4px;
+}
+.nm-exp-toc-inner .toc a {
+  color: #1565c0;
+  text-decoration: none;
+  font-size: 14px;
+}
+.nm-exp-toc-inner .toc a:active {
+  text-decoration: underline;
+}
+
+.nm-exp-body img {
+  max-width: 100%;
+  height: auto;
+}
+.nm-exp-body pre,
+.nm-exp-body code {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.nm-exp-body table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+/* 首页搜索 */
+.nm-exp-search-input {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 16px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+.nm-exp-search-results {
+  font-size: 14px;
+  min-height: 0;
+}
+.nm-exp-grep-status {
+  font-size: 12px;
+  color: #666;
+  min-height: 1.2em;
+  margin: 2px 0 8px;
+}
+.nm-exp-grep-cancel {
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid #ef9a9a;
+  border-radius: 6px;
+  background: #ffebee;
+  color: #b71c1c;
+  margin: 0 0 8px;
+  cursor: pointer;
+}
+.nm-exp-result-count {
+  padding: 8px 0;
+  font-size: 12px;
+  color: #666;
+  border-bottom: 1px solid #eee;
+  margin-bottom: 6px;
+}
+.nm-exp-result-item {
+  display: block;
+  padding: 12px 8px;
+  text-decoration: none;
+  color: #333;
+  border-bottom: 1px solid #f0f0f0;
+  border-radius: 6px;
+}
+.nm-exp-result-item:active {
+  background: #e8f0fe;
+}
+.nm-exp-result-title {
+  font-weight: 600;
+  color: #1565c0;
+  font-size: 15px;
+}
+.nm-exp-result-path {
+  font-size: 11px;
+  color: #888;
+  font-family: ui-monospace, monospace;
+  margin-top: 2px;
+  word-break: break-all;
+}
+.nm-exp-result-snippet {
+  font-size: 13px;
+  color: #555;
+  margin-top: 4px;
+}
+.nm-exp-result-snippet mark {
+  background: #ffe066;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+.nm-exp-no-results {
+  text-align: center;
+  color: #999;
+  padding: 20px 8px;
+  font-size: 14px;
+}
+
+.nm-type-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-right: 4px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.nm-type-chapter {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+.nm-type-label {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+.nm-type-index {
+  background: #fff3e0;
+  color: #e65100;
+}
+.nm-type-dtag {
+  background: #f3e5f5;
+  color: #7b1fa2;
+}
+.nm-type-grep {
+  background: #eceff1;
+  color: #37474f;
+}
+.nm-type-fname {
+  background: #e0f7fa;
+  color: #006064;
+}
+
+.nm-exp-tree-wrap .nm-tree {
+  list-style: none;
+  padding-left: 0;
+}
+.nm-exp-tree-wrap .nm-tree .nm-tree {
+  padding-left: 18px;
+}
+.nm-exp-tree-wrap .nm-file a {
+  text-decoration: none;
+  color: #1565c0;
+  font-size: 15px;
+}
+.nm-exp-tree-wrap .nm-dir > details > summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+
+:target {
+  background-color: #fff8dc;
+  padding-top: 8px;
+  margin-top: -8px;
+}

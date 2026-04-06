@@ -203,6 +203,22 @@ class WebHandler(BaseHTTPRequestHandler):
         elif path == "/api/rebuild":
             directory = data.get("directory", "")
             resp = self.daemon_ref.rebuild_directory(directory)
+        elif path == "/api/export_zip":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            try:
+                blob, fname = self.daemon_ref.export_project_mobile_zip(pj)
+            except FileNotFoundError as e:
+                self._send_json({"ok": False, "error": str(e)})
+                return
+            except Exception as e:
+                self._send_json({"ok": False, "error": str(e)})
+                return
+            self._send_zip(blob, fname)
+            return
         elif path == "/api/default":
             resp = self.daemon_ref.handle_default(data)
         elif path == "/api/save_source":
@@ -387,6 +403,15 @@ class WebHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(message.encode("utf-8"))
 
+    def _send_zip(self, data: bytes, filename: str):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", filename) or "export.html.zip"
+        self.send_header("Content-Disposition", f'attachment; filename="{safe}"')
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def _serve_temp_file(self, path):
         """Serve temporary rendered single-file pages."""
         temp_root = self.daemon_ref.get_temp_view_dir().resolve()
@@ -501,6 +526,7 @@ def _render_panel(daemon_ref) -> str:
   <td>{status_text}</td>
   <td>
     <button onclick='rebuildProject({i}, {d_js})'>重建</button>
+    <button onclick='exportZip({i})'>导出ZIP</button>
     <button onclick='setDefaultProject({i}, {d_js})'>默认</button>
     <button class="danger" onclick='removeProject({i}, {d_js})'>移除</button>
   </td>
@@ -671,6 +697,39 @@ function rebuildProject(idx, dir) {{
     }});
 }}
 
+function exportZip(idx) {{
+    showToast('正在导出…');
+    fetch('/api/export_zip', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{project: idx}})
+    }}).then(function(r) {{
+        var ct = (r.headers.get('Content-Type') || '').toLowerCase();
+        if (ct.indexOf('application/json') >= 0) {{
+            return r.json().then(function(d) {{
+                throw new Error((d && d.error) ? d.error : '导出失败');
+            }});
+        }}
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        var cd = r.headers.get('Content-Disposition') || '';
+        var m = cd.match(/filename="([^"]+)"/i);
+        var name = (m && m[1]) ? m[1] : 'export.html.zip';
+        return r.blob().then(function(blob) {{ return {{blob: blob, name: name}}; }});
+    }}).then(function(o) {{
+        var url = URL.createObjectURL(o.blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = o.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        showToast('已开始下载');
+    }}).catch(function(e) {{
+        showToast('错误: ' + (e.message || e), 4000);
+    }});
+}}
+
 function refreshProjects(data) {{
     if (!data || !data.directories) return;
     var tbody = document.getElementById('projects');
@@ -715,9 +774,11 @@ function refreshProjects(data) {{
         html += '<td>' + statusText + '</td>';
         html += '<td class="actions">';
         var ocRebuild = 'rebuildProject(' + i + ', ' + JSON.stringify(d) + ')';
+        var ocExport = 'exportZip(' + i + ')';
         var ocDefault = 'setDefaultProject(' + i + ', ' + JSON.stringify(d) + ')';
         var ocRemove = 'removeProject(' + i + ', ' + JSON.stringify(d) + ')';
         html += '<button onclick="' + escOnclick(ocRebuild) + '">重建</button> ';
+        html += '<button onclick="' + escOnclick(ocExport) + '">导出ZIP</button> ';
         html += '<button onclick="' + escOnclick(ocDefault) + '">默认</button> ';
         html += '<button class="danger" onclick="' + escOnclick(ocRemove) + '">移除</button>';
         html += '</td></tr>';

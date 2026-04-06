@@ -553,6 +553,27 @@ def cmd_rebuild(args):
         time.sleep(0.15)
 
 
+def cmd_export(args):
+    """导出手机用 .html.zip（独立渲染树，不打包 .NoteManager/html）。"""
+    if not _ensure_daemon():
+        print("错误: 无法启动 Daemon")
+        sys.exit(1)
+    root = Path(_resolve_project_dir(args)).resolve()
+    out = (
+        Path(args.output).expanduser().resolve()
+        if getattr(args, "output", None)
+        else None
+    )
+    from notemanager.export_bundle import export_mobile_html_zip
+
+    try:
+        path = export_mobile_html_zip(root, out, progress=print)
+    except OSError as e:
+        print(f"错误: {e}")
+        sys.exit(1)
+    print(path)
+
+
 def cmd_view(args):
     """Open a source file in web UI, render temp page if unmanaged."""
     if not _ensure_daemon():
@@ -611,6 +632,22 @@ def main():
         help="仅重建指定工程（编号或目录名）；省略则重建全部监控目录",
     )
 
+    export_p = subparsers.add_parser(
+        "export",
+        help="导出手机本地管家用 .html.zip（仅阅读与离线索引查找，不含编辑与 grep）",
+    )
+    export_p.add_argument(
+        "--project",
+        "-p",
+        help="指定工程（编号或目录名）；省略则用默认工程或列表第 0 项",
+    )
+    export_p.add_argument(
+        "--output",
+        "-o",
+        dest="output",
+        help="输出 zip 路径；默认当前目录下 <工程目录名>.html.zip",
+    )
+
     search_p = subparsers.add_parser("search", help="在 Web UI 中搜索并显示结果")
     search_p.add_argument(
         "query",
@@ -639,6 +676,7 @@ def main():
         "remove": cmd_remove,
         "list": cmd_list,
         "rebuild": cmd_rebuild,
+        "export": cmd_export,
         "search": cmd_search,
         "searche": cmd_searche,
         "view": cmd_view,

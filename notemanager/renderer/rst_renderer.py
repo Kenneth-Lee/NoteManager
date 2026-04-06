@@ -1,5 +1,6 @@
 """RST to HTML renderer using docutils."""
 
+import contextlib
 import io
 import os
 import re
@@ -340,12 +341,17 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
         "warning_stream": warning_stream,
     }
 
-    parts = publish_parts(
-        source=processed,
-        source_path=source_path,
-        writer_name="html5_polyglot",
-        settings_overrides=settings,
-    )
+    # Some docutils math backends print parser diagnostics directly to stderr
+    # (e.g. "* Unknown command \\iff"), bypassing warning_stream.
+    # Capture them to keep CLI/export progress output clean.
+    stderr_stream = io.StringIO()
+    with contextlib.redirect_stderr(stderr_stream):
+        parts = publish_parts(
+            source=processed,
+            source_path=source_path,
+            writer_name="html5_polyglot",
+            settings_overrides=settings,
+        )
 
     body = parts.get("html_body", "")
 
@@ -357,6 +363,17 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
             if line:
                 line = re.sub(r"^<string>:\d+:\s*", "", line)
                 warnings.append(line)
+    stderr_text = stderr_stream.getvalue().strip()
+    if stderr_text:
+        for line in stderr_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # These lines are high-frequency parser noise in export logs; keep
+            # other stderr diagnostics visible to users.
+            if line.startswith("* Unknown command "):
+                continue
+            warnings.append(line)
 
     # Post-processing pipeline
     body = _strip_system_messages(body)
