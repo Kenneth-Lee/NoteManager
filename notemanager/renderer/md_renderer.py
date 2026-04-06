@@ -67,7 +67,7 @@ def render_md(content: str, source_path: str = "<string>") -> dict:
 
 
 def _convert_links(html: str) -> str:
-    """Convert .md/.rst links in HTML to .html links, fix bare URLs."""
+    """Convert .md/.rst/.txt links in HTML to .html links, fix bare URLs."""
     def replace_link(match):
         prefix = match.group(1)
         path = match.group(2)
@@ -77,7 +77,7 @@ def _convert_links(html: str) -> str:
         # Fix bare www. URLs
         if path.startswith("www."):
             return f'{prefix}http://{path}{suffix}'
-        for ext in (".md", ".rst"):
+        for ext in (".md", ".rst", ".txt"):
             if path.endswith(ext):
                 path = path[: -len(ext)] + ".html"
                 break

@@ -422,10 +422,13 @@ def _resolve_source_from_result(project_dir: Path, result_path: str) -> Path | N
     base_rel = Path(html_rel).with_suffix("")
     rst = (project_dir / base_rel).with_suffix(".rst")
     md = (project_dir / base_rel).with_suffix(".md")
+    txt = (project_dir / base_rel).with_suffix(".txt")
     if rst.is_file():
         return rst
     if md.is_file():
         return md
+    if txt.is_file():
+        return txt
     return None
 
 
@@ -660,8 +663,8 @@ def main():
         help="搜索关键词（正则）；grep: 为当前工程正文块全局搜索",
     )
     searche_p.add_argument("--project", "-p", help="指定工程 (编号或目录名)")
-    view_p = subparsers.add_parser("view", help="在 Web UI 查看指定 md/rst 文件")
-    view_p.add_argument("file", help="要查看的 md/rst 文件路径")
+    view_p = subparsers.add_parser("view", help="在 Web UI 查看指定 md/rst/txt 文件")
+    view_p.add_argument("file", help="要查看的 md/rst/txt 文件路径")
 
     default_p = subparsers.add_parser("default", help="设置或查看默认工程")
     default_p.add_argument("project", nargs="?", default="",

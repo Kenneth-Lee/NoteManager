@@ -1,7 +1,6 @@
 """File system watcher for NoteManager.
 
-Uses watchdog to monitor a directory for .rst/.md file changes
-and triggers incremental updates.
+Uses watchdog to monitor .rst/.md/.txt file changes and triggers incremental updates.
 """
 
 import logging
@@ -12,7 +11,12 @@ from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from notemanager.scanner import INCLUDE_EXTENSIONS, SKIP_DIRS
+from notemanager.scanner import (
+    INCLUDE_EXTENSIONS,
+    SKIP_DIRS,
+    load_ignore_rules,
+    is_ignored_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +46,12 @@ def _is_suppressed(path: str | Path) -> bool:
 
 
 class NoteEventHandler(FileSystemEventHandler):
-    """Handle file system events for .rst/.md files."""
+    """Handle file system events for .rst/.md/.txt files."""
 
     def __init__(self, project_root: Path, debounce_seconds: float = 0.3):
         self.project_root = project_root.resolve()
         self.debounce_seconds = debounce_seconds
+        self._ignore_rules = load_ignore_rules(self.project_root)
         self._pending = {}  # abs_path -> event_type
         self._timer = None
         self._lock = threading.Lock()
@@ -58,7 +63,13 @@ class NoteEventHandler(FileSystemEventHandler):
             return False
         try:
             rel = p.relative_to(self.project_root)
-            return not any(part in SKIP_DIRS for part in rel.parts)
+            if any(part in SKIP_DIRS for part in rel.parts):
+                return False
+            if is_ignored_path(
+                self.project_root, p, is_dir=False, rules=self._ignore_rules,
+            ):
+                return False
+            return True
         except ValueError:
             return False
 
@@ -108,16 +119,38 @@ class NoteEventHandler(FileSystemEventHandler):
             self._timer.daemon = True
             self._timer.start()
 
+    def _on_ignore_file_changed(self):
+        """Reload .nmrignore and rebuild once so include/exclude takes effect."""
+        self._ignore_rules = load_ignore_rules(self.project_root)
+        try:
+            from notemanager.builder import full_build
+
+            full_build(self.project_root)
+            from notemanager.web import notify_event
+
+            notify_event("build_complete", {"directory": str(self.project_root)})
+        except Exception as e:
+            logger.error(".nmrignore 变更后重建失败: %s", e)
+
     def on_created(self, event):
+        if not event.is_directory and Path(event.src_path).name == ".nmrignore":
+            self._on_ignore_file_changed()
+            return
         if not event.is_directory and self._is_target(event.src_path):
             logger.info("新增: %s", event.src_path)
             self._schedule_update(event.src_path, "created")
 
     def on_modified(self, event):
+        if not event.is_directory and Path(event.src_path).name == ".nmrignore":
+            self._on_ignore_file_changed()
+            return
         if not event.is_directory and self._is_target(event.src_path):
             self._schedule_update(event.src_path, "modified")
 
     def on_deleted(self, event):
+        if not event.is_directory and Path(event.src_path).name == ".nmrignore":
+            self._on_ignore_file_changed()
+            return
         if not event.is_directory and self._is_target(event.src_path):
             logger.info("删除: %s", event.src_path)
             self._schedule_update(event.src_path, "deleted")

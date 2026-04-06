@@ -32,6 +32,7 @@ from notemanager.web import notify_event
 from notemanager.indexer import filter_search_documents
 from notemanager.renderer.rst_renderer import render_rst
 from notemanager.renderer.md_renderer import render_md
+from notemanager.renderer.txt_renderer import render_txt
 from notemanager.renderer.template import wrap_html
 from notemanager.scanner import INCLUDE_EXTENSIONS, SKIP_DIRS
 
@@ -787,8 +788,8 @@ class NoteManagerDaemon:
         source = Path(file_path).expanduser().resolve()
         if not source.is_file():
             return {"ok": False, "error": f"文件不存在: {source}"}
-        if source.suffix.lower() not in (".md", ".rst"):
-            return {"ok": False, "error": "仅支持 .md/.rst 文件"}
+        if source.suffix.lower() not in (".md", ".rst", ".txt"):
+            return {"ok": False, "error": "仅支持 .md/.rst/.txt 文件"}
 
         with self._lock:
             dirs = list(self._observers.keys())
@@ -820,6 +821,8 @@ class NoteManagerDaemon:
         content = source.read_text(encoding="utf-8")
         if source.suffix.lower() == ".rst":
             rendered = render_rst(content, str(source))
+        elif source.suffix.lower() == ".txt":
+            rendered = render_txt(content, str(source))
         else:
             rendered = render_md(content, str(source))
 
@@ -857,7 +860,7 @@ class NoteManagerDaemon:
         rel = Path(source_rel_posix.replace("\\", "/"))
         if rel.is_absolute() or any(p == ".." for p in rel.parts):
             return None, None
-        if rel.suffix.lower() not in (".md", ".rst"):
+        if rel.suffix.lower() not in (".md", ".rst", ".txt"):
             return None, None
         root = project_root.resolve()
         abs_src = (root / rel).resolve()

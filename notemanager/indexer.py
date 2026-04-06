@@ -60,7 +60,11 @@ _MAX_GREP_TEXT_LEN = 4000
 def parse_search_query(query: str) -> tuple[str | None, str]:
     """解析 ``chapter:`` / ``grep:`` 等前缀，返回 (类型或 None, 核心查询串)。"""
     raw = query.strip()
-    m = re.match(r"^(chapter|label|index|dtag|grep):\s*(.*)$", raw, re.IGNORECASE)
+    m = re.match(
+        r"^(chapter|label|index|dtag|grep|fname):\s*(.*)$",
+        raw,
+        re.IGNORECASE,
+    )
     if m:
         core = (m.group(2) or "").strip()
         return m.group(1).lower(), core
@@ -196,7 +200,7 @@ def build_index(
         if m_main:
             main_anchor_by_path[path] = m_main.group(1)
         title = doc.get("title") or ""
-        _extract_fname(entries, path, title)
+        _extract_fname(entries, path, title, doc.get("source_path"))
         _extract_chapters(entries, path, body)
         _extract_dtags(entries, path, body)
         _extract_index_terms(entries, path, body)
@@ -345,11 +349,17 @@ def _extract_index_terms(entries: list, path: str, html: str) -> None:
             })
 
 
-def _extract_fname(entries: list, path: str, doc_title: str) -> None:
+def _extract_fname(
+    entries: list,
+    path: str,
+    doc_title: str,
+    source_path: str | None = None,
+) -> None:
     """Add filename-based entries for fast file-name lookup."""
     p = Path(path)
-    stem = p.stem.strip()
-    name = p.name.strip()
+    src = Path(source_path) if source_path else p
+    stem = src.stem.strip()
+    name = src.name.strip()
     title = (doc_title or stem or name).strip()
     entries.append({
         "type": "fname",

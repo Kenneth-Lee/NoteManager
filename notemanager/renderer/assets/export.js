@@ -123,7 +123,9 @@
     if (term.type === "grep") return false;
     if (term.type && term.type !== "fname" && doc.type !== term.type) return false;
     var r = buildRegex(term.query);
-    if (term.type === "fname") return r.test(doc.path || "");
+    if (term.type === "fname") {
+      return r.test(doc.text || "") || r.test(doc.path || "") || r.test(doc.title || "");
+    }
     var blob = [doc.title || "", doc.text || "", doc.snippet || "", doc.path || ""].join(" ");
     return r.test(blob);
   }

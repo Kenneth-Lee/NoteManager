@@ -27,7 +27,7 @@ from notemanager.renderer.export_template import (
     wrap_export_index_html,
     wrap_export_note_html,
 )
-from notemanager.scanner import scan_directory
+from notemanager.scanner import scan_directory, is_ignored_path, load_ignore_rules
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +71,11 @@ _ASSET_EXTENSIONS = {
 
 def _copy_project_assets(project_root: Path, html_dir: Path) -> None:
     root = project_root.resolve()
+    rules = load_ignore_rules(root)
     for path in root.rglob("*"):
         if not path.is_file():
+            continue
+        if is_ignored_path(root, path, rules=rules):
             continue
         parts = path.relative_to(root).parts
         if any(
@@ -148,6 +151,7 @@ def _write_export_pages(
             {
                 "title": r_out["title"],
                 "path": str(html_rel),
+                "source_path": str(fi.rel_path),
                 "body": body,
             }
         )

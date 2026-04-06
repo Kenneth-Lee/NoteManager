@@ -34,6 +34,8 @@ NoteManager的用户界面是这样构思的：首先，我们对每个用户，
 
 顺便说一句，如果你只是要分享几个md或者rst文件，而不是要生成html，本地管家是支持.md.zip和.rst.zip格式的。那种情况下，你甚至都不需要NoteManager的支持，可以直接把几个md或者rst文件压缩一下，直接在本地管家就可以查看渲染结果。
 
+我原来做了另一个rst/md的渲染工具：[markdown_quickview](https://atomgit.com/Kenneth-Lee-2025/markdown_quickview)，那个可以独立渲染某个md/rst文件，这个功能现在我合并到本工具上了。你可以用nmr view命令渲染某个rst/md文件，如果这个文件在管理的项目之内，这会直接使用渲染好的结果，如果不在，也能临时渲染一个文件供查看。后者和前者的唯一区别是后者不是个工程，所以你引用其他rst/md文件可能引用不了。
+
 ## 安装
 
 ### 方式一：正式安装（推荐）
@@ -151,7 +153,7 @@ nmr searche <关键词> [-p 工程]
 - 输入数字后直接用 `$EDITOR` 打开对应源文件（例如 `export EDITOR=vim` 或 `export EDITOR="code -w"`）
 
 ```bash
-nmr view <文件路径.md|.rst>
+nmr view <文件路径.md|.rst|.txt>
 ```
 
 - 若文件属于已管理项目：跳转到该文件对应的项目 HTML 页面
@@ -167,7 +169,15 @@ nmr view <文件路径.md|.rst>
 - **导出ZIP**：生成上述手机用 `.html.zip`
 - 进入项目页面浏览 HTML 输出（侧边栏 Home 回到该项目站点主页）
 - 需要回到管理界面时，在浏览器地址栏打开 http://localhost:19833/ 即可
-- 进入具体文档后，在「源文件」页签可用内置编辑器修改 `.md`/`.rst`，**保存并刷新渲染**；粘贴剪贴板中的截图可自动保存到源文件同目录并插入引用（详见 `docs/web-source-editor.md`）
+- 进入具体文档后，在「源文件」页签可用内置编辑器修改 `.md`/`.rst`/`.txt`，**保存并刷新渲染**；粘贴剪贴板中的截图可自动保存到源文件同目录并插入引用（详见 `docs/web-source-editor.md`）
+
+### 扫描格式与忽略规则
+
+- 受管理项目默认扫描并渲染：`.md`、`.rst`、`.txt`（txt 按段落简单渲染）。
+- 可在项目根创建 `.nmrignore` 跳过目录或文件（gitignore 风格子集）：
+  - `build/` 忽略目录及其下所有内容
+  - `*.draft.md` 忽略匹配文件
+  - `!notes/keep.txt` 反向包含（覆盖前面的忽略）
 
 ### 可移植性
 

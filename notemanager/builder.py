@@ -9,15 +9,17 @@ import datetime
 from collections.abc import Callable
 from pathlib import Path
 
-from notemanager.scanner import scan_directory, FileInfo
+from notemanager.scanner import scan_directory, FileInfo, load_ignore_rules
 from notemanager.scan_manifest import build_manifest_payload, write_scan_manifest
 from notemanager.renderer.rst_renderer import render_rst
 from notemanager.renderer.md_renderer import render_md
+from notemanager.renderer.txt_renderer import render_txt
 from notemanager.renderer.template import wrap_html
 from notemanager.ref_resolver import extract_labels, resolve_references
 from notemanager.index_body import extract_render_panel_inner_html
 from notemanager.indexer import build_index, extract_rst_index_directives
 from notemanager.indexer import extract_dtags_from_sources
+from notemanager.scanner import is_ignored_path
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +176,7 @@ def update_file(
     rel_path = file_path.relative_to(project_root)
     ext = file_path.suffix.lower()
 
-    if ext not in (".rst", ".md"):
+    if ext not in (".rst", ".md", ".txt"):
         return
 
     nm_dir = project_root / ".NoteManager"
@@ -234,6 +236,7 @@ def update_file(
             documents.append({
                 "title": title,
                 "path": str(html_rel),
+                "source_path": str(f.rel_path),
                 "body": body,
             })
 
@@ -302,6 +305,7 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
             documents.append({
                 "title": title,
                 "path": str(html_r),
+                "source_path": str(f.rel_path),
                 "body": body,
             })
 
@@ -335,6 +339,8 @@ def _render_file(fi: FileInfo) -> dict:
     content = fi.path.read_text(encoding="utf-8")
     if fi.ext == ".rst":
         result = render_rst(content, str(fi.rel_path))
+    elif fi.ext == ".txt":
+        result = render_txt(content, str(fi.rel_path))
     else:
         result = render_md(content, str(fi.rel_path))
     result["title"] = _resolve_page_title(content, fi, result.get("body", ""))
@@ -365,6 +371,7 @@ def _write_html(html_dir, fi, rendered, ref_labels):
     return {
         "title": rendered["title"],
         "path": str(html_rel),
+        "source_path": str(fi.rel_path),
         "body": body,
     }
 
@@ -710,8 +717,11 @@ def _copy_project_assets(project_root, html_dir):
     """Copy non-document assets (images, etc.) to the html output directory."""
     import shutil
     root = Path(project_root).resolve()
+    rules = load_ignore_rules(root)
     for path in root.rglob("*"):
         if not path.is_file():
+            continue
+        if is_ignored_path(root, path, rules=rules):
             continue
         parts = path.relative_to(root).parts
         if any(part in {".NoteManager", "_build", "_static", "_extensions",
@@ -907,7 +917,8 @@ _DEFAULT_JS = """\
         label: '标签',
         index: '索引',
         dtag: '标记',
-        grep: '渲染块'
+        grep: '渲染块',
+        fname: '文件名'
     };
 
     function escapeHtml(s) {
@@ -978,7 +989,7 @@ _DEFAULT_JS = """\
 
     function parseQuery(query) {
         var raw = String(query || '').trim();
-        var match = raw.match(/^(chapter|label|index|dtag|grep):\\s*(.*)$/i);
+        var match = raw.match(/^(chapter|label|index|dtag|fname|grep):\\s*(.*)$/i);
         if (match) {
             var core = (match[2] || '').trim();
             return { type: match[1].toLowerCase(), query: core };
