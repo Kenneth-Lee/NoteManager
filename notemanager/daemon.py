@@ -17,7 +17,7 @@ import datetime
 import hashlib
 import time
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from notemanager.protocol import (
     DEFAULT_HOST, DEFAULT_PORT, DEFAULT_UNIX_SOCKET, recv_command, send_response,
@@ -828,6 +828,7 @@ class NoteManagerDaemon:
 
         title = source.stem
         body = rendered.get("body", "")
+        body = self._rewrite_temp_body_links(body, source)
         toc = rendered.get("toc", "")
         warnings = rendered.get("warnings", [])
         html = wrap_html(
@@ -852,6 +853,126 @@ class NoteManagerDaemon:
         out_name = f"{key}.html"
         (temp_dir / out_name).write_text(html, encoding="utf-8")
         return f"/temp/{out_name}"
+
+    def _rewrite_temp_body_links(self, html_body: str, source: Path) -> str:
+        """Rewrite unmanaged-body local links/assets to temp handlers."""
+        if not html_body:
+            return html_body
+        from html.parser import HTMLParser
+        import urllib.parse
+
+        base_dir = source.parent
+
+        def _is_external_scheme(s: str) -> bool:
+            sl = s.lower()
+            return sl.startswith(("http://", "https://", "mailto:", "javascript:", "data:"))
+
+        def _resolve_local_ref(raw: str) -> tuple[Path | None, str]:
+            parsed = urllib.parse.urlparse(raw)
+            frag = parsed.fragment or ""
+            if parsed.scheme and parsed.scheme.lower() != "file":
+                return None, frag
+            if parsed.netloc and parsed.scheme.lower() != "file":
+                return None, frag
+            p_raw = parsed.path or ""
+            if parsed.scheme.lower() == "file":
+                p_raw = urllib.parse.unquote(p_raw)
+            if not p_raw:
+                return None, frag
+            cand = Path(p_raw)
+            if not cand.is_absolute():
+                cand = (base_dir / cand).resolve()
+            else:
+                cand = cand.resolve()
+            return cand, frag
+
+        def _note_target_from_href(raw_href: str) -> tuple[Path | None, str]:
+            target, frag = _resolve_local_ref(raw_href)
+            if target is None:
+                return None, frag
+            suf = target.suffix.lower()
+            if suf in (".md", ".rst", ".txt") and target.is_file():
+                return target, frag
+            if suf == ".html":
+                stem = target.with_suffix("")
+                for ext in (".md", ".rst", ".txt"):
+                    cand = stem.with_suffix(ext)
+                    if cand.is_file():
+                        return cand, frag
+            return None, frag
+
+        class _TempLinkRewriter(HTMLParser):
+            def __init__(self) -> None:
+                super().__init__(convert_charrefs=False)
+                self.parts: list[str] = []
+
+            def _fmt(self, tag: str, attrs) -> str:
+                if attrs:
+                    return "<" + tag + " " + " ".join(f'{k}="{v}"' for k, v in attrs) + ">"
+                return f"<{tag}>"
+
+            def handle_starttag(self, tag: str, attrs):
+                new_attrs = list(attrs)
+                for i, (k, v) in enumerate(new_attrs):
+                    if not isinstance(v, str):
+                        continue
+                    if k == "href":
+                        href = v.strip()
+                        if not href or href.startswith("#") or _is_external_scheme(href):
+                            continue
+                        note_target, frag = _note_target_from_href(href)
+                        if note_target is not None:
+                            q = urlencode({"file": str(note_target), "base": str(base_dir)})
+                            new_href = f"/temp/open?{q}"
+                            if frag:
+                                new_href += "#" + urllib.parse.quote(frag, safe="")
+                            new_attrs[i] = (k, new_href)
+                            continue
+                        local_target, _ = _resolve_local_ref(href)
+                        if local_target is not None and local_target.is_file():
+                            q = urlencode({"file": str(local_target), "base": str(base_dir)})
+                            new_attrs[i] = (k, f"/temp/asset?{q}")
+                    elif k == "src":
+                        src = v.strip()
+                        if not src or _is_external_scheme(src):
+                            continue
+                        local_target, _ = _resolve_local_ref(src)
+                        if local_target is not None and local_target.is_file():
+                            q = urlencode({"file": str(local_target), "base": str(base_dir)})
+                            new_attrs[i] = (k, f"/temp/asset?{q}")
+                self.parts.append(self._fmt(tag, new_attrs))
+
+            def handle_endtag(self, tag: str):
+                self.parts.append(f"</{tag}>")
+
+            def handle_data(self, data: str):
+                self.parts.append(data)
+
+            def handle_entityref(self, name: str):
+                self.parts.append(f"&{name};")
+
+            def handle_charref(self, name: str):
+                self.parts.append(f"&#{name};")
+
+            def handle_comment(self, data: str):
+                self.parts.append(f"<!--{data}-->")
+
+            def handle_decl(self, decl: str):
+                self.parts.append(f"<!{decl}>")
+
+            def handle_pi(self, data: str):
+                self.parts.append(f"<?{data}>")
+
+            def get_result(self) -> str:
+                return "".join(self.parts)
+
+        parser = _TempLinkRewriter()
+        try:
+            parser.feed(html_body)
+            parser.close()
+            return parser.get_result()
+        except Exception:
+            return html_body
 
     def _validated_source_rel(
         self, project_root: Path, source_rel_posix: str,

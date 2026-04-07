@@ -109,7 +109,8 @@ class WebHandler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        path = urllib.parse.urlparse(self.path).path
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
 
         if path == "/" or path == "":
             self._serve_panel()
@@ -118,7 +119,12 @@ class WebHandler(BaseHTTPRequestHandler):
         elif path.startswith("/api/"):
             self._handle_api_get(path)
         elif path.startswith("/temp/"):
-            self._serve_temp_file(path)
+            if path == "/temp/open":
+                self._serve_temp_open(parsed.query)
+            elif path == "/temp/asset":
+                self._serve_temp_asset(parsed.query)
+            else:
+                self._serve_temp_file(path)
         elif path.startswith("/p/"):
             self._serve_project_file(path)
         else:
@@ -426,6 +432,66 @@ class WebHandler(BaseHTTPRequestHandler):
             self._send_error(404, "File not found")
             return
         self._send_file(target)
+
+    def _serve_temp_open(self, query: str):
+        """Render a local note source and redirect to /temp/<key>.html."""
+        params = urllib.parse.parse_qs(query or "", keep_blank_values=False)
+        raw = (params.get("file") or [""])[0]
+        base_raw = (params.get("base") or [""])[0]
+        if not raw:
+            self._send_error(400, "Missing file")
+            return
+        source = Path(raw).expanduser().resolve()
+        if not self._within_base(source, base_raw):
+            self._send_error(403, "Forbidden")
+            return
+        if not source.is_file():
+            self._send_error(404, "File not found")
+            return
+        if source.suffix.lower() not in (".md", ".rst", ".txt"):
+            self._send_error(400, "Only .md/.rst/.txt are supported")
+            return
+        try:
+            target_url = self.daemon_ref._render_temp_view(source)
+        except (OSError, UnicodeDecodeError):
+            self._send_error(500, "Render failed")
+            return
+        self.send_response(302)
+        self.send_header("Location", target_url)
+        self.end_headers()
+
+    def _serve_temp_asset(self, query: str):
+        """Serve local file assets referenced by /temp pages."""
+        params = urllib.parse.parse_qs(query or "", keep_blank_values=False)
+        raw = (params.get("file") or [""])[0]
+        base_raw = (params.get("base") or [""])[0]
+        if not raw:
+            self._send_error(400, "Missing file")
+            return
+        target = Path(raw).expanduser().resolve()
+        if not self._within_base(target, base_raw):
+            self._send_error(403, "Forbidden")
+            return
+        if not target.is_file():
+            self._send_error(404, "File not found")
+            return
+        self._send_file(target)
+
+    @staticmethod
+    def _within_base(target: Path, base_raw: str) -> bool:
+        """Allow only target under base dir (inclusive)."""
+        if not base_raw:
+            return False
+        try:
+            base = Path(base_raw).expanduser().resolve()
+            t = target.resolve()
+        except OSError:
+            return False
+        try:
+            t.relative_to(base)
+            return True
+        except ValueError:
+            return False
 
 
 def _same_project_root(a: str, b: str) -> bool:
