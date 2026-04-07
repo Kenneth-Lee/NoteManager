@@ -25,6 +25,7 @@ from notemanager.protocol import (
 )
 from notemanager.indexer import (
     filter_search_documents,
+    parse_search_query,
 )
 
 
@@ -262,6 +263,72 @@ def cmd_list(args):
         print("错误: 无法连接 Daemon")
 
 
+def _compile_search_regex(query: str) -> re.Pattern[str]:
+    """与 filter_search_documents 一致：核心串为正则，非法则按字面转义。"""
+    _, core = parse_search_query(query)
+    if not core:
+        return re.compile(r"(?!.)")
+    try:
+        return re.compile(core, re.IGNORECASE)
+    except re.error:
+        return re.compile(re.escape(core), re.IGNORECASE)
+
+
+def _stdout_supports_color() -> bool:
+    if os.environ.get("NO_COLOR", "").strip():
+        return False
+    return sys.stdout.isatty()
+
+
+def _highlight_regex_matches(segment: str, rex: re.Pattern[str], hi: str, reset: str) -> str:
+    parts: list[str] = []
+    pos = 0
+    for m in rex.finditer(segment):
+        parts.append(segment[pos : m.start()])
+        parts.append(hi)
+        parts.append(segment[m.start() : m.end()])
+        parts.append(reset)
+        pos = m.end()
+    parts.append(segment[pos:])
+    return "".join(parts)
+
+
+def _format_search_result_text(
+    text: str,
+    rex: re.Pattern[str],
+    *,
+    max_len: int = 80,
+    use_color: bool,
+) -> str:
+    """截取关键字附近至多 max_len 字符，并对匹配子串加终端高亮。"""
+    hi = "\033[1;33m" if use_color else ""
+    reset = "\033[0m" if use_color else ""
+    if not text:
+        return ""
+    n = len(text)
+    if n <= max_len:
+        return _highlight_regex_matches(text, rex, hi, reset)
+    m = rex.search(text)
+    if not m:
+        return text[:max_len] + "…"
+    m0, m1 = m.span()
+    if m1 - m0 >= max_len:
+        start, end = m0, m0 + max_len
+    else:
+        start = max(0, min(m0, n - max_len))
+        if start + max_len < m1:
+            start = m1 - max_len
+        start = max(0, start)
+        end = min(n, start + max_len)
+    segment = text[start:end]
+    out = _highlight_regex_matches(segment, rex, hi, reset)
+    if start > 0:
+        out = "…" + out
+    if end < n:
+        out = out + "…"
+    return out
+
+
 def _resolve_project(args):
     """Resolve --project flag to a project index. Returns index or exits."""
     port = _get_daemon_port()
@@ -359,24 +426,21 @@ def cmd_search(args):
     data = json.loads(index_file.read_text(encoding="utf-8"))
     docs = data.get("documents", [])
     results = filter_search_documents(docs, args.query, limit=200)
+    search_rex = _compile_search_regex(args.query)
+    use_color = _stdout_supports_color()
 
-    paths = []
-    seen = set()
     for item in results:
         src = _resolve_source_from_result(project_dir, item.get("path", ""))
         if src is None:
             continue
         full = str(src.resolve())
-        if full not in seen:
-            seen.add(full)
-            paths.append(full)
-    if not paths:
-        print("命令行结果: 无可映射源文件")
-        return
-    print("命令行结果（源文件绝对路径）:")
-    for p in paths:
-        print(p)
-
+        body = _format_search_result_text(
+            item.get("text", "") or "",
+            search_rex,
+            max_len=80,
+            use_color=use_color,
+        )
+        print(f"{full}: {body}")
 
 def cmd_default(args):
     """Set or show the default project."""
