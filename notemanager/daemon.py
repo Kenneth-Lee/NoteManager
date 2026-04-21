@@ -273,6 +273,10 @@ class NoteManagerDaemon:
         self._grep_job_lock = threading.Lock()
         self._grep_jobs: dict[int, dict] = {}
         self._grep_next_id = 1
+        self._add_job_lock = threading.Lock()
+        self._add_jobs: dict[int, dict] = {}
+        self._add_next_id = 1
+        self._add_active_job_id: int | None = None
 
     @staticmethod
     def _tokenize_search_query(query: str) -> list[str]:
@@ -596,8 +600,10 @@ class NoteManagerDaemon:
                 self._rebuild_jobs.pop(job_id, None)
         return resp
 
-    def add_directory(self, directory: str) -> dict:
-        """Add a directory to monitoring."""
+    def _add_directory_impl(self, directory: str, progress=None) -> dict:
+        """Shared add-directory implementation with optional progress callback."""
+        if progress is None:
+            progress = lambda _msg: None
         path = Path(directory).resolve()
         if not path.is_dir():
             return {"ok": False, "error": f"目录不存在: {path}"}
@@ -609,12 +615,15 @@ class NoteManagerDaemon:
                 return {"ok": False, "error": f"已在监控中: {path}"}
 
         logger.info("构建目录: %s", path)
+        progress(f"开始添加监控: {path}")
+        progress("  构建目录（首次可能较慢）…")
         try:
-            full_build(path)
+            full_build(path, progress=progress)
         except Exception as e:
             logger.error("构建失败: %s: %s", path, e)
             return {"ok": False, "error": f"构建失败: {e}"}
 
+        progress("  启动目录监控…")
         try:
             observer = start_watcher(path)
             observer.start()
@@ -624,6 +633,7 @@ class NoteManagerDaemon:
             logger.error("启动监控失败: %s: %s", path, e)
             return {"ok": False, "error": f"启动监控失败: {e}"}
 
+        progress("  更新配置…")
         with self._lock:
             if dir_str not in self.config["directories"]:
                 self.config["directories"].append(dir_str)
@@ -631,7 +641,103 @@ class NoteManagerDaemon:
 
         logger.info("已添加监控: %s", path)
         self._notify_change("directories_changed")
+        progress("  ✓ 添加完成")
         return {"ok": True, "message": f"已添加监控: {path}"}
+
+    def add_directory(self, directory: str) -> dict:
+        """Add a directory to monitoring."""
+        return self._add_directory_impl(directory, progress=None)
+
+    def _add_worker(self, job_id: int, directory: str) -> None:
+        with self._add_job_lock:
+            job = self._add_jobs.get(job_id)
+        if not job:
+            return
+
+        def progress(msg: str) -> None:
+            with job["lock"]:
+                job["lines"].append(msg)
+
+        try:
+            result = self._add_directory_impl(directory, progress=progress)
+            if result.get("ok"):
+                job["success"] = True
+                job["message"] = result.get("message", "添加完成")
+            else:
+                job["success"] = False
+                job["error"] = result.get("error") or "添加失败"
+                progress(f"错误: {job['error']}")
+        except Exception as e:
+            logger.exception("添加监控任务失败")
+            job["success"] = False
+            job["error"] = str(e)
+            progress(f"错误: {e}")
+        finally:
+            job["done"].set()
+            with self._add_job_lock:
+                if self._add_active_job_id == job_id:
+                    self._add_active_job_id = None
+
+    def handle_add_with_progress(self, cmd: dict) -> dict:
+        directory = str(Path(cmd.get("directory", "")).resolve())
+        if not directory:
+            return {"ok": False, "error": "需要 directory"}
+
+        with self._add_job_lock:
+            for stale_id in [jid for jid, j in self._add_jobs.items() if j["done"].is_set()]:
+                self._add_jobs.pop(stale_id, None)
+            if self._add_active_job_id is not None:
+                cur = self._add_jobs.get(self._add_active_job_id)
+                if cur is not None and not cur["done"].is_set():
+                    return {"ok": False, "error": "已有添加目录任务进行中"}
+            job_id = self._add_next_id
+            self._add_next_id += 1
+            job = {
+                "lines": [],
+                "lock": threading.Lock(),
+                "done": threading.Event(),
+                "success": None,
+                "error": None,
+                "message": None,
+            }
+            self._add_jobs[job_id] = job
+            self._add_active_job_id = job_id
+
+        t = threading.Thread(target=self._add_worker, args=(job_id, directory), daemon=True)
+        t.start()
+        return {"ok": True, "job_id": job_id}
+
+    def handle_add_progress(self, cmd: dict) -> dict:
+        job_id = cmd.get("job_id")
+        since = int(cmd.get("since", 0))
+        if job_id is None:
+            return {"ok": False, "error": "需要 job_id"}
+
+        with self._add_job_lock:
+            job = self._add_jobs.get(job_id)
+        if not job:
+            return {"ok": False, "error": "无效或已结束的 add 任务"}
+
+        with job["lock"]:
+            lines = job["lines"]
+            new_lines = lines[since:]
+            total = len(lines)
+            done = job["done"].is_set()
+
+        resp = {
+            "ok": True,
+            "new_lines": new_lines,
+            "total_lines": total,
+            "done": done,
+            "success": job["success"] if done else None,
+            "error": job["error"] if done else None,
+            "message": job.get("message") if done else None,
+        }
+
+        if done and since >= total:
+            with self._add_job_lock:
+                self._add_jobs.pop(job_id, None)
+        return resp
 
     def remove_directory(self, directory: str) -> dict:
         """Remove a directory from monitoring."""
@@ -1259,6 +1365,10 @@ class NoteManagerDaemon:
             return {"ok": False, "error": "Daemon 启动超时（恢复监控目录未完成）"}
         if action == "add":
             return self.add_directory(cmd["directory"])
+        elif action == "add_with_progress":
+            return self.handle_add_with_progress(cmd)
+        elif action == "add_progress":
+            return self.handle_add_progress(cmd)
         elif action == "remove":
             return self.remove_directory(cmd["directory"])
         elif action == "list":

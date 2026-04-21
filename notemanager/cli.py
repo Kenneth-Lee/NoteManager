@@ -192,17 +192,64 @@ def cmd_add(args):
         sys.exit(1)
     try:
         resp = send_command(
-            {"cmd": "add", "directory": directory},
+            {"cmd": "add_with_progress", "directory": directory},
             port=port,
             socket_path=_get_daemon_socket_path(),
+            timeout=8,
         )
-        if resp.get("ok"):
-            print(resp["message"])
-            web_port = get_daemon_web_port()
-            if web_port:
-                print(f"Web UI: http://localhost:{web_port}")
-        else:
+        if not resp.get("ok"):
+            # Backward-compatible fallback for older daemon versions.
+            if "未知命令" in str(resp.get("error", "")):
+                legacy = send_command(
+                    {"cmd": "add", "directory": directory},
+                    port=port,
+                    socket_path=_get_daemon_socket_path(),
+                )
+                if legacy.get("ok"):
+                    print(legacy["message"])
+                    web_port = get_daemon_web_port()
+                    if web_port:
+                        print(f"Web UI: http://localhost:{web_port}")
+                    return
+                print(f"错误: {legacy.get('error')}")
+                return
             print(f"错误: {resp.get('error')}")
+            return
+
+        job_id = resp.get("job_id")
+        if job_id is None:
+            print("错误: Daemon 未返回 add 任务 ID")
+            sys.exit(1)
+
+        since = 0
+        while True:
+            st = send_command(
+                {"cmd": "add_progress", "job_id": job_id, "since": since},
+                port=port,
+                socket_path=_get_daemon_socket_path(),
+                timeout=20,
+            )
+            if not st.get("ok"):
+                print(f"错误: {st.get('error')}")
+                sys.exit(1)
+
+            new_lines = st.get("new_lines") or []
+            for line in new_lines:
+                print(line)
+            since = int(st.get("total_lines", since))
+
+            if st.get("done"):
+                if st.get("success"):
+                    msg = st.get("message") or f"已添加监控: {directory}"
+                    print(msg)
+                    web_port = get_daemon_web_port()
+                    if web_port:
+                        print(f"Web UI: http://localhost:{web_port}")
+                    return
+                print(f"错误: {st.get('error') or '添加失败'}")
+                sys.exit(1)
+
+            time.sleep(0.2)
     except ConnectionError:
         print("错误: 无法连接 Daemon")
 

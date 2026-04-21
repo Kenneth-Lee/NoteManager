@@ -7,6 +7,7 @@ import json
 import logging
 import datetime
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from notemanager.scanner import scan_directory, FileInfo, load_ignore_rules
@@ -22,6 +23,41 @@ from notemanager.indexer import extract_dtags_from_sources
 from notemanager.scanner import is_ignored_path
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class UiPluginBundle:
+    css_files: list[str]
+    js_files: list[str]
+
+
+def _load_ui_plugin_bundle(project_root: Path) -> UiPluginBundle:
+    """Load optional UI plugin config from project root .nmrui.json.
+
+    Supported config (minimal):
+      {"plugin": "modern"}
+      {"enabled": false}
+    """
+    cfg_file = project_root / ".nmrui.json"
+    if not cfg_file.is_file():
+        return UiPluginBundle(css_files=[], js_files=[])
+
+    try:
+        data = json.loads(cfg_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        logger.warning("UI 插件配置读取失败，忽略: %s", cfg_file)
+        return UiPluginBundle(css_files=[], js_files=[])
+
+    if not isinstance(data, dict):
+        return UiPluginBundle(css_files=[], js_files=[])
+    if data.get("enabled", True) is False:
+        return UiPluginBundle(css_files=[], js_files=[])
+
+    plugin = str(data.get("plugin", "")).strip().lower()
+    if plugin == "modern":
+        return UiPluginBundle(css_files=["notemanager-theme-modern.css"], js_files=[])
+
+    return UiPluginBundle(css_files=[], js_files=[])
 
 
 def _merge_dtag_lists(
@@ -53,6 +89,7 @@ def full_build(
             progress(msg)
 
     project_root = Path(project_root).resolve()
+    ui_plugin = _load_ui_plugin_bundle(project_root)
     files = scan_directory(project_root)
     n = len(files)
     p(f"  已扫描 {n} 个源文件")
@@ -101,7 +138,7 @@ def full_build(
         if merged:
             all_dtags[key] = merged
         r_out = {**r, "dtags": merged}
-        doc = _write_html(html_dir, fi, r_out, ref_labels)
+        doc = _write_html(html_dir, fi, r_out, ref_labels, ui_plugin)
         documents.append(doc)
         k = j + 1
         if n and (k == n or k <= 2 or k - last_report >= step):
@@ -136,7 +173,7 @@ def full_build(
 
     # Generate landing page
     p("  生成首页与状态…")
-    _generate_landing_page(html_dir, documents)
+    _generate_landing_page(html_dir, documents, ui_plugin)
 
     # Write status
     _write_status(
@@ -171,6 +208,7 @@ def update_file(
             仅源码文本更新时通常不需要，默认关闭以减少全目录遍历。
     """
     project_root = Path(project_root).resolve()
+    ui_plugin = _load_ui_plugin_bundle(project_root)
     file_path = Path(file_path).resolve()
 
     rel_path = file_path.relative_to(project_root)
@@ -223,7 +261,7 @@ def update_file(
     rendered = {**rendered, "dtags": merged}
 
     # Write this file's HTML
-    _write_html(html_dir, fi, rendered, ref_labels)
+    _write_html(html_dir, fi, rendered, ref_labels, ui_plugin)
 
     # Rebuild full index
     documents = []
@@ -257,7 +295,7 @@ def update_file(
     )
 
     # Update landing page
-    _generate_landing_page(html_dir, documents)
+    _generate_landing_page(html_dir, documents, ui_plugin)
 
     # Update status
     _write_status(
@@ -348,7 +386,7 @@ def _render_file(fi: FileInfo) -> dict:
     return result
 
 
-def _write_html(html_dir, fi, rendered, ref_labels):
+def _write_html(html_dir, fi, rendered, ref_labels, ui_plugin: UiPluginBundle):
     """Resolve references and write a single HTML file."""
     html_rel = fi.rel_path.with_suffix(".html")
     html_path = html_dir / html_rel
@@ -365,6 +403,8 @@ def _write_html(html_dir, fi, rendered, ref_labels):
         source_path=str(fi.rel_path),
         dtags=rendered.get("dtags", []),
         source_editable=True,
+        extra_css_files=ui_plugin.css_files,
+        extra_js_files=ui_plugin.js_files,
     )
     html_path.write_text(full_html, encoding="utf-8")
 
@@ -767,7 +807,7 @@ def _copy_project_assets(project_root, html_dir):
             shutil.copy2(path, dest)
 
 
-def _generate_landing_page(html_dir, documents):
+def _generate_landing_page(html_dir, documents, ui_plugin: UiPluginBundle):
     """Generate a top-level index.html with directory tree navigation."""
     # Build a nested tree from flat document paths
     tree = {}
@@ -780,7 +820,14 @@ def _generate_landing_page(html_dir, documents):
 
     tree_html = _render_tree(tree, depth=0)
     body = '<h1>NoteManager</h1>'
-    full_html = wrap_html(body, "NoteManager", "index.html", toc=tree_html)
+    full_html = wrap_html(
+        body,
+        "NoteManager",
+        "index.html",
+        toc=tree_html,
+        extra_css_files=ui_plugin.css_files,
+        extra_js_files=ui_plugin.js_files,
+    )
     (html_dir / "index.html").write_text(full_html, encoding="utf-8")
 
 

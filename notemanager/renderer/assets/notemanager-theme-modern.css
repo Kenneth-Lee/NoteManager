@@ -1,0 +1,77 @@
+/* Optional UI plugin: modern theme */
+:root {
+    --nm-accent: #0b6bcb;
+    --nm-accent-soft: #e8f2ff;
+    --nm-border: #d8e3ef;
+    --nm-card: #ffffff;
+    --nm-bg: #f4f7fb;
+}
+
+body {
+    background:
+        radial-gradient(900px 500px at 5% -20%, #eef6ff 0%, transparent 65%),
+        radial-gradient(700px 420px at 105% -10%, #fff4e8 0%, transparent 55%),
+        var(--nm-bg);
+}
+
+.nm-sidebar {
+    background: linear-gradient(180deg, #f9fbff 0%, #f3f7fd 100%);
+    border-right: 1px solid var(--nm-border);
+}
+
+.nm-sidebar-home {
+    letter-spacing: 0.2px;
+}
+
+.nm-sidebar-home a {
+    color: #0f345f;
+}
+
+.nm-tab-panels {
+    background: transparent;
+}
+
+.nm-tab-panel.active {
+    background: transparent;
+}
+
+#nm-panel-render > main,
+#nm-panel-render > article,
+#nm-panel-render > section,
+#nm-panel-render > div,
+#nm-panel-render {
+    border-radius: 12px;
+}
+
+#nm-panel-render {
+    background: var(--nm-card);
+    border: 1px solid var(--nm-border);
+    box-shadow: 0 10px 34px rgba(11, 38, 71, 0.07);
+}
+
+.nm-tab.active {
+    border-color: var(--nm-border);
+    color: #0f345f;
+}
+
+.toc a {
+    color: var(--nm-accent);
+}
+
+.nm-dtag-badge {
+    background: var(--nm-accent-soft);
+    border-color: #bfd7f8;
+    color: #0d4f94;
+}
+
+.nm-dtag-badge:hover {
+    background: #d7e8ff;
+}
+
+a {
+    text-underline-offset: 2px;
+}
+
+code {
+    border: 1px solid #edf2f7;
+}

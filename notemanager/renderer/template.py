@@ -52,7 +52,9 @@ def _static_prefix(html_rel_path: str) -> str:
 def wrap_html(body: str, title: str, html_rel_path: str,
               toc: str = "", source: str = "", warnings: list | None = None,
               source_path: str = "", dtags: list | None = None,
-              *, source_editable: bool = False) -> str:
+              *, source_editable: bool = False,
+              extra_css_files: list[str] | None = None,
+              extra_js_files: list[str] | None = None) -> str:
     """Wrap an HTML body fragment in a full HTML5 page.
 
     Args:
@@ -72,8 +74,19 @@ def wrap_html(body: str, title: str, html_rel_path: str,
     prefix = _static_prefix(html_rel_path)
     warnings = warnings or []
     dtags = dtags or []
+    extra_css_files = extra_css_files or []
+    extra_js_files = extra_js_files or []
 
     source_path_display = _escape(source_path) if source_path else ""
+
+    extra_css_tags = "\n".join(
+        f'<link rel="stylesheet" href="{prefix}_static/{_escape(name)}">'
+        for name in extra_css_files
+    )
+    extra_js_tags = "\n".join(
+        f'<script src="{prefix}_static/{_escape(name)}"></script>'
+        for name in extra_js_files
+    )
 
     if source_editable and source_path:
         highlighted_source = ""
@@ -145,6 +158,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 <title>{_escape(title)}</title>
 <link rel="stylesheet" href="{prefix}_static/notemanager.css">
 <link rel="stylesheet" href="{prefix}_static/katex.min.css">
+{extra_css_tags}
 {cm_head}
 <style>
 {_PYGMENTS_CSS}
@@ -339,6 +353,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 <script src="{prefix}_static/katex.min.js"></script>
 <script src="{prefix}_static/katex-auto-render.min.js"></script>
 <script src="{prefix}_static/mermaid.min.js"></script>
+{extra_js_tags}
 <script>if(typeof mermaid!=='undefined')mermaid.initialize({{startOnLoad:true,theme:'default'}});</script>
 <script>
 /* Tab switching */

@@ -108,7 +108,29 @@ notemanager add /path/to/your/notes
 nmr add /path/to/your/notes
 ```
 
-添加后自动执行首次构建并开始监控文件变化。
+添加后自动执行首次构建并开始监控文件变化。若目录较大，`nmr add` 会持续输出构建进度。
+
+### 可选界面美化插件（UI Plugin）
+
+默认不配置时，界面保持当前基础风格。
+
+若希望启用内置美化主题，请在项目根目录创建 `.nmrui.json`：
+
+```json
+{
+  "plugin": "modern"
+}
+```
+
+然后执行一次 `nmr rebuild` 即可生效。
+
+可通过下述配置关闭插件：
+
+```json
+{
+  "enabled": false
+}
+```
 
 ### 其他命令
 
