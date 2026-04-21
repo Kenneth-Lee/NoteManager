@@ -374,7 +374,7 @@ document.querySelectorAll('.nm-sidebar-toc a').forEach(function(a){{
     }});
 }});
 /* Math rendering */
-if(typeof renderMathInElement!=='undefined')renderMathInElement(document.getElementById('nm-panel-render'),{{delimiters:[{{left:'$$',right:'$$',display:true}},{{left:'$',right:'$',display:false}},{{left:'\\\\[',right:'\\\\]',display:true}},{{left:'\\\\(',right:'\\\\)',display:false}}],throwOnError:false,strict:'ignore'}});
+if(typeof renderMathInElement!=='undefined')renderMathInElement(document.getElementById('nm-panel-render'),{{delimiters:[{{left:'$$',right:'$$',display:true}},{{left:'$',right:'$',display:false}},{{left:'\\\\[',right:'\\\\]',display:true}},{{left:'\\\\(',right:'\\\\)',display:false}},{{left:'\\\\begin{{equation*}}',right:'\\\\end{{equation*}}',display:true}},{{left:'\\\\begin{{equation}}',right:'\\\\end{{equation}}',display:true}},{{left:'\\\\begin{{align*}}',right:'\\\\end{{align*}}',display:true}},{{left:'\\\\begin{{align}}',right:'\\\\end{{align}}',display:true}}],throwOnError:false,strict:'ignore'}});
 </script>
 </body>
 </html>

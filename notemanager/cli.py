@@ -754,7 +754,7 @@ def main():
         handler(args)
     else:
         parser.print_help()
-        sys.exit(1)
+        sys.exit(0)
 
 
 if __name__ == "__main__":

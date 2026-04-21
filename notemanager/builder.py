@@ -713,6 +713,37 @@ _ASSET_EXTENSIONS = {
 }
 
 
+_RUNTIME_STATIC_TOP_LEVEL = {
+    "notemanager.css",
+    "notemanager.js",
+    "nm-editor.js",
+    "katex.min.css",
+    "katex.min.js",
+    "katex-auto-render.min.js",
+    "mermaid.min.js",
+    "highlight.min.js",
+    "highlight-atom-one-dark.min.css",
+    "hljs-cpp.min.js",
+    "hljs-java.min.js",
+    "hljs-json.min.js",
+    "hljs-kotlin.min.js",
+    "hljs-markdown.min.js",
+    "hljs-plaintext.min.js",
+    "hljs-rust.min.js",
+    "hljs-yaml.min.js",
+    "codemirror",
+    "katex-fonts",
+}
+
+
+def _is_reserved_runtime_static(rel: Path) -> bool:
+    """Return True when a project file would overwrite NoteManager runtime static assets."""
+    parts = rel.parts
+    if len(parts) < 2 or parts[0] != "_static":
+        return False
+    return parts[1] in _RUNTIME_STATIC_TOP_LEVEL
+
+
 def _copy_project_assets(project_root, html_dir):
     """Copy non-document assets (images, etc.) to the html output directory."""
     import shutil
@@ -724,11 +755,13 @@ def _copy_project_assets(project_root, html_dir):
         if is_ignored_path(root, path, rules=rules):
             continue
         parts = path.relative_to(root).parts
-        if any(part in {".NoteManager", "_build", "_static", "_extensions",
+        if any(part in {".NoteManager", "_build", "_extensions",
                         "__pycache__", ".git", ".svn", ".hg"} for part in parts):
             continue
         if path.suffix.lower() in _ASSET_EXTENSIONS:
             rel = path.relative_to(root)
+            if _is_reserved_runtime_static(rel):
+                continue
             dest = html_dir / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, dest)

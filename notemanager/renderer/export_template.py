@@ -99,7 +99,7 @@ def wrap_export_note_html(
 <script src="{prefix}_static/mermaid.min.js"></script>
 <script>if(typeof mermaid!=="undefined")mermaid.initialize({{startOnLoad:true,theme:"default"}});</script>
 <script>
-if(typeof renderMathInElement!=="undefined")renderMathInElement(document.getElementById("nm-panel-render"),{{delimiters:[{{left:"$$",right:"$$",display:true}},{{left:"$",right:"$",display:false}},{{left:"\\\\[",right:"\\\\]",display:true}},{{left:"\\\\(",right:"\\\\)",display:false}}],throwOnError:false,strict:"ignore"}});
+if(typeof renderMathInElement!=="undefined")renderMathInElement(document.getElementById("nm-panel-render"),{{delimiters:[{{left:"$$",right:"$$",display:true}},{{left:"$",right:"$",display:false}},{{left:"\\\\[",right:"\\\\]",display:true}},{{left:"\\\\(",right:"\\\\)",display:false}},{{left:"\\\\begin{{equation*}}",right:"\\\\end{{equation*}}",display:true}},{{left:"\\\\begin{{equation}}",right:"\\\\end{{equation}}",display:true}},{{left:"\\\\begin{{align*}}",right:"\\\\end{{align*}}",display:true}},{{left:"\\\\begin{{align}}",right:"\\\\end{{align}}",display:true}}],throwOnError:false,strict:"ignore"}});
 </script>
 </body>
 </html>

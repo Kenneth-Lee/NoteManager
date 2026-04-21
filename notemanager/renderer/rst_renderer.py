@@ -338,6 +338,10 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
         "stylesheet_path": None,
         "embed_stylesheet": False,
         "initial_header_level": 1,
+        # Emit TeX wrappers (\(...\), \begin{equation*}...\end{equation*})
+        # instead of HTML fallback glyph layout, so frontend KaTeX can typeset
+        # consistent fractions/square roots across browsers.
+        "math_output": "MathJax",
         "warning_stream": warning_stream,
     }
 

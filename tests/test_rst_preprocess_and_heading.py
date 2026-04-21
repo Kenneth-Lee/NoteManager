@@ -112,6 +112,20 @@ class TestRstPreprocessAndHeading(unittest.TestCase):
         # We expect h1 level == 1 after all mapping.
         self.assertEqual(matches[0]["level"], 1)
 
+    def test_math_output_uses_tex_wrappers_for_katex(self) -> None:
+        src = """行内 :math:`\\sqrt{x}` 与 :math:`\\frac{a}{b}`\n\n.. math::\n\n   \\frac{1}{2} + \\sqrt{2}\n"""
+        rendered = rst_renderer.render_rst(src, "<string>")
+        body = rendered["body"]
+
+        # Should be emitted as TeX wrappers, then rendered by frontend KaTeX.
+        self.assertIn(r"\(\sqrt{x}\)", body)
+        self.assertIn(r"\(\frac{a}{b}\)", body)
+        self.assertIn(r"\begin{equation*}", body)
+        self.assertIn(r"\end{equation*}", body)
+
+        # Guard against docutils HTML fallback math that degrades to glyph layout.
+        self.assertNotIn('class="formula"', body)
+
 
 if __name__ == "__main__":
     unittest.main()
