@@ -5,7 +5,6 @@ import re
 import markdown
 
 from notemanager.indexer import extract_md_hashtags
-from notemanager.renderer.postproc import add_section_numbers, add_toc_numbers
 
 
 def _slugify(text, separator):
@@ -57,11 +56,6 @@ def render_md(content: str, source_path: str = "<string>") -> dict:
 
     # TOC from markdown toc extension
     toc_html = getattr(md, "toc", "") or ""
-
-    # Add section numbers
-    body, id_to_number = add_section_numbers(body)
-    if toc_html and id_to_number:
-        toc_html = add_toc_numbers(toc_html, id_to_number)
 
     return {"body": body, "toc": toc_html, "warnings": [], "dtags": extract_md_hashtags(content)}
 
