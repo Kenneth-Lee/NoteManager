@@ -1,0 +1,29 @@
+/* CJK-aware monospace for rendered code blocks and ASCII diagrams. */
+
+#nm-panel-render pre,
+#nm-panel-render .highlight pre,
+#nm-panel-render .highlight code,
+#nm-panel-render pre code,
+.nm-exp-body pre,
+.nm-exp-body .highlight pre,
+.nm-exp-body .highlight code,
+.nm-exp-body pre code {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", "Segoe UI Mono", Menlo, Consolas,
+                 "Liberation Mono", "Noto Sans Mono CJK SC", "Source Han Mono SC",
+                 "WenQuanYi Micro Hei Mono", "Microsoft YaHei Mono", monospace;
+    white-space: pre;
+    word-break: normal;
+    overflow-wrap: normal;
+    tab-size: 4;
+    font-variant-ligatures: none;
+}
+
+#nm-panel-render .highlight.nm-diagram pre,
+.nm-exp-body .highlight.nm-diagram pre,
+#nm-panel-render pre.nm-diagram,
+.nm-exp-body pre.nm-diagram,
+#nm-panel-render pre.literal-block.nm-diagram,
+.nm-exp-body pre.literal-block.nm-diagram {
+    line-height: 1.25;
+    overflow-x: auto;
+}

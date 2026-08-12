@@ -123,6 +123,8 @@ class WebHandler(BaseHTTPRequestHandler):
                 self._serve_temp_open(parsed.query)
             elif path == "/temp/asset":
                 self._serve_temp_asset(parsed.query)
+            elif path == "/temp/check":
+                self._serve_temp_check(parsed.query)
             else:
                 self._serve_temp_file(path)
         elif path.startswith("/p/"):
@@ -431,6 +433,8 @@ class WebHandler(BaseHTTPRequestHandler):
         if not target.is_file():
             self._send_error(404, "File not found")
             return
+        if target.suffix.lower() == ".html":
+            self.daemon_ref._refresh_temp_view_if_stale(target)
         self._send_file(target)
 
     def _serve_temp_open(self, query: str):
@@ -476,6 +480,43 @@ class WebHandler(BaseHTTPRequestHandler):
             self._send_error(404, "File not found")
             return
         self._send_file(target)
+
+    def _serve_temp_check(self, query: str):
+        """Return whether a temp-rendered file is stale and should be reloaded."""
+        params = urllib.parse.parse_qs(query or "", keep_blank_values=False)
+        raw = (params.get("file") or [""])[0]
+        if not raw:
+            self._send_json({"ok": False, "reload": False, "error": "Missing file"})
+            return
+        source = Path(raw).expanduser().resolve()
+        if not source.is_file():
+            self._send_json({"ok": True, "reload": False})
+            return
+        try:
+            current_mtime = source.stat().st_mtime_ns
+        except OSError:
+            self._send_json({"ok": False, "reload": False, "error": "Stat failed"})
+            return
+
+        key = self.daemon_ref._temp_key_for_source(source)
+        meta_path = self.daemon_ref.get_temp_view_dir() / f"{key}.meta.json"
+        if not meta_path.is_file():
+            self.daemon_ref._render_temp_view(source, force=True)
+            self._send_json({"ok": True, "reload": True, "source_path": str(source)})
+            return
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            self.daemon_ref._render_temp_view(source, force=True)
+            self._send_json({"ok": True, "reload": True, "source_path": str(source)})
+            return
+
+        stale = int(meta.get("mtime_ns", -1)) != current_mtime
+        if stale:
+            self.daemon_ref._render_temp_view(source, force=True)
+            self._send_json({"ok": True, "reload": True, "source_path": str(source)})
+            return
+        self._send_json({"ok": True, "reload": False, "mtime_ns": current_mtime})
 
     @staticmethod
     def _within_base(target: Path, base_raw: str) -> bool:

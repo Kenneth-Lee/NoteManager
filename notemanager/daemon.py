@@ -922,8 +922,42 @@ class NoteManagerDaemon:
         temp_dir.mkdir(parents=True, exist_ok=True)
         return temp_dir
 
-    def _render_temp_view(self, source: Path) -> str:
-        """Render one unmanaged source file to temporary HTML."""
+    @staticmethod
+    def _temp_key_for_source(source: Path) -> str:
+        return hashlib.sha1(str(source.resolve()).encode("utf-8")).hexdigest()[:16]
+
+    def _refresh_temp_view_if_stale(self, html_path: Path) -> None:
+        """If source file changed, re-render the temporary HTML in-place."""
+        try:
+            key = html_path.name[:-len(".html")]
+        except Exception:
+            return
+        meta_path = html_path.with_suffix(".meta.json")
+        if not meta_path.is_file():
+            return
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return
+        source_path = meta.get("source_path")
+        if not source_path:
+            return
+        source = Path(source_path).expanduser().resolve()
+        if not source.is_file():
+            return
+        try:
+            current_mtime = source.stat().st_mtime_ns
+        except OSError:
+            return
+        if int(meta.get("mtime_ns", -1)) == current_mtime:
+            return
+        self._render_temp_view(source, force=True)
+
+    def _render_temp_view(self, source: Path, *, force: bool = False) -> str:
+        """Render one unmanaged source file to temporary HTML.
+
+        A cached temp page is refreshed automatically when the source file's mtime changes.
+        """
         content = source.read_text(encoding="utf-8")
         if source.suffix.lower() == ".rst":
             rendered = render_rst(content, str(source))
@@ -955,9 +989,17 @@ class NoteManagerDaemon:
         from notemanager.builder import _copy_static_assets  # local import
         _copy_static_assets(static_dir)
 
-        key = hashlib.sha1(str(source).encode("utf-8")).hexdigest()[:16]
+        key = self._temp_key_for_source(source)
         out_name = f"{key}.html"
+        meta_name = f"{key}.meta.json"
+        meta = {
+            "source_path": str(source),
+            "mtime_ns": source.stat().st_mtime_ns,
+            "rendered_at": time.time(),
+            "title": title,
+        }
         (temp_dir / out_name).write_text(html, encoding="utf-8")
+        (temp_dir / meta_name).write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         return f"/temp/{out_name}"
 
     def _rewrite_temp_body_links(self, html_body: str, source: Path) -> str:

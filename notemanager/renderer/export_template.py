@@ -80,6 +80,7 @@ def wrap_export_note_html(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title_esc}</title>
 <link rel="stylesheet" href="{prefix}_static/export.css">
+<link rel="stylesheet" href="{prefix}_static/preformatted.css">
 <link rel="stylesheet" href="{prefix}_static/katex.min.css">
 </head>
 <body class="nm-export nm-export-note">
@@ -97,7 +98,58 @@ def wrap_export_note_html(
 <script src="{prefix}_static/katex.min.js"></script>
 <script src="{prefix}_static/katex-auto-render.min.js"></script>
 <script src="{prefix}_static/mermaid.min.js"></script>
-<script>if(typeof mermaid!=="undefined")mermaid.initialize({{startOnLoad:true,theme:"default"}});</script>
+<script>
+if(typeof mermaid!=="undefined"){{
+    function nmRenderMermaidError(node, title, msg) {{
+        if(!node) return;
+        var text = msg && msg.message ? msg.message : String(msg || 'Mermaid error');
+        node.setAttribute('data-nm-mermaid-error', text);
+        node.innerHTML = '<div class="nmMermaidError"><strong>' + title + '</strong><div>' + text + '</div></div>';
+    }}
+    mermaid.initialize({{startOnLoad:false,theme:"default"}});
+    mermaid.parseError = function(err, hash) {{
+        var node = document.querySelector('pre.mermaid[data-mermaid-hash="' + (hash || '') + '"]');
+        if(!node) node = document.querySelector('pre.mermaid[data-nm-mermaid-root="true"]');
+        if(node) {{
+            var msg = err && err.message ? err.message : String(err || 'Mermaid parse error');
+            nmRenderMermaidError(node, 'Mermaid 解析错误', msg);
+        }}
+    }};
+    document.addEventListener('DOMContentLoaded', function() {{
+        document.querySelectorAll('pre.mermaid').forEach(function(node) {{
+            node.setAttribute('data-nm-mermaid-root', 'true');
+            var text = (node.textContent || '').trim();
+            if(!text) return;
+            try {{
+                mermaid.parse(text).then(function() {{
+                    return mermaid.run({{nodes:[node]}});
+                }}).catch(function(e) {{
+                    var msg = e && e.message ? e.message : String(e || 'Mermaid render error');
+                    nmRenderMermaidError(node, 'Mermaid 运行错误', msg);
+                }});
+            }} catch (e) {{
+                var msg = e && e.message ? e.message : String(e || 'Mermaid render error');
+                nmRenderMermaidError(node, 'Mermaid 语法错误', msg);
+            }}
+        }});
+    }});
+}}
+</script>
+<style>
+.nmMermaidError {{
+    border: 1px solid #f0b8b8;
+    background: #fff4f4;
+    color: #8f2d2d;
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-family: sans-serif;
+    line-height: 1.5;
+}}
+.nmMermaidError strong {{
+    display: block;
+    margin-bottom: 4px;
+}}
+</style>
 <script>
 if(typeof renderMathInElement!=="undefined")renderMathInElement(document.getElementById("nm-panel-render"),{{delimiters:[{{left:"$$",right:"$$",display:true}},{{left:"$",right:"$",display:false}},{{left:"\\\\[",right:"\\\\]",display:true}},{{left:"\\\\(",right:"\\\\)",display:false}},{{left:"\\\\begin{{equation*}}",right:"\\\\end{{equation*}}",display:true}},{{left:"\\\\begin{{equation}}",right:"\\\\end{{equation}}",display:true}},{{left:"\\\\begin{{align*}}",right:"\\\\end{{align*}}",display:true}},{{left:"\\\\begin{{align}}",right:"\\\\end{{align}}",display:true}}],throwOnError:false,strict:"ignore"}});
 </script>

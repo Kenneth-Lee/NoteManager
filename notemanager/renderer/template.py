@@ -138,6 +138,36 @@ def wrap_html(body: str, title: str, html_rel_path: str,
         )
     warnings_text = "\\n".join(warnings) if warnings else "无诊断信息"
 
+    temp_monitor_script = ""
+    if source_path and not source_editable:
+        temp_monitor_script = f"""
+<script type="application/json" id="nm-temp-meta">{json.dumps({"source_path": source_path}, ensure_ascii=False)}</script>
+<script>
+(function() {{
+    var metaEl = document.getElementById('nm-temp-meta');
+    if (!metaEl) return;
+    var meta;
+    try {{ meta = JSON.parse(metaEl.textContent || '{{}}'); }} catch (e) {{ return; }}
+    var file = meta.source_path || '';
+    if (!file) return;
+    var url = '/temp/check?file=' + encodeURIComponent(file);
+    var timer = setInterval(function() {{
+        fetch(url, {{cache: 'no-store'}})
+          .then(function(r) {{ return r.ok ? r.json() : null; }})
+          .then(function(d) {{
+            if (d && d.reload) {{
+              window.location.reload();
+            }}
+          }})
+          .catch(function() {{}});
+    }}, 2000);
+    if (typeof window !== 'undefined') {{
+        window.addEventListener('beforeunload', function() {{ clearInterval(timer); }});
+    }}
+}})();
+</script>
+"""
+
     # Build dtag badge HTML
     dtag_badges = ""
     if dtags:
@@ -157,6 +187,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{_escape(title)}</title>
 <link rel="stylesheet" href="{prefix}_static/notemanager.css">
+<link rel="stylesheet" href="{prefix}_static/preformatted.css">
 <link rel="stylesheet" href="{prefix}_static/katex.min.css">
 {extra_css_tags}
 {cm_head}
@@ -347,6 +378,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 </div>
 </div>
 </div>
+{temp_monitor_script}
 <script>window.NM_PREFIX="{prefix}";</script>
 {cm_foot}
 <script src="{prefix}_static/notemanager.js"></script>
@@ -354,7 +386,59 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 <script src="{prefix}_static/katex-auto-render.min.js"></script>
 <script src="{prefix}_static/mermaid.min.js"></script>
 {extra_js_tags}
-<script>if(typeof mermaid!=='undefined')mermaid.initialize({{startOnLoad:true,theme:'default'}});</script>
+<script>
+if(typeof mermaid!=='undefined'){{
+    function nmRenderMermaidError(node, title, msg) {{
+        if(!node) return;
+        var text = msg && msg.message ? msg.message : String(msg || 'Mermaid error');
+        node.setAttribute('data-nm-mermaid-error', text);
+        node.innerHTML = '<div class="nmMermaidError"><strong>' + title + '</strong><div>' + text + '</div></div>';
+    }}
+
+    mermaid.initialize({{startOnLoad:false,theme:'default'}});
+    mermaid.parseError = function(err, hash) {{
+        var node = document.querySelector('pre.mermaid[data-mermaid-hash="' + (hash || '') + '"]');
+        if(!node) node = document.querySelector('pre.mermaid[data-nm-mermaid-root="true"]');
+        if(node) {{
+            var msg = err && err.message ? err.message : String(err || 'Mermaid parse error');
+            nmRenderMermaidError(node, 'Mermaid 解析错误', msg);
+        }}
+    }};
+    document.addEventListener('DOMContentLoaded', function() {{
+        document.querySelectorAll('pre.mermaid').forEach(function(node) {{
+            node.setAttribute('data-nm-mermaid-root', 'true');
+            var text = (node.textContent || '').trim();
+            if(!text) return;
+            try {{
+                mermaid.parse(text).then(function() {{
+                    return mermaid.run({{nodes:[node]}});
+                }}).catch(function(e) {{
+                    var msg = e && e.message ? e.message : String(e || 'Mermaid render error');
+                    nmRenderMermaidError(node, 'Mermaid 运行错误', msg);
+                }});
+            }} catch (e) {{
+                var msg = e && e.message ? e.message : String(e || 'Mermaid render error');
+                nmRenderMermaidError(node, 'Mermaid 语法错误', msg);
+            }}
+        }});
+    }});
+}}
+</script>
+<style>
+.nmMermaidError {{
+    border: 1px solid #f0b8b8;
+    background: #fff4f4;
+    color: #8f2d2d;
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-family: sans-serif;
+    line-height: 1.5;
+}}
+.nmMermaidError strong {{
+    display: block;
+    margin-bottom: 4px;
+}}
+</style>
 <script>
 /* Tab switching */
 document.querySelectorAll('.nm-tab').forEach(function(tab){{

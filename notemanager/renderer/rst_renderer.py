@@ -16,6 +16,7 @@ from notemanager.renderer.postproc import (
     fix_docutils_html5_heading_levels,
     generate_toc_from_headings,
 )
+from notemanager.renderer.preformatted import mark_diagram_code_blocks
 
 _roles_registered = False
 
@@ -392,6 +393,7 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
     dtags = _extract_dtags(body)
     body = _strip_dtags(body)
     body = _normalize_literal_block_markers(body)
+    body = mark_diagram_code_blocks(body)
     body = _clean_paragraph_linebreaks(body)
     body = _inject_term_anchors(body)
 

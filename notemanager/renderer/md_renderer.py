@@ -5,6 +5,7 @@ import re
 import markdown
 
 from notemanager.indexer import extract_md_hashtags
+from notemanager.renderer.preformatted import mark_diagram_code_blocks
 
 
 def _slugify(text, separator):
@@ -53,6 +54,7 @@ def render_md(content: str, source_path: str = "<string>") -> dict:
     body = md.convert(content)
     body = _convert_links(body)
     body = _convert_mermaid_blocks(body)
+    body = mark_diagram_code_blocks(body)
 
     # TOC from markdown toc extension
     toc_html = getattr(md, "toc", "") or ""
