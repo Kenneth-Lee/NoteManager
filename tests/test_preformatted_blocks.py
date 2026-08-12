@@ -28,7 +28,7 @@ class TestPreformattedBlocks(unittest.TestCase):
         self.assertIn('class="highlight nm-diagram"', marked)
 
     def test_example_md_marks_all_diagram_blocks(self):
-        content = Path(__file__).resolve().parents[1].joinpath("example.md").read_text(
+        content = Path(__file__).resolve().with_name("example.md").read_text(
             encoding="utf-8"
         )
         result = render_md(content, "example.md")
