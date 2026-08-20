@@ -28,7 +28,7 @@ from notemanager.builder import full_build
 from notemanager.scan_manifest import MANIFEST_VERSION, live_payload_and_files, read_scan_manifest
 from notemanager.watcher import start_watcher
 from notemanager.watcher import suppress_path
-from notemanager.web import notify_event
+from notemanager.web import broadcaster, notify_event
 from notemanager.indexer import filter_search_documents
 from notemanager.renderer.rst_renderer import render_rst
 from notemanager.renderer.md_renderer import render_md
@@ -909,12 +909,27 @@ class NoteManagerDaemon:
                 continue
             target = f"/p/{idx}/{rel.with_suffix('.html').as_posix()}"
             notify_event("cli_view", {"url": target})
-            return {"ok": True, "message": f"已跳转: {target}"}
+            return self._view_response(target, f"已跳转: {target}")
 
         # Otherwise render a temporary single-file page.
         temp_url = self._render_temp_view(source)
         notify_event("cli_view", {"url": temp_url})
-        return {"ok": True, "message": f"已临时渲染: {temp_url}"}
+        return self._view_response(temp_url, f"已临时渲染: {temp_url}")
+
+    def _view_response(self, url: str, message: str) -> dict:
+        """Tell the CLI the target URL and whether a web client received the event.
+
+        When no SSE client is connected (e.g. the daemon was just started by this
+        very command), the broadcast reaches nobody; the CLI then opens the URL
+        in a browser itself so a single `nmr view` invocation is enough.
+        """
+        return {
+            "ok": True,
+            "message": message,
+            "url": url,
+            "web_port": self.web_port,
+            "delivered": broadcaster.has_clients(),
+        }
 
     def get_temp_view_dir(self) -> Path:
         """Directory for temporary rendered single-file pages."""

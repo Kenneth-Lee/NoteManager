@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
+import webbrowser
 from pathlib import Path
 
 from notemanager.daemon import (
@@ -706,7 +707,18 @@ def cmd_view(args):
         print("错误: 无法连接 Daemon")
         sys.exit(1)
     if resp.get("ok"):
-        print(resp.get("message", "已发送查看请求"))
+        # 没有已连接的 Web UI（例如 daemon 刚被本次命令拉起）时，
+        # SSE 事件无人接收；直接用系统浏览器打开，一次命令即可看到。
+        url = resp.get("url")
+        if url and not resp.get("delivered"):
+            web_port = (
+                resp.get("web_port") or get_daemon_web_port() or DEFAULT_WEB_PORT
+            )
+            full_url = f"http://localhost:{web_port}{url}"
+            webbrowser.open(full_url)
+            print(f"已在浏览器打开: {full_url}")
+        else:
+            print(resp.get("message", "已发送查看请求"))
     else:
         print(f"错误: {resp.get('error')}")
         sys.exit(1)

@@ -32,6 +32,11 @@ class EventBroadcaster:
             except ValueError:
                 pass
 
+    def has_clients(self) -> bool:
+        """Whether any SSE client (web UI page) is currently connected."""
+        with self._lock:
+            return bool(self._clients)
+
     def broadcast(self, event_type: str, data: dict = None) -> None:
         """Send an SSE event to all connected clients."""
         payload = json.dumps(data or {}, ensure_ascii=False)
