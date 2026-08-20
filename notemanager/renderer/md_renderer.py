@@ -1,11 +1,85 @@
 """Markdown to HTML renderer."""
 
+import html as _htmlmod
 import re
 
 import markdown
 
 from notemanager.indexer import extract_md_hashtags
 from notemanager.renderer.preformatted import mark_diagram_code_blocks
+
+# Math spans ($$..$$, $..$, \(..\), \[..\], \begin{align}..) are rendered client-side
+# by KaTeX auto-render. Python-Markdown applies backslash escapes (\\ -> \, \{ -> {,
+# \! -> ! ...) which silently corrupts LaTeX row separators and commands, so math
+# spans are stashed as placeholders before conversion and restored afterwards.
+_MATH_TOKEN_PREFIX = "nmrMathSpan"
+_MATH_TOKEN_RE = re.compile(r"nmrMathSpan\d+Zqx")
+_MATH_INLINE_DOLLAR = re.compile(r"(?<![\\$])\$[^$\n]+?\$")
+_MATH_DISPLAY_DOLLAR = re.compile(r"\$\$[\s\S]+?\$\$")
+_MATH_BRACE_PAREN = re.compile(r"\\\([\s\S]+?\\\)")
+_MATH_BRACE_SQUARE = re.compile(r"\\\[[\s\S]+?\\\]")
+_MATH_ENV = re.compile(r"\\begin\{(align\*?|equation\*?|gather\*?)\}[\s\S]*?\\end\{\1\}")
+_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+
+
+def _protect_math(content: str) -> tuple[str, dict]:
+    """Replace math spans with markdown-safe placeholder tokens.
+
+    Fenced code blocks (``` / ~~~) are left untouched so shell snippets with $$
+    cannot swallow surrounding text into one placeholder.
+    """
+    if _MATH_TOKEN_PREFIX in content:
+        # Placeholder collision with user text: keep source untouched.
+        return content, {}
+
+    store: dict[str, str] = {}
+
+    def _stash(match: re.Match) -> str:
+        token = f"{_MATH_TOKEN_PREFIX}{len(store)}Zqx"
+        store[token] = match.group(0)
+        return token
+
+    def _substitute(text: str) -> str:
+        # Order matters: display delimiters before inline ones.
+        text = _MATH_DISPLAY_DOLLAR.sub(_stash, text)
+        text = _MATH_ENV.sub(_stash, text)
+        text = _MATH_BRACE_SQUARE.sub(_stash, text)
+        text = _MATH_BRACE_PAREN.sub(_stash, text)
+        text = _MATH_INLINE_DOLLAR.sub(_stash, text)
+        return text
+
+    out_parts: list[str] = []
+    segment: list[str] = []
+    in_fence = False
+    for line in content.splitlines(keepends=True):
+        if _FENCE_RE.match(line):
+            out_parts.append(_substitute("".join(segment)))
+            segment = []
+            in_fence = not in_fence
+            out_parts.append(line)
+            continue
+        if in_fence:
+            out_parts.append(_substitute("".join(segment)))
+            segment = []
+            out_parts.append(line)
+        else:
+            segment.append(line)
+    out_parts.append(_substitute("".join(segment)))
+    return "".join(out_parts), store
+
+
+def _restore_math(html_text: str, store: dict) -> str:
+    """Put stashed math back, HTML-escaped so textContent matches the source."""
+    if not store:
+        return html_text
+
+    def _unstash(match: re.Match) -> str:
+        tex = store.get(match.group(0))
+        if tex is None:
+            return match.group(0)
+        return _htmlmod.escape(tex, quote=False)
+
+    return _MATH_TOKEN_RE.sub(_unstash, html_text)
 
 
 def _slugify(text, separator):
@@ -51,13 +125,15 @@ def render_md(content: str, source_path: str = "<string>") -> dict:
             },
         },
     )
-    body = md.convert(content)
+    body, math_store = _protect_math(content)
+    body = md.convert(body)
+    body = _restore_math(body, math_store)
     body = _convert_links(body)
     body = _convert_mermaid_blocks(body)
     body = mark_diagram_code_blocks(body)
 
     # TOC from markdown toc extension
-    toc_html = getattr(md, "toc", "") or ""
+    toc_html = _restore_math(getattr(md, "toc", "") or "", math_store)
 
     return {"body": body, "toc": toc_html, "warnings": [], "dtags": extract_md_hashtags(content)}
 

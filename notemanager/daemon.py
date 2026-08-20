@@ -1574,11 +1574,25 @@ class NoteManagerDaemon:
             if pid > 0:
                 os._exit(0)
 
-            sys.stdin.close()
+            # Detach stdio at the OS level: merely rebinding sys.stdout leaves the
+            # inherited pipe/tty fds open, so callers piping CLI output (e.g.
+            # `nmr view f.md | tail`) would hang until the daemon exits.
             HOME_NM_DIR.mkdir(parents=True, exist_ok=True)
             log_file = HOME_NM_DIR / "daemon.log"
-            sys.stdout = open(log_file, "a", encoding="utf-8")
-            sys.stderr = open(log_file, "a", encoding="utf-8")
+            devnull_fd = os.open(os.devnull, os.O_RDONLY)
+            os.dup2(devnull_fd, 0)
+            if devnull_fd > 0:
+                os.close(devnull_fd)
+            sys.stdin = os.fdopen(0, "r", encoding="utf-8")
+            log_fd = os.open(
+                log_file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644
+            )
+            os.dup2(log_fd, 1)
+            os.dup2(log_fd, 2)
+            if log_fd > 2:
+                os.close(log_fd)
+            sys.stdout = os.fdopen(1, "a", encoding="utf-8", buffering=1)
+            sys.stderr = os.fdopen(2, "a", encoding="utf-8", buffering=1)
 
             self._setup_logging(stream=sys.stderr)
             self.run()
