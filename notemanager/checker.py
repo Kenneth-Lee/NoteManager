@@ -12,6 +12,12 @@ from pathlib import Path
 from docutils.core import publish_doctree
 
 
+SUPPORTED_MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdown"}
+SUPPORTED_RST_SUFFIXES = {".rst"}
+CHECK_SCOPES = {"all", "math", "mermaid"}
+INPUT_FORMATS = {"md", "rst", "mermaid", "math"}
+
+
 @dataclass(frozen=True)
 class Diagnostic:
     """Single source-level syntax problem discovered while checking a file."""
@@ -118,19 +124,22 @@ def _check_markdown_math(content: str, path: str) -> list[Diagnostic]:
         )
 
     # Inline/Display math in \( ... \), \[ ... \]
-    for marker, close_marker, label in ((r"\\(", r"\\)", "行内公式"), (r"\\[", r"\\]", "块级公式")):
+    for open_pat, close_pat, open_token, close_token, label in (
+        (r"(?<!\\)\\\(", r"(?<!\\)\\\)", r"\(", r"\)", "行内公式"),
+        (r"(?<!\\)\\\[", r"(?<!\\)\\\]", r"\[", r"\]", "块级公式"),
+    ):
         opens = []
         for i, line in enumerate(lines, start=1):
-            for match in re.finditer(rf"(?<!\\){re.escape(marker)}", line):
+            for match in re.finditer(open_pat, line):
                 opens.append((i, match.start()))
-            for match in re.finditer(rf"(?<!\\){re.escape(close_marker)}", line):
+            for match in re.finditer(close_pat, line):
                 if not opens:
                     diagnostics.append(
                         Diagnostic(
                             path=path,
                             line=i,
                             kind="Markdown Math",
-                            message=f"LaTeX {label} 缺少对应的开启符号 {marker}。",
+                            message=f"LaTeX {label} 缺少对应的开启符号 {open_token}。",
                         )
                     )
                     continue
@@ -142,7 +151,7 @@ def _check_markdown_math(content: str, path: str) -> list[Diagnostic]:
                     path=path,
                     line=line,
                     kind="Markdown Math",
-                    message=f"LaTeX {label} 未闭合：缺少结束符号 {close_marker}。",
+                    message=f"LaTeX {label} 未闭合：缺少结束符号 {close_token}。",
                 )
             )
 
@@ -157,16 +166,29 @@ def _check_markdown_mermaid(content: str, path: str) -> list[Diagnostic]:
     """
     diagnostics: list[Diagnostic] = []
     block_re = re.compile(r"```\s*mermaid\s*\n([\s\S]*?)```", re.IGNORECASE)
-    js_path = Path(__file__).resolve().parent / "renderer" / "assets" / "mermaid.min.js"
-    if not js_path.is_file():
-        return diagnostics
-
     for match in block_re.finditer(content):
         block_code = match.group(1).strip()
         if not block_code:
             continue
         start_line = content.count("\n", 0, match.start()) + 1
-        script = r"""
+        for msg in _run_mermaid_parse(block_code):
+            diagnostics.append(
+                Diagnostic(
+                    path=path,
+                    line=start_line,
+                    kind="Markdown Mermaid",
+                    message=f"Mermaid 语法错误：{msg}",
+                )
+            )
+    return diagnostics
+
+
+def _run_mermaid_parse(block_code: str) -> list[str]:
+    js_path = Path(__file__).resolve().parent / "renderer" / "assets" / "mermaid.min.js"
+    if not js_path.is_file():
+        return ["Mermaid 运行时缺失：未找到 renderer/assets/mermaid.min.js"]
+
+    script = r"""
 const fs = require('fs');
 const vm = require('vm');
 const code = process.argv[1];
@@ -256,47 +278,37 @@ const mermaid = sandbox.module.exports || sandbox.mermaid || sandbox.window.merm
   }
 })();
 """
-        try:
-            proc = subprocess.run(
-                ["node", "-e", script, block_code, str(js_path)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except FileNotFoundError:
-            return diagnostics
+    try:
+        proc = subprocess.run(
+            ["node", "-e", script, block_code, str(js_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return ["Mermaid 运行环境缺失：未找到 node 可执行文件"]
 
-        stdout = (proc.stdout or "").strip()
-        if not stdout:
-            continue
-        try:
-            payload = json.loads(stdout)
-        except json.JSONDecodeError:
-            continue
-        for item in payload:
-            msg = str(item.get("message") or "Mermaid 解析失败").strip()
-            if not msg:
-                continue
-            if msg:
-                diagnostics.append(
-                    Diagnostic(
-                        path=path,
-                        line=start_line,
-                        kind="Markdown Mermaid",
-                        message=f"Mermaid 语法错误：{msg}",
-                    )
-                )
-    return diagnostics
-
-
-def _check_markdown_file(path: Path) -> list[Diagnostic]:
-    content = path.read_text(encoding="utf-8", errors="replace")
-    diags = _check_markdown_math(content, str(path))
-    diags.extend(_check_markdown_mermaid(content, str(path)))
-    if not diags:
+    stdout = (proc.stdout or "").strip()
+    if not stdout:
+        err = (proc.stderr or "").strip()
+        if err:
+            return [f"Mermaid 解析器执行失败：{err.splitlines()[0]}"]
         return []
-    ordered = sorted(diags, key=lambda d: (d.line, d.kind, d.message))
-    return ordered
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return [f"Mermaid 解析器输出不可解析：{stdout[:120]}"]
+    messages: list[str] = []
+    for item in payload:
+        msg = str(item.get("message") or "Mermaid 解析失败").strip()
+        if msg:
+            messages.append(msg)
+    return messages
+
+
+def _check_markdown_file(path: Path, *, scope: str = "all") -> list[Diagnostic]:
+    content = path.read_text(encoding="utf-8", errors="replace")
+    return check_text(content, input_format="md", source_name=str(path), scope=scope)
 
 
 def _check_rst_file(path: Path) -> list[Diagnostic]:
@@ -322,6 +334,77 @@ def _check_rst_file(path: Path) -> list[Diagnostic]:
     return _parse_rst_warnings(str(path), str(path), warning_stream.getvalue())
 
 
+def _check_mermaid_text(content: str, source_name: str) -> list[Diagnostic]:
+    text = content.strip()
+    if not text:
+        return []
+    return [
+        Diagnostic(
+            path=source_name,
+            line=1,
+            kind="Mermaid",
+            message=f"Mermaid 语法错误：{msg}",
+        )
+        for msg in _run_mermaid_parse(text)
+    ]
+
+
+def check_text(content: str, *, input_format: str, source_name: str = "<stdin>", scope: str = "all") -> list[Diagnostic]:
+    """Check text input by explicit format.
+
+    Args:
+        content: Source text to check.
+        input_format: One of md/rst/mermaid/math.
+        source_name: Display name in diagnostics.
+        scope: all/math/mermaid; only meaningful for Markdown input.
+    """
+    fmt = input_format.lower().strip()
+    scp = scope.lower().strip()
+    if fmt not in INPUT_FORMATS:
+        return [Diagnostic(path=source_name, line=1, kind="Check", message=f"未知输入格式: {input_format}")]
+    if scp not in CHECK_SCOPES:
+        return [Diagnostic(path=source_name, line=1, kind="Check", message=f"未知检查范围: {scope}")]
+
+    if fmt == "math":
+        return sorted(_check_markdown_math(content, source_name), key=lambda d: (d.line, d.kind, d.message))
+    if fmt == "mermaid":
+        return sorted(_check_mermaid_text(content, source_name), key=lambda d: (d.line, d.kind, d.message))
+    if fmt == "rst":
+        if scp != "all":
+            return [
+                Diagnostic(
+                    path=source_name,
+                    line=1,
+                    kind="Check",
+                    message="RST 输入仅支持 scope=all（math/mermaid 仅适用于 Markdown）。",
+                )
+            ]
+        warning_stream = io.StringIO()
+        try:
+            publish_doctree(
+                content,
+                source_path=source_name,
+                settings_overrides={
+                    "report_level": 5,
+                    "halt_level": 5,
+                    "warning_stream": warning_stream,
+                    "output_encoding": "utf-8",
+                },
+            )
+        except Exception as exc:  # pragma: no cover - docutils error conversion path
+            msg = str(exc).strip() or "docutils 解析失败"
+            line = _extract_line_number_from_warning(msg)
+            return [Diagnostic(path=source_name, line=line, kind="RST Error", message=msg)]
+        return sorted(_parse_rst_warnings(source_name, source_name, warning_stream.getvalue()), key=lambda d: (d.line, d.kind, d.message))
+
+    diags: list[Diagnostic] = []
+    if scp in {"all", "math"}:
+        diags.extend(_check_markdown_math(content, source_name))
+    if scp in {"all", "mermaid"}:
+        diags.extend(_check_markdown_mermaid(content, source_name))
+    return sorted(diags, key=lambda d: (d.line, d.kind, d.message))
+
+
 def check_file(path: str | Path) -> list[Diagnostic]:
     """Check a single Markdown or reStructuredText source file.
 
@@ -334,11 +417,30 @@ def check_file(path: str | Path) -> list[Diagnostic]:
         return [Diagnostic(path=str(p), line=1, kind="File", message="文件不存在或不可访问。")]
 
     suffix = p.suffix.lower()
-    if suffix in {".md", ".markdown", ".mdown"}:
-        return _check_markdown_file(p)
-    if suffix == ".rst":
+    if suffix in SUPPORTED_MARKDOWN_SUFFIXES:
+        return _check_markdown_file(p, scope="all")
+    if suffix in SUPPORTED_RST_SUFFIXES:
         return _check_rst_file(p)
     return []
+
+
+def check_file_with_options(path: str | Path, *, input_format: str = "auto", scope: str = "all") -> list[Diagnostic]:
+    p = Path(path)
+    if not p.is_file():
+        return [Diagnostic(path=str(p), line=1, kind="File", message="文件不存在或不可访问。")]
+
+    fmt = input_format.lower().strip()
+    if fmt == "auto":
+        suffix = p.suffix.lower()
+        if suffix in SUPPORTED_MARKDOWN_SUFFIXES:
+            fmt = "md"
+        elif suffix in SUPPORTED_RST_SUFFIXES:
+            fmt = "rst"
+        else:
+            return [Diagnostic(path=str(p), line=1, kind="File", message="无法自动识别格式，请使用 --format 指定。")]
+
+    content = p.read_text(encoding="utf-8", errors="replace")
+    return check_text(content, input_format=fmt, source_name=str(p), scope=scope)
 
 
 def check_files(paths: list[str | Path]) -> list[Diagnostic]:

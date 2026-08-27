@@ -28,7 +28,7 @@ from notemanager.indexer import (
     filter_search_documents,
     parse_search_query,
 )
-from notemanager.checker import check_file
+from notemanager.checker import check_file_with_options, CHECK_SCOPES, INPUT_FORMATS
 
 
 def _ensure_daemon(port: int = DEFAULT_PORT, web_port: int = DEFAULT_WEB_PORT) -> bool:
@@ -727,17 +727,43 @@ def cmd_view(args):
 
 def cmd_check(args):
     """Check a Markdown/RST file for renderer-visible issues and exit nonzero on problems."""
-    path = Path(args.file).expanduser()
-    if not path.exists():
-        print(f"错误: 文件不存在: {path}")
-        sys.exit(1)
-    if path.suffix.lower() not in {".md", ".rst", ".markdown", ".mdown"}:
-        print(f"错误: 仅支持 .md/.rst 文件，当前文件: {path}")
+    fmt = args.format.lower()
+    scope = args.only.lower()
+    if scope not in CHECK_SCOPES:
+        print(f"错误: 不支持的检查范围: {scope}")
         sys.exit(1)
 
-    diags = check_file(path)
+    if args.stdin:
+        if args.file:
+            print("错误: 使用 --stdin 时不能同时提供文件路径")
+            sys.exit(1)
+        if fmt == "auto":
+            print("错误: 使用 --stdin 时必须通过 --format 指定输入格式（md/rst/mermaid/math）")
+            sys.exit(1)
+        if fmt not in INPUT_FORMATS:
+            print(f"错误: 不支持的输入格式: {fmt}")
+            sys.exit(1)
+        content = sys.stdin.read()
+        from notemanager.checker import check_text
+
+        diags = check_text(content, input_format=fmt, source_name="<stdin>", scope=scope)
+        source_label = "<stdin>"
+    else:
+        if not args.file:
+            print("错误: 请提供要检查的文件路径，或使用 --stdin 从标准输入读取")
+            sys.exit(1)
+        path = Path(args.file).expanduser()
+        if not path.exists():
+            print(f"错误: 文件不存在: {path}")
+            sys.exit(1)
+        if fmt not in {"auto", *INPUT_FORMATS}:
+            print(f"错误: 不支持的输入格式: {fmt}")
+            sys.exit(1)
+        diags = check_file_with_options(path, input_format=fmt, scope=scope)
+        source_label = str(path)
+
     if not diags:
-        print(f"OK: {path} 没有检测到渲染语法问题")
+        print(f"OK: {source_label} 没有检测到渲染语法问题")
         return
 
     for diag in diags:
@@ -810,8 +836,21 @@ def main():
     view_p = subparsers.add_parser("view", help="在 Web UI 查看指定 md/rst/txt 文件")
     view_p.add_argument("file", help="要查看的 md/rst/txt 文件路径")
 
-    check_p = subparsers.add_parser("check", help="检查指定的 md/rst 文件是否有渲染语法问题")
-    check_p.add_argument("file", help="要检查的 md/rst 文件路径")
+    check_p = subparsers.add_parser("check", help="检查文件或标准输入中的渲染语法问题")
+    check_p.add_argument("file", nargs="?", help="要检查的文件路径（md/rst）。若使用 --stdin 可省略")
+    check_p.add_argument("--stdin", action="store_true", help="从标准输入读取内容进行检查")
+    check_p.add_argument(
+        "--format",
+        default="auto",
+        choices=["auto", "md", "rst", "mermaid", "math"],
+        help="输入格式：auto(仅文件)、md、rst、mermaid(纯 mermaid 文本)、math(纯数学片段)",
+    )
+    check_p.add_argument(
+        "--only",
+        default="all",
+        choices=["all", "math", "mermaid"],
+        help="检查范围：all(默认)、math(仅数学)、mermaid(仅 mermaid)。仅对 md 输入生效。",
+    )
 
     default_p = subparsers.add_parser("default", help="设置或查看默认工程")
     default_p.add_argument("project", nargs="?", default="",
