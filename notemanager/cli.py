@@ -28,6 +28,7 @@ from notemanager.indexer import (
     filter_search_documents,
     parse_search_query,
 )
+from notemanager.checker import check_file
 
 
 def _ensure_daemon(port: int = DEFAULT_PORT, web_port: int = DEFAULT_WEB_PORT) -> bool:
@@ -724,6 +725,26 @@ def cmd_view(args):
         sys.exit(1)
 
 
+def cmd_check(args):
+    """Check a Markdown/RST file for renderer-visible issues and exit nonzero on problems."""
+    path = Path(args.file).expanduser()
+    if not path.exists():
+        print(f"错误: 文件不存在: {path}")
+        sys.exit(1)
+    if path.suffix.lower() not in {".md", ".rst", ".markdown", ".mdown"}:
+        print(f"错误: 仅支持 .md/.rst 文件，当前文件: {path}")
+        sys.exit(1)
+
+    diags = check_file(path)
+    if not diags:
+        print(f"OK: {path} 没有检测到渲染语法问题")
+        return
+
+    for diag in diags:
+        print(diag.format())
+    sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="notemanager",
@@ -789,6 +810,9 @@ def main():
     view_p = subparsers.add_parser("view", help="在 Web UI 查看指定 md/rst/txt 文件")
     view_p.add_argument("file", help="要查看的 md/rst/txt 文件路径")
 
+    check_p = subparsers.add_parser("check", help="检查指定的 md/rst 文件是否有渲染语法问题")
+    check_p.add_argument("file", help="要检查的 md/rst 文件路径")
+
     default_p = subparsers.add_parser("default", help="设置或查看默认工程")
     default_p.add_argument("project", nargs="?", default="",
                            help="工程编号或目录名 (省略则查看当前默认)")
@@ -806,6 +830,7 @@ def main():
         "search": cmd_search,
         "searche": cmd_searche,
         "view": cmd_view,
+        "check": cmd_check,
         "default": cmd_default,
     }
     handler = commands.get(args.command)
