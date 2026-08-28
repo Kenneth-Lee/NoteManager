@@ -169,8 +169,8 @@ def _convert_mermaid_blocks(html: str) -> str:
     )
     def _replace(m):
         code = m.group(1)
-        code = code.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-        code = code.replace("&quot;", '"').replace("&#39;", "'")
+        # Keep HTML entities encoded so browser textContent preserves Mermaid
+        # source literally (e.g. <<interface>>) instead of parsing as tags.
         return f'<pre class="mermaid">{code}</pre>'
     html = re.sub(pattern, _replace, html, flags=re.DOTALL)
     # Also handle plain <pre><code> without highlight wrapper

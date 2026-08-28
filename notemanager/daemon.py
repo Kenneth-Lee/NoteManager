@@ -40,6 +40,32 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_WEB_PORT = 19833
 
+
+def _temp_renderer_fingerprint() -> str:
+    """Fingerprint renderer sources to invalidate stale temp HTML cache."""
+    base = Path(__file__).resolve().parent
+    files = [
+        base / "renderer" / "md_renderer.py",
+        base / "renderer" / "rst_renderer.py",
+        base / "renderer" / "txt_renderer.py",
+        base / "renderer" / "template.py",
+        base / "renderer" / "export_template.py",
+    ]
+    sig: list[str] = []
+    for f in files:
+        try:
+            st = f.stat()
+            sig.append(f"{f.name}:{st.st_mtime_ns}:{st.st_size}")
+        except OSError:
+            sig.append(f"{f.name}:missing")
+    raw = "|".join(sig).encode("utf-8")
+    return hashlib.sha1(raw).hexdigest()[:16]
+
+
+def _temp_renderer_signature() -> str:
+    """Compatibility wrapper for temp view render signature."""
+    return _temp_renderer_fingerprint()
+
 _PASTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 _PASTE_IMAGE_TYPES: dict[str, str] = {
     "image/png": ".png",
@@ -941,6 +967,10 @@ class NoteManagerDaemon:
     def _temp_key_for_source(source: Path) -> str:
         return hashlib.sha1(str(source.resolve()).encode("utf-8")).hexdigest()[:16]
 
+    @staticmethod
+    def _current_temp_renderer_signature() -> str:
+        return _temp_renderer_signature()
+
     def _refresh_temp_view_if_stale(self, html_path: Path) -> None:
         """If source file changed, re-render the temporary HTML in-place."""
         try:
@@ -964,7 +994,8 @@ class NoteManagerDaemon:
             current_mtime = source.stat().st_mtime_ns
         except OSError:
             return
-        if int(meta.get("mtime_ns", -1)) == current_mtime:
+        current_sig = self._current_temp_renderer_signature()
+        if int(meta.get("mtime_ns", -1)) == current_mtime and str(meta.get("renderer_sig", "")) == current_sig:
             return
         self._render_temp_view(source, force=True)
 
@@ -1010,6 +1041,7 @@ class NoteManagerDaemon:
         meta = {
             "source_path": str(source),
             "mtime_ns": source.stat().st_mtime_ns,
+            "renderer_sig": self._current_temp_renderer_signature(),
             "rendered_at": time.time(),
             "title": title,
         }

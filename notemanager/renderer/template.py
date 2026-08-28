@@ -398,7 +398,6 @@ if(typeof mermaid!=='undefined'){{
     mermaid.initialize({{startOnLoad:false,theme:'default'}});
     mermaid.parseError = function(err, hash) {{
         var node = document.querySelector('pre.mermaid[data-mermaid-hash="' + (hash || '') + '"]');
-        if(!node) node = document.querySelector('pre.mermaid[data-nm-mermaid-root="true"]');
         if(node) {{
             var msg = err && err.message ? err.message : String(err || 'Mermaid parse error');
             nmRenderMermaidError(node, 'Mermaid 解析错误', msg);

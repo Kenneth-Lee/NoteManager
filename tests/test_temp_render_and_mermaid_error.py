@@ -16,6 +16,16 @@ def test_wrap_html_includes_mermaid_error_handler() -> None:
     assert 'mermaid.run' in html
 
 
+def test_wrap_html_does_not_use_first_mermaid_fallback_for_parse_error() -> None:
+    html = wrap_html(
+        '<pre class="mermaid">graph TD\nA-->B</pre>',
+        'Demo',
+        'demo.html',
+    )
+    assert 'data-nm-mermaid-root' in html
+    assert 'if(!node) node = document.querySelector(\'pre.mermaid[data-nm-mermaid-root="true"]\')' not in html
+
+
 def test_temp_view_refreshes_when_source_file_changes(tmp_path: Path) -> None:
     source = tmp_path / 'demo.md'
     source.write_text('# Demo\n\nhello\n', encoding='utf-8')
@@ -89,5 +99,28 @@ def test_check_does_not_report_parse_error_for_valid_mermaid() -> None:
     try:
         diags = check_file(source)
         assert not any('Parse error' in d.message for d in diags)
+    finally:
+        source.unlink(missing_ok=True)
+
+
+def test_check_does_not_report_classdiagram_interface_marker() -> None:
+    from notemanager.checker import check_file
+
+    source = Path('/tmp/nmr_classdiagram_interface_marker.md')
+    source.write_text(
+        '# Demo\n\n```mermaid\n'
+        'classDiagram\n'
+        '    class ShmBackend {\n'
+        '        <<interface>>\n'
+        '        +Create(name, size) void*\n'
+        '    }\n'
+        '    class ShmBackendPosix\n'
+        '    ShmBackend <|-- ShmBackendPosix\n'
+        '```\n',
+        encoding='utf-8',
+    )
+    try:
+        diags = check_file(source)
+        assert not diags
     finally:
         source.unlink(missing_ok=True)

@@ -516,7 +516,8 @@ class WebHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "reload": True, "source_path": str(source)})
             return
 
-        stale = int(meta.get("mtime_ns", -1)) != current_mtime
+        current_sig = self.daemon_ref._current_temp_renderer_signature()
+        stale = int(meta.get("mtime_ns", -1)) != current_mtime or str(meta.get("renderer_sig", "")) != current_sig
         if stale:
             self.daemon_ref._render_temp_view(source, force=True)
             self._send_json({"ok": True, "reload": True, "source_path": str(source)})

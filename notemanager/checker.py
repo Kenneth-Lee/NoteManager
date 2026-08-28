@@ -7,9 +7,12 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 
 from docutils.core import publish_doctree
+
+from notemanager.renderer.md_renderer import render_md
 
 
 SUPPORTED_MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdown"}
@@ -159,28 +162,113 @@ def _check_markdown_math(content: str, path: str) -> list[Diagnostic]:
 
 
 def _check_markdown_mermaid(content: str, path: str) -> list[Diagnostic]:
-    """Use the exact Mermaid runtime bundled with NoteManager to validate blocks.
+    """Check Mermaid with the same markdown-to-html pipeline used by view.
 
-    This intentionally matches the frontend behavior in ``template.py`` and keeps the
-    checker aligned with the same parser used by the rendered page.
+    We parse rendered HTML and read Mermaid ``pre`` text as a browser would do,
+    which keeps checker behavior aligned with real page rendering.
     """
     diagnostics: list[Diagnostic] = []
-    block_re = re.compile(r"```\s*mermaid\s*\n([\s\S]*?)```", re.IGNORECASE)
-    for match in block_re.finditer(content):
-        block_code = match.group(1).strip()
+    rendered = render_md(content, source_path=path)
+    body = str(rendered.get("body", ""))
+    html_blocks = _extract_mermaid_blocks_from_html(body)
+    source_start_lines = _list_mermaid_start_lines(content)
+
+    for idx, html_block in enumerate(html_blocks):
+        block_code = html_block.strip()
         if not block_code:
             continue
-        start_line = content.count("\n", 0, match.start()) + 1
+        start_line = source_start_lines[idx] if idx < len(source_start_lines) else (source_start_lines[0] if source_start_lines else 1)
         for msg in _run_mermaid_parse(block_code):
+            if _is_ignorable_mermaid_runtime_noise(msg):
+                continue
+            kind, text = _classify_mermaid_message(msg)
             diagnostics.append(
                 Diagnostic(
                     path=path,
                     line=start_line,
-                    kind="Markdown Mermaid",
-                    message=f"Mermaid 语法错误：{msg}",
+                    kind=kind,
+                    message=text,
                 )
             )
     return diagnostics
+
+
+def _classify_mermaid_message(msg: str) -> tuple[str, str]:
+    lowered = msg.lower()
+    runtime_markers = (
+        "addhook is not a function",
+        "sanitize is not a function",
+        "document is not defined",
+        "window is not defined",
+        "structuredclone is not defined",
+        "运行时缺失",
+        "运行环境缺失",
+        "解析器执行失败",
+        "输出不可解析",
+    )
+    if any(marker in lowered for marker in runtime_markers):
+        return (
+            "Markdown Mermaid Runtime",
+            f"Mermaid 运行环境错误（非文档语法错误）：{msg}",
+        )
+    if "parse error" in lowered:
+        return ("Markdown Mermaid", f"Mermaid 语法错误：{msg}")
+    return ("Markdown Mermaid", f"Mermaid 错误：{msg}")
+
+
+def _is_ignorable_mermaid_runtime_noise(msg: str) -> bool:
+    lowered = msg.lower()
+    # Known Node sandbox-only noise: these do not indicate source syntax issues.
+    markers = (
+        "addhook is not a function",
+        "sanitize is not a function",
+        "createdocument is not a function",
+        "document is not defined",
+        "window is not defined",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+class _MermaidPreExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._in_mermaid = False
+        self._buf: list[str] = []
+        self.blocks: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag.lower() != "pre":
+            return
+        attr_map = {k.lower(): (v or "") for k, v in attrs}
+        classes = attr_map.get("class", "")
+        if "mermaid" in classes.split():
+            self._in_mermaid = True
+            self._buf = []
+
+    def handle_data(self, data: str) -> None:
+        if self._in_mermaid:
+            self._buf.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "pre" and self._in_mermaid:
+            self.blocks.append("".join(self._buf))
+            self._in_mermaid = False
+            self._buf = []
+
+
+def _extract_mermaid_blocks_from_html(html_body: str) -> list[str]:
+    parser = _MermaidPreExtractor()
+    try:
+        parser.feed(html_body)
+        parser.close()
+    except Exception:
+        return []
+    return parser.blocks
+
+
+def _list_mermaid_start_lines(markdown_content: str) -> list[int]:
+    block_re = re.compile(r"```\s*mermaid\s*\n([\s\S]*?)```", re.IGNORECASE)
+    return [markdown_content.count("\n", 0, match.start()) + 1 for match in block_re.finditer(markdown_content)]
 
 
 def _run_mermaid_parse(block_code: str) -> list[str]:
@@ -196,86 +284,157 @@ const jsPath = process.argv[2];
 const js = fs.readFileSync(jsPath, 'utf8');
 const quietConsole = { log() {}, warn() {}, error() {} };
 
+function NodeLike() {}
+NodeLike.prototype = { nodeType: 1, childNodes: [], ownerDocument: null };
+
+function ElementLike() {
+        this.style = {};
+        this.classList = { add() {}, remove() {}, contains() { return false; } };
+        this.attributes = {};
+        this.childNodes = [];
+        this.ownerDocument = null;
+}
+ElementLike.prototype = Object.create(NodeLike.prototype);
+ElementLike.prototype.appendChild = function() { return new ElementLike(); };
+ElementLike.prototype.insertBefore = function() { return new ElementLike(); };
+ElementLike.prototype.setAttribute = function() {};
+ElementLike.prototype.setAttributeNS = function() {};
+ElementLike.prototype.getAttribute = function() { return null; };
+ElementLike.prototype.hasAttribute = function() { return false; };
+ElementLike.prototype.removeAttribute = function() {};
+ElementLike.prototype.querySelector = function() { return null; };
+ElementLike.prototype.querySelectorAll = function() { return []; };
+ElementLike.prototype.addEventListener = function() {};
+ElementLike.prototype.removeEventListener = function() {};
+ElementLike.prototype.getBBox = function() { return { width: 0, height: 0 }; };
+
 function makeNode() {
-    return {
-        style: {},
-        classList: { add() {} },
-        appendChild() { return makeNode(); },
-        insertBefore() { return makeNode(); },
-        setAttribute() {},
-        setAttributeNS() {},
-        querySelector() { return null; },
-        querySelectorAll() { return []; },
-        addEventListener() {},
-        removeEventListener() {},
-        getBBox() { return { width: 0, height: 0 }; },
-        ownerDocument: null,
-        firstChild: null,
-    };
+        const node = new ElementLike();
+        node.ownerDocument = null;
+        node.firstChild = null;
+        node.parentNode = null;
+        return node;
 }
 
+const ElementCtor = ElementLike;
+const NodeCtor = NodeLike;
+const NamedNodeMapCtor = function NamedNodeMapCtor() {};
+const HTMLTemplateElementCtor = function HTMLTemplateElementCtor() {
+        this.content = { ownerDocument: null };
+};
+const HTMLFormElementCtor = function HTMLFormElementCtor() {};
+const NodeFilterCtor = function NodeFilterCtor() {};
+const DOMParserCtor = function DOMParserCtor() {
+        this.parseFromString = function(text) {
+                return { body: { innerHTML: text } };
+        };
+};
+
 const documentStub = {
-    createElement: () => makeNode(),
-    createElementNS: () => makeNode(),
-    querySelector: () => null,
-    querySelectorAll: () => [],
-    addEventListener() {},
-    removeEventListener() {},
-    body: makeNode(),
-    documentElement: makeNode(),
+        nodeType: 9,
+        currentScript: null,
+        implementation: {
+                createHTMLDocument() {
+                        return { body: makeNode(), documentElement: makeNode() };
+                },
+        createDocument() {
+            return { body: makeNode(), documentElement: makeNode() };
+        },
+        },
+        createElement() { return makeNode(); },
+        createElementNS() { return makeNode(); },
+        createDocumentFragment() { return makeNode(); },
+        querySelector() { return null; },
+        querySelectorAll() { return []; },
+        getElementsByTagName() { return []; },
+        addEventListener() {},
+        removeEventListener() {},
+        body: makeNode(),
+        documentElement: makeNode(),
+};
+
+const domPurifyStub = {
+        addHook() {},
+        removeHook() {},
+        removeHooks() {},
+        sanitize(input) { return input; },
+        isSupported: true,
 };
 
 const windowStub = {
-    document: documentStub,
-    addEventListener() {},
-    removeEventListener() {},
-    location: { href: '' },
-    navigator: {},
-    Error,
-    TypeError,
-    SyntaxError,
-    Promise,
-    structuredClone: (x) => JSON.parse(JSON.stringify(x)),
+        document: documentStub,
+        Document: function Document() {},
+        Element: ElementCtor,
+        Node: NodeCtor,
+        NamedNodeMap: NamedNodeMapCtor,
+        HTMLFormElement: HTMLFormElementCtor,
+        HTMLTemplateElement: HTMLTemplateElementCtor,
+        NodeFilter: NodeFilterCtor,
+        DOMParser: DOMParserCtor,
+        addEventListener() {},
+        removeEventListener() {},
+        location: { href: '' },
+        navigator: {},
+        Error,
+        TypeError,
+        SyntaxError,
+        Promise,
+        structuredClone: (x) => JSON.parse(JSON.stringify(x)),
+        DOMPurify: domPurifyStub,
+        getComputedStyle() { return {}; },
 };
 
 documentStub.defaultView = windowStub;
+documentStub.ownerDocument = null;
+documentStub.documentElement.ownerDocument = documentStub;
+documentStub.body.ownerDocument = documentStub;
 windowStub.window = windowStub;
 windowStub.self = windowStub;
 
 const sandbox = {
-    module: { exports: {} },
-    exports: {},
-    require,
-    console: quietConsole,
-    window: windowStub,
-    document: documentStub,
-    navigator: windowStub.navigator,
-    location: windowStub.location,
-    globalThis: windowStub,
-    setTimeout,
-    clearTimeout,
-    Error,
-    TypeError,
-    SyntaxError,
-    Promise,
-    structuredClone: windowStub.structuredClone,
+        module: { exports: {} },
+        exports: {},
+        require,
+        console: quietConsole,
+        window: windowStub,
+        document: documentStub,
+        Document: function Document() {},
+        navigator: windowStub.navigator,
+        location: windowStub.location,
+        DOMPurify: domPurifyStub,
+        Element: ElementCtor,
+        Node: NodeCtor,
+        NamedNodeMap: NamedNodeMapCtor,
+        HTMLTemplateElement: HTMLTemplateElementCtor,
+        HTMLFormElement: HTMLFormElementCtor,
+        NodeFilter: NodeFilterCtor,
+        DOMParser: DOMParserCtor,
+        globalThis: windowStub,
+        setTimeout,
+        clearTimeout,
+        Error,
+        TypeError,
+        SyntaxError,
+        Promise,
+        structuredClone: windowStub.structuredClone,
 };
 sandbox.global = sandbox;
 sandbox.self = sandbox;
 new vm.Script(js, { filename: 'mermaid.min.js' }).runInNewContext(sandbox);
 const mermaid = sandbox.module.exports || sandbox.mermaid || sandbox.window.mermaid;
 (async () => {
-  try {
-    if (!mermaid) {
-      process.stdout.write('[]');
-      return;
+    try {
+        if (!mermaid) {
+            process.stdout.write('[]');
+            return;
+        }
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        await mermaid.parse(code);
+        process.stdout.write('[]');
+    } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        process.stdout.write(JSON.stringify([{ message: msg }]));
     }
-    await mermaid.parse(code);
-    process.stdout.write('[]');
-  } catch (e) {
-    const msg = e && e.message ? e.message : String(e);
-    process.stdout.write(JSON.stringify([{ message: msg }]));
-  }
 })();
 """
     try:
@@ -338,15 +497,21 @@ def _check_mermaid_text(content: str, source_name: str) -> list[Diagnostic]:
     text = content.strip()
     if not text:
         return []
-    return [
-        Diagnostic(
-            path=source_name,
-            line=1,
-            kind="Mermaid",
-            message=f"Mermaid 语法错误：{msg}",
+    diagnostics: list[Diagnostic] = []
+    for msg in _run_mermaid_parse(text):
+        if _is_ignorable_mermaid_runtime_noise(msg):
+            continue
+        kind, text_msg = _classify_mermaid_message(msg)
+        normalized_kind = "Mermaid" if kind == "Markdown Mermaid" else "Mermaid Runtime"
+        diagnostics.append(
+            Diagnostic(
+                path=source_name,
+                line=1,
+                kind=normalized_kind,
+                message=text_msg,
+            )
         )
-        for msg in _run_mermaid_parse(text)
-    ]
+    return diagnostics
 
 
 def check_text(content: str, *, input_format: str, source_name: str = "<stdin>", scope: str = "all") -> list[Diagnostic]:
