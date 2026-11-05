@@ -21,6 +21,14 @@ def test_cjk_newline_no_space():
     assert clean_paragraph_newlines("<p>中文\n换行</p>") == "<p>中文换行</p>"
 
 
+def test_newline_cjk_western_boundary_no_space():
+    # 中文书写中英文混排不需要词间空格：任一侧是 CJK 就不留空格。
+    assert clean_paragraph_newlines("<p>中文\nEnglish</p>") == "<p>中文English</p>"
+    assert clean_paragraph_newlines("<p>English\n中文</p>") == "<p>English中文</p>"
+    assert clean_paragraph_newlines("<p>数值为\n123</p>") == "<p>数值为123</p>"
+    assert clean_paragraph_newlines("<p>123\n个文件</p>") == "<p>123个文件</p>"
+
+
 def test_western_newline_keeps_space():
     assert clean_paragraph_newlines("<p>text\nwraps</p>") == "<p>text wraps</p>"
 
@@ -51,6 +59,9 @@ def test_render_rst_cjk_wrap():
     assert paragraphs(out["body"]) == ["<p>这是一个测试段落这里手动换行了第二行内容继续。</p>"]
     out = rst_renderer.render_rst("English text wraps\nacross lines.\n")
     assert paragraphs(out["body"]) == ["<p>English text wraps across lines.</p>"]
+    # 中文-英文换行边界不留空格
+    out = rst_renderer.render_rst("使用Python\n实现的功能。\n")
+    assert paragraphs(out["body"]) == ["<p>使用Python实现的功能。</p>"]
 
 
 def test_render_md_cjk_wrap():
@@ -58,6 +69,9 @@ def test_render_md_cjk_wrap():
     assert paragraphs(out["body"]) == ["<p>这是一个测试段落这里手动换行了第二行内容继续。</p>"]
     out = render_md("English text wraps\nacross lines.\n", "/tmp/x.md")
     assert paragraphs(out["body"]) == ["<p>English text wraps across lines.</p>"]
+    # 中文-英文换行边界不留空格
+    out = render_md("使用Python\n实现的功能。\n", "/tmp/x.md")
+    assert paragraphs(out["body"]) == ["<p>使用Python实现的功能。</p>"]
     # Fenced code blocks must keep newlines verbatim.
     out = render_md("```\na $1\nb $2\n```\n", "/tmp/x.md")
     assert "a $1\nb $2" in out["body"]

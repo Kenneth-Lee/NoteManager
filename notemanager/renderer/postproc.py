@@ -323,7 +323,12 @@ def _next_text_char(content: str, pos: int) -> str:
 
 
 def _merge_soft_newlines(content: str) -> str:
-    """Replace newlines with spaces, or nothing between CJK text chars."""
+    """Drop newlines, keeping a space only between Western word characters.
+
+    A soft newline should disappear, restoring the text as if it were never
+    wrapped: CJK writing needs no inter-word space, so a newline touching CJK
+    text on either side is removed entirely; only Western|Western keeps a space.
+    """
     if "\n" not in content:
         return content
     out = []
@@ -333,17 +338,17 @@ def _merge_soft_newlines(content: str) -> str:
             continue
         prev = _prev_text_char(content, i)
         nxt = _next_text_char(content, i)
-        if prev and nxt and _is_cjk_char(prev) and _is_cjk_char(nxt):
-            continue  # CJK|CJK: drop the newline entirely
-        out.append(" ")  # Western/other context: newline renders as a space
+        if prev and nxt and (_is_cjk_char(prev) or _is_cjk_char(nxt)):
+            continue  # CJK on either side: no space in Chinese typography
+        out.append(" ")  # Western|Western: newline renders as a space
     return "".join(out)
 
 
 def clean_paragraph_newlines(html: str) -> str:
     """Merge soft-wrapped newlines inside <p> tags only.
 
-    - ``中文\\n中文`` -> ``中文中文``（换行处不留空格）
-    - ``text\\nwraps`` -> ``text wraps``（西文保留空格）
+    - ``中文\\nEnglish`` -> ``中文English``（任一侧是 CJK 就不留空格）
+    - ``text\\nwraps`` -> ``text wraps``（仅西文-西文保留空格）
     Newlines elsewhere (``<pre>``, code blocks, table cells) are untouched.
     """
     class _PCleaner(HTMLParser):
