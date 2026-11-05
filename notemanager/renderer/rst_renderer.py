@@ -13,6 +13,7 @@ from notemanager.renderer.directives import register_directives
 from notemanager.renderer.postproc import (
     add_section_numbers,
     add_toc_numbers,
+    clean_paragraph_newlines,
     fix_docutils_html5_heading_levels,
     generate_toc_from_headings,
 )
@@ -394,7 +395,7 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
     body = _strip_dtags(body)
     body = _normalize_literal_block_markers(body)
     body = mark_diagram_code_blocks(body)
-    body = _clean_paragraph_linebreaks(body)
+    body = clean_paragraph_newlines(body)
     body = _inject_term_anchors(body)
 
     # Repair heading levels (and therefore TOC levels) based on source hierarchy
@@ -558,68 +559,6 @@ def _normalize_literal_block_markers(html):
         re.DOTALL,
     )
     return pattern.sub(r"\1\3", html)
-
-
-def _clean_paragraph_linebreaks(html):
-    """Clean unnecessary line breaks inside <p> tags."""
-    from html.parser import HTMLParser
-
-    class _Cleaner(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.parts = []
-            self._in_p = False
-            self._p_content = []
-
-        def handle_starttag(self, tag, attrs):
-            if tag == "p":
-                self._in_p = True
-                self._p_content = []
-                self.parts.append(_fmt(tag, attrs))
-            else:
-                s = _fmt(tag, attrs)
-                if self._in_p:
-                    self._p_content.append(s)
-                else:
-                    self.parts.append(s)
-
-        def handle_endtag(self, tag):
-            if tag == "p" and self._in_p:
-                content = "".join(self._p_content)
-                content = content.replace("\n", " ")
-                content = re.sub(r"  +", " ", content)
-                self.parts.append(content)
-                self.parts.append("</p>")
-                self._in_p = False
-                self._p_content = []
-            else:
-                s = f"</{tag}>"
-                if self._in_p:
-                    self._p_content.append(s)
-                else:
-                    self.parts.append(s)
-
-        def handle_data(self, data):
-            if self._in_p:
-                self._p_content.append(data)
-            else:
-                self.parts.append(data)
-
-        def result(self):
-            return "".join(self.parts)
-
-    def _fmt(tag, attrs):
-        if attrs:
-            a = " ".join(f'{k}="{v}"' for k, v in attrs)
-            return f"<{tag} {a}>"
-        return f"<{tag}>"
-
-    parser = _Cleaner()
-    try:
-        parser.feed(html)
-    except Exception:
-        return html
-    return parser.result()
 
 
 def _inject_term_anchors(html: str) -> str:

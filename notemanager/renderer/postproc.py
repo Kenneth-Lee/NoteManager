@@ -259,3 +259,178 @@ def _fmt_tag(tag, attrs) -> str:
         a = " ".join(f'{k}="{v}"' for k, v in attrs)
         return f"<{tag} {a}>"
     return f"<{tag}>"
+
+
+# ---------------------------------------------------------------------------
+# Soft-newline merging (CJK-aware)
+# ---------------------------------------------------------------------------
+
+# A newline inside a paragraph ("soft wrap") is rendered by browsers as a
+# space. That is correct for Western text ("text wraps" needs the space) but
+# wrong between CJK characters, where no space should appear.
+_CJK_RANGES = (
+    (0x3001, 0x303F),    # CJK 标点（。、《》…），不含 U+3000 全角空格
+    (0x3040, 0x30FF),    # 平假名 / 片假名
+    (0x31F0, 0x31FF),
+    (0x3400, 0x4DBF),    # CJK 扩展 A
+    (0x4E00, 0x9FFF),    # CJK 基本区
+    (0xF900, 0xFAFF),    # CJK 兼容表意
+    (0xFF01, 0xFF60),    # 全角标点 / 字母 / 数字（！？，：）
+    (0x20000, 0x2FFFF),  # CJK 扩展 B 及以上
+)
+
+
+def _is_cjk_char(ch: str) -> bool:
+    cp = ord(ch)
+    return any(lo <= cp <= hi for lo, hi in _CJK_RANGES)
+
+
+def _prev_text_char(content: str, pos: int) -> str:
+    """Nearest visible text char before ``pos``, skipping tags and whitespace."""
+    j = pos - 1
+    while j >= 0:
+        c = content[j]
+        if c == ">":
+            j = content.rfind("<", 0, j)
+            if j < 0:
+                return ""
+            j -= 1
+            continue
+        if c.isspace():
+            j -= 1
+            continue
+        return c
+    return ""
+
+
+def _next_text_char(content: str, pos: int) -> str:
+    """Nearest visible text char after ``pos``, skipping tags and whitespace."""
+    j = pos + 1
+    n = len(content)
+    while j < n:
+        c = content[j]
+        if c == "<":
+            k = content.find(">", j)
+            if k < 0:
+                return ""
+            j = k + 1
+            continue
+        if c.isspace():
+            j += 1
+            continue
+        return c
+    return ""
+
+
+def _merge_soft_newlines(content: str) -> str:
+    """Replace newlines with spaces, or nothing between CJK text chars."""
+    if "\n" not in content:
+        return content
+    out = []
+    for i, ch in enumerate(content):
+        if ch != "\n":
+            out.append(ch)
+            continue
+        prev = _prev_text_char(content, i)
+        nxt = _next_text_char(content, i)
+        if prev and nxt and _is_cjk_char(prev) and _is_cjk_char(nxt):
+            continue  # CJK|CJK: drop the newline entirely
+        out.append(" ")  # Western/other context: newline renders as a space
+    return "".join(out)
+
+
+def clean_paragraph_newlines(html: str) -> str:
+    """Merge soft-wrapped newlines inside <p> tags only.
+
+    - ``中文\\n中文`` -> ``中文中文``（换行处不留空格）
+    - ``text\\nwraps`` -> ``text wraps``（西文保留空格）
+    Newlines elsewhere (``<pre>``, code blocks, table cells) are untouched.
+    """
+    class _PCleaner(HTMLParser):
+        def __init__(self):
+            # convert_charrefs=False: keep entities verbatim so that e.g.
+            # "&lt;" is not decoded and re-emitted as a raw "<".
+            super().__init__(convert_charrefs=False)
+            self.parts = []
+            self._in_p = False
+            self._p_content = []
+
+        def handle_starttag(self, tag, attrs):
+            s = self._fmt(tag, attrs)
+            if tag == "p" and not self._in_p:
+                self._in_p = True
+                self._p_content = []
+                self.parts.append(s)
+            elif self._in_p:
+                self._p_content.append(s)
+            else:
+                self.parts.append(s)
+
+        def handle_endtag(self, tag):
+            s = f"</{tag}>"
+            if tag == "p" and self._in_p:
+                content = "".join(self._p_content)
+                content = _merge_soft_newlines(content)
+                content = re.sub(r"  +", " ", content)
+                self.parts.append(content)
+                self.parts.append(s)
+                self._in_p = False
+                self._p_content = []
+            elif self._in_p:
+                self._p_content.append(s)
+            else:
+                self.parts.append(s)
+
+        def handle_startendtag(self, tag, attrs):
+            s = self._fmt(tag, attrs, self_closing=True)
+            if self._in_p:
+                self._p_content.append(s)
+            else:
+                self.parts.append(s)
+
+        def handle_data(self, data):
+            if self._in_p:
+                self._p_content.append(data)
+            else:
+                self.parts.append(data)
+
+        def handle_entityref(self, name):
+            s = f"&{name};"
+            if self._in_p:
+                self._p_content.append(s)
+            else:
+                self.parts.append(s)
+
+        def handle_charref(self, name):
+            s = f"&#{name};"
+            if self._in_p:
+                self._p_content.append(s)
+            else:
+                self.parts.append(s)
+
+        def handle_comment(self, data):
+            s = f"<!--{data}-->"
+            if self._in_p:
+                self._p_content.append(s)
+            else:
+                self.parts.append(s)
+
+        @staticmethod
+        def _fmt(tag, attrs, self_closing=False):
+            if attrs:
+                a = " ".join(f'{k}="{v}"' for k, v in attrs)
+                s = f"<{tag} {a}>"
+            else:
+                s = f"<{tag}>"
+            return s[:-1] + " />" if self_closing else s
+
+        def result(self):
+            return "".join(self.parts)
+
+    parser = _PCleaner()
+    try:
+        parser.feed(html)
+        parser.close()
+    except Exception:
+        return html
+    return parser.result()

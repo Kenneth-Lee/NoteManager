@@ -6,6 +6,7 @@ import re
 import markdown
 
 from notemanager.indexer import extract_md_hashtags
+from notemanager.renderer.postproc import clean_paragraph_newlines
 from notemanager.renderer.preformatted import mark_diagram_code_blocks
 
 # Math spans ($$..$$, $..$, \(..\), \[..\], \begin{align}..) are rendered client-side
@@ -131,6 +132,9 @@ def render_md(content: str, source_path: str = "<string>") -> dict:
     body = _convert_links(body)
     body = _convert_mermaid_blocks(body)
     body = mark_diagram_code_blocks(body)
+    # Merge soft-wrapped newlines inside <p> (browsers render "\n" as a space;
+    # between CJK chars that space is unwanted). <pre>/<code> untouched.
+    body = clean_paragraph_newlines(body)
 
     # TOC from markdown toc extension
     toc_html = _restore_math(getattr(md, "toc", "") or "", math_store)
