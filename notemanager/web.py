@@ -4,8 +4,10 @@ Serves a control panel, project HTML files, and SSE event stream.
 """
 
 import json
+import logging
 import os
 import re
+import sys
 import urllib.parse
 from html import escape as html_escape
 import weakref
@@ -13,6 +15,14 @@ from http.server import HTTPServer, BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import threading
 import time
+
+logger = logging.getLogger(__name__)
+
+
+# Errors that merely mean the browser dropped the connection (common when an
+# SSE client navigates away). They are expected on every disconnect and must
+# not pollute daemon.log with scary tracebacks.
+_EXPECTED_CONN_ERRORS = (ConnectionError, TimeoutError)
 
 class EventBroadcaster:
     """Manages SSE client connections and broadcasts events."""
@@ -174,6 +184,11 @@ class WebHandler(BaseHTTPRequestHandler):
                     break
         finally:
             broadcaster.remove_client(self.wfile)
+            # Mark the connection dead so BaseHTTPRequestHandler.handle() does
+            # not loop back into handle_one_request() and read from the broken
+            # socket. On Windows that extra read raises ConnectionAbortedError
+            # [WinError 10053]; on POSIX it harmlessly returns EOF.
+            self.close_connection = True
 
     def _sse_send(self, event_type: str, data: dict):
         """Send a single SSE event."""
@@ -587,9 +602,26 @@ def start_web_server(daemon_ref, port: int) -> HTTPServer:
         allow_reuse_address = True
         daemon_threads = True
 
+        def handle_error(self, request, client_address):
+            """Log disconnects quietly, real failures with full traceback."""
+            exc = sys.exc_info()[1]
+            if isinstance(exc, _EXPECTED_CONN_ERRORS):
+                logger.debug("Web client %s 断开: %r", client_address, exc)
+                return
+            logger.exception("处理来自 %s 的 Web 请求时出错", client_address)
+
+    def _serve_with_guard(server) -> None:
+        try:
+            server.serve_forever()
+        except Exception:
+            # serve_forever should never raise; if it does, the whole Web UI
+            # dies silently without this trace in the log.
+            logger.exception("Web server 线程异常退出")
+            raise
+
     WebHandler.daemon_ref = daemon_ref
     server = ReuseThreadingHTTPServer(("127.0.0.1", port), WebHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(target=_serve_with_guard, args=(server,), daemon=True)
     thread.start()
     return server
 

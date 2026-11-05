@@ -1477,6 +1477,14 @@ class NoteManagerDaemon:
 
     def run(self) -> None:
         """Run the daemon main loop."""
+        # Leave a trace in daemon.log if the process dies from a native crash
+        # (e.g. in a C extension) - Python-level tracebacks would miss those.
+        import faulthandler
+        try:
+            faulthandler.enable()
+        except Exception:
+            pass
+
         _write_daemon_info(
             os.getpid(), self.port, self.web_port, self.transport, self.socket_path,
         )
@@ -1493,9 +1501,26 @@ class NoteManagerDaemon:
                 except (ConnectionError, json.JSONDecodeError) as e:
                     logger.error("处理请求出错: %s", e)
 
+        class QuietTCPServer(socketserver.ThreadingTCPServer):
+            allow_reuse_address = True
+
+            def handle_error(self, request, client_address):
+                exc = sys.exc_info()[1]
+                if isinstance(exc, (ConnectionError, TimeoutError)):
+                    logger.debug("CLI 客户端 %s 断开: %r", client_address, exc)
+                    return
+                logger.exception("处理来自 %s 的 CLI 请求时出错", client_address)
+
         if use_unix_socket():
             class ReuseUnixServer(socketserver.ThreadingUnixStreamServer):
                 daemon_threads = True
+
+                def handle_error(self, request, client_address):
+                    exc = sys.exc_info()[1]
+                    if isinstance(exc, (ConnectionError, TimeoutError)):
+                        logger.debug("CLI 客户端 %s 断开: %r", client_address, exc)
+                        return
+                    logger.exception("处理来自 %s 的 CLI 请求时出错", client_address)
 
             sock_path = Path(self.socket_path)
             sock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1503,14 +1528,19 @@ class NoteManagerDaemon:
                 sock_path.unlink()
             self._tcp_server = ReuseUnixServer(self.socket_path, TCPHandler)
         else:
-            class ReuseAddrTCPServer(socketserver.ThreadingTCPServer):
-                allow_reuse_address = True
-
-            self._tcp_server = ReuseAddrTCPServer(
+            self._tcp_server = QuietTCPServer(
                 (DEFAULT_HOST, self.port), TCPHandler,
             )
         self._tcp_server.daemon_threads = True
-        tcp_thread = threading.Thread(target=self._tcp_server.serve_forever)
+
+        def _tcp_serve_with_guard() -> None:
+            try:
+                self._tcp_server.serve_forever()
+            except Exception:
+                logger.exception("CLI server 线程异常退出")
+                raise
+
+        tcp_thread = threading.Thread(target=_tcp_serve_with_guard)
         tcp_thread.daemon = True
         tcp_thread.start()
 
