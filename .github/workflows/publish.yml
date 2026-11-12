@@ -1,0 +1,39 @@
+# 发布到 PyPI（Trusted Publisher，免 API token）
+#
+# 触发方式：push 一个 v 开头的 tag（纯 git 命令，无需访问 GitHub 网页）
+#   git tag v0.1.0 && git push github v0.1.0
+#
+# 前提（一次性配置，在 PyPI 账号 Publishing 页完成）：
+#   PyPI Project Name: notemanager
+#   Owner: Kenneth-Lee   Repository: NoteManager   Workflow: publish.yml
+#
+# 发布流程：bump notemanager/__init__.py 的 __version__ → 提交并推送到默认分支 →
+# 打 tag 并 push → 自动构建发布。
+# 注意：PyPI 同版本号不可重传，每次发布前必须改版本号。
+
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Trusted Publisher 的 OIDC 凭证
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
