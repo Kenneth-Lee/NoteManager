@@ -1394,6 +1394,9 @@ function initVim$1(CodeMirror) {
           }
         }
         function onPromptKeyUp(e, query, close) {
+          // NoteManager 补丁: IME 组合输入期间不做增量搜索/历史重置,
+          // 否则拼音中间态会被当作正则执行并触发滚动。
+          if (e.isComposing || e.keyCode === 229) return;
           var keyName = CodeMirror.keyName(e), up, offset;
           if (keyName == 'Up' || keyName == 'Down') {
             up = keyName == 'Up' ? true : false;
@@ -1420,6 +1423,8 @@ function initVim$1(CodeMirror) {
           }
         }
         function onPromptKeyDown(e, query, close) {
+          // NoteManager 补丁: IME 组合输入期间的按键不做 vim 键名解析。
+          if (e.isComposing || e.keyCode === 229) return;
           var keyName = CodeMirror.keyName(e);
           if (keyName == 'Esc' || keyName == 'Ctrl-C' || keyName == 'Ctrl-[' ||
               (keyName == 'Backspace' && query == '')) {
@@ -4515,7 +4520,10 @@ function initVim$1(CodeMirror) {
       if (cm.openDialog) {
         cm.openDialog(template, options.onClose, {
           onKeyDown: options.onKeyDown, onKeyUp: options.onKeyUp,
-          bottom: true, selectValueOnOpen: false, value: options.value
+          bottom: true, selectValueOnOpen: false, value: options.value,
+          // NoteManager 补丁: 不随失焦关闭,避免输入法焦点扰动误杀命令行;
+          // 点击外部关闭由 dialog.js 的 mousedown 兑底负责。
+          closeOnBlur: false
         });
       }
       else {

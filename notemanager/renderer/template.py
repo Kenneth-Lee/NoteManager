@@ -100,9 +100,9 @@ def wrap_html(body: str, title: str, html_rel_path: str,
     if source_editable and source_path:
         highlighted_source = ""
         cm_head = (
-            f'<link rel="stylesheet" href="{prefix}_static/codemirror/lib/codemirror.css">\n'
-            f'<link rel="stylesheet" href="{prefix}_static/codemirror/theme/dracula.css">\n'
-            f'<link rel="stylesheet" href="{prefix}_static/codemirror/addon/dialog/dialog.css">'
+            f'<link rel="stylesheet" href="{prefix}_static/codemirror/lib/codemirror.css?v={asset_version}">\n'
+            f'<link rel="stylesheet" href="{prefix}_static/codemirror/theme/dracula.css?v={asset_version}">\n'
+            f'<link rel="stylesheet" href="{prefix}_static/codemirror/addon/dialog/dialog.css?v={asset_version}">'
         )
         sjson = json.dumps(source, ensure_ascii=False)
         meta = json.dumps(
@@ -127,13 +127,13 @@ def wrap_html(body: str, title: str, html_rel_path: str,
             '<div id="nm-editor-mount"></div>'
         )
         cm_foot = (
-            f'<script src="{prefix}_static/codemirror/lib/codemirror.js"></script>\n'
-            f'<script src="{prefix}_static/codemirror/mode/xml/xml.js"></script>\n'
-            f'<script src="{prefix}_static/codemirror/mode/markdown/markdown.js"></script>\n'
-            f'<script src="{prefix}_static/codemirror/addon/edit/matchbrackets.js"></script>\n'
-            f'<script src="{prefix}_static/codemirror/addon/search/searchcursor.js"></script>\n'
-            f'<script src="{prefix}_static/codemirror/addon/dialog/dialog.js"></script>\n'
-            f'<script src="{prefix}_static/codemirror/keymap/vim.js"></script>\n'
+            f'<script src="{prefix}_static/codemirror/lib/codemirror.js?v={asset_version}"></script>\n'
+            f'<script src="{prefix}_static/codemirror/mode/xml/xml.js?v={asset_version}"></script>\n'
+            f'<script src="{prefix}_static/codemirror/mode/markdown/markdown.js?v={asset_version}"></script>\n'
+            f'<script src="{prefix}_static/codemirror/addon/edit/matchbrackets.js?v={asset_version}"></script>\n'
+            f'<script src="{prefix}_static/codemirror/addon/search/searchcursor.js?v={asset_version}"></script>\n'
+            f'<script src="{prefix}_static/codemirror/addon/dialog/dialog.js?v={asset_version}"></script>\n'
+            f'<script src="{prefix}_static/codemirror/keymap/vim.js?v={asset_version}"></script>\n'
             f'<script src="{prefix}_static/nm-editor.js?v={asset_version}"></script>'
         )
     else:
