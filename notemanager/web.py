@@ -3,6 +3,7 @@
 Serves a control panel, project HTML files, and SSE event stream.
 """
 
+import email.utils
 import json
 import logging
 import os
@@ -407,19 +408,30 @@ class WebHandler(BaseHTTPRequestHandler):
             ".ico": "image/x-icon",
         }
         mime = mime_types.get(ext, "application/octet-stream")
+        stat = path.stat()
+        # 静态资源统一 no-cache + Last-Modified 重验证：浏览器每次条件请求,
+        # 未变更拿 304,变更后拿新内容。避免 JS/CSS 被启发式缓存后更新不生效。
+        try:
+            last_modified = email.utils.formatdate(stat.st_mtime, usegmt=True)
+        except Exception:
+            last_modified = None
+        ims = self.headers.get("If-Modified-Since")
+        if ims and last_modified:
+            try:
+                since = email.utils.parsedate_to_datetime(ims).timestamp()
+                if int(since) >= int(stat.st_mtime):
+                    self.send_response(304)
+                    self.send_header("Cache-Control", "no-cache, must-revalidate")
+                    self.end_headers()
+                    return
+            except Exception:
+                pass
         self.send_response(200)
         self.send_header("Content-Type", mime)
-        if ext in (
-            ".html",
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".webp",
-            ".gif",
-            ".svg",
-        ):
-            self.send_header("Cache-Control", "no-cache, must-revalidate")
-        size = path.stat().st_size
+        self.send_header("Cache-Control", "no-cache, must-revalidate")
+        if last_modified:
+            self.send_header("Last-Modified", last_modified)
+        size = stat.st_size
         self.send_header("Content-Length", str(size))
         self.end_headers()
         with open(path, "rb") as f:

@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 from pathlib import Path
 
 try:
@@ -84,6 +85,8 @@ def wrap_html(body: str, title: str, html_rel_path: str,
     heading_map_json = (
         json.dumps(heading_lines or {}, ensure_ascii=False).replace("<", "\\u003c")
     )
+    # 自研 JS/CSS 加版本参数：内容更新后 URL 随构建变化，彻底避开浏览器缓存旧脚本
+    asset_version = str(int(time.time()))
 
     extra_css_tags = "\n".join(
         f'<link rel="stylesheet" href="{prefix}_static/{_escape(name)}">'
@@ -131,7 +134,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
             f'<script src="{prefix}_static/codemirror/addon/search/searchcursor.js"></script>\n'
             f'<script src="{prefix}_static/codemirror/addon/dialog/dialog.js"></script>\n'
             f'<script src="{prefix}_static/codemirror/keymap/vim.js"></script>\n'
-            f'<script src="{prefix}_static/nm-editor.js"></script>'
+            f'<script src="{prefix}_static/nm-editor.js?v={asset_version}"></script>'
         )
     else:
         cm_head = ""
@@ -192,7 +195,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{_escape(title)}</title>
-<link rel="stylesheet" href="{prefix}_static/notemanager.css">
+<link rel="stylesheet" href="{prefix}_static/notemanager.css?v={asset_version}">
 <link rel="stylesheet" href="{prefix}_static/preformatted.css">
 <link rel="stylesheet" href="{prefix}_static/katex.min.css">
 {extra_css_tags}
@@ -265,6 +268,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .nm-split-btn:hover {{ background: #bbdefb; color: #0d47a1; }}
 .nm-split-btn.active {{ background: #1565c0; color: #fff; border-color: #1565c0; font-weight: 600; }}
 @media (max-width: 1000px) {{ .nm-split-btn {{ display: none; }} }}
+body:not(.nm-split) #nm-sync-btn {{ display: none; }}
 .nm-console-btn {{ text-decoration: none; font-size: 12px; color: #1565c0; border: 1px solid #bbdefb;
                   background: #e3f2fd; border-radius: 4px; padding: 4px 10px; }}
 .nm-console-btn:hover {{ background: #bbdefb; color: #0d47a1; }}
@@ -408,6 +412,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 </div>
 <div class="nm-tabs-right">
 <button class="nm-split-btn" id="nm-split-btn" type="button" title="左右分屏，同时查看渲染与源文件">分屏</button>
+<button class="nm-split-btn" id="nm-sync-btn" type="button" title="分屏时双向同步滚动（点击开/关）">同步</button>
 <a class="nm-console-btn" href="/" title="返回控制台">控制台</a>
 </div>
 </div>
@@ -428,7 +433,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 {temp_monitor_script}
 <script>window.NM_PREFIX="{prefix}";</script>
 {cm_foot}
-<script src="{prefix}_static/notemanager.js"></script>
+<script src="{prefix}_static/notemanager.js?v={asset_version}"></script>
 <script src="{prefix}_static/katex.min.js"></script>
 <script src="{prefix}_static/katex-auto-render.min.js"></script>
 <script src="{prefix}_static/mermaid.min.js"></script>

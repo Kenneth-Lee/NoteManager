@@ -122,10 +122,12 @@ def test_wrap_html_embeds_map_split_and_backtop() -> None:
     )
     assert '<script type="application/json" id="nm-heading-map">{"sec-one": 3, "sec-two": 9}</script>' in html
     assert 'id="nm-split-btn"' in html
+    assert 'id="nm-sync-btn"' in html
     assert 'id="nm-backtop"' in html
     # 新布局：主区固定视口高、面板内部滚动
     assert "height: 100vh" in html
     assert "body.nm-split .nm-tab-panels" in html
+    assert "body:not(.nm-split) #nm-sync-btn" in html
     assert "scroll-margin-top: 16px" in html
     assert "@media print" in html
 
@@ -142,6 +144,12 @@ def test_default_js_contains_layout_feature_hooks() -> None:
     assert "nm-heading-map" in _DEFAULT_JS
     assert "nm-backtop" in _DEFAULT_JS
     assert "nm-split-btn" in _DEFAULT_JS
+    # 分屏双向同步滚动：基于 heading map 的滚动像素域分段线性插值，两端钉住
+    assert "nm-sync-scroll" in _DEFAULT_JS
+    assert "heightAtLine" in _DEFAULT_JS
+    assert "buildSyncAnchors" in _DEFAULT_JS
+    assert "interpSrcToDst" in _DEFAULT_JS
+    assert "interpDstToSrc" in _DEFAULT_JS
 
 
 def test_moved_title_helpers_still_work() -> None:

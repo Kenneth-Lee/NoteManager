@@ -1332,6 +1332,7 @@ _DEFAULT_JS = """\
                 var rt = document.querySelector('.nm-tab[data-tab="render"]');
                 if (rt) rt.classList.add('active');
                 if (renderPanel) renderPanel.classList.add('active');
+                hookCM();
             }
             layoutChanged();
         }
@@ -1373,6 +1374,168 @@ _DEFAULT_JS = """\
                 });
             });
         }
+
+        /* ---- split scroll sync: render <-> source, anchored on heading map ---- */
+        var syncBtn = document.getElementById('nm-sync-btn');
+        var syncEnabled = true;
+        try { syncEnabled = localStorage.getItem('nm-sync-scroll') !== '0'; } catch (e) {}
+        var syncAnchors = [];
+        var syncAnchorsDirty = true;
+        var syncLockUntil = 0;
+        var syncCmHooked = false;
+
+        function syncReady() {
+            return body.classList.contains('nm-split') && syncEnabled && window.__nmCM;
+        }
+        function markAnchorsDirty() { syncAnchorsDirty = true; }
+        // 源码侧真正滚动的容器是 #nm-panel-source 面板（CodeMirror 为
+        // height:auto 全高展开，自身不产生滚动），所有同步以面板像素为准。
+        var sourcePanel = document.getElementById('nm-panel-source');
+        function buildSyncAnchors() {
+            syncAnchorsDirty = false;
+            syncAnchors = [];
+            var cm = window.__nmCM;
+            if (!cm || !renderPanel || !sourcePanel) return;
+            var map = getHeadingMap();
+            var keys = Object.keys(map);
+            if (keys.length < 2) return;
+            var rTop = renderPanel.getBoundingClientRect().top;
+            /* src = 源码面板内容坐标系里标题行的像素位置；dst = 渲染面板滚动像素。
+               两端钉住 0/max，滚动条首尾精确对齐，标题锚点精确、其间线性插值。 */
+            var cmBase = cm.getWrapperElement().getBoundingClientRect().top
+                - sourcePanel.getBoundingClientRect().top + sourcePanel.scrollTop;
+            var pts = [{ src: 0, dst: 0 }];
+            var lastLine = Math.max(0, cm.lineCount() - 1);
+            keys.forEach(function (id) {
+                var el = document.getElementById(id);
+                if (!el) return;
+                var y = el.getBoundingClientRect().top - rTop + renderPanel.scrollTop;
+                if (y < 0) y = 0;
+                var px = cmBase + cm.heightAtLine(Math.max(0, Math.min(map[id] - 1, lastLine)), 'local');
+                pts.push({ src: px, dst: y });
+            });
+            var maxSrc = Math.max(0, sourcePanel.scrollHeight - sourcePanel.clientHeight);
+            var maxDst = Math.max(0, renderPanel.scrollHeight - renderPanel.clientHeight);
+            pts.push({ src: maxSrc, dst: maxDst });
+            pts.sort(function (a, b) { return a.src - b.src; });
+            var out = [];
+            pts.forEach(function (pt) {
+                if (out.length && out[out.length - 1].src === pt.src) {
+                    if (pt.dst < out[out.length - 1].dst) out[out.length - 1].dst = pt.dst;
+                    return;
+                }
+                out.push({ src: pt.src, dst: pt.dst });
+            });
+            /* 保持 dst 单调不减，反向插值才有定义 */
+            for (var i = 1; i < out.length; i++) {
+                if (out[i].dst < out[i - 1].dst) out[i].dst = out[i - 1].dst;
+            }
+            syncAnchors = out;
+        }
+        function ensureSyncAnchors() {
+            if (syncAnchorsDirty || !syncAnchors.length) buildSyncAnchors();
+        }
+        function interpSrcToDst(srcPx) {
+            var n = syncAnchors.length;
+            if (!n) return 0;
+            if (srcPx <= syncAnchors[0].src) return syncAnchors[0].dst;
+            for (var i = 1; i < n; i++) {
+                var a = syncAnchors[i];
+                if (srcPx <= a.src) {
+                    var pv = syncAnchors[i - 1];
+                    var d = a.src - pv.src;
+                    return pv.dst + (d > 0 ? (a.dst - pv.dst) * (srcPx - pv.src) / d : 0);
+                }
+            }
+            return syncAnchors[n - 1].dst;
+        }
+        function interpDstToSrc(dstPx) {
+            var n = syncAnchors.length;
+            if (!n) return 0;
+            if (dstPx <= syncAnchors[0].dst) return syncAnchors[0].src;
+            for (var j = 1; j < n; j++) {
+                var b = syncAnchors[j];
+                if (dstPx <= b.dst) {
+                    var q = syncAnchors[j - 1];
+                    var dy = b.dst - q.dst;
+                    return q.src + (dy > 0 ? (b.src - q.src) * (dstPx - q.dst) / dy : 0);
+                }
+            }
+            return syncAnchors[n - 1].src;
+        }
+        function syncSourceFromRender() {
+            if (!sourcePanel) return;
+            ensureSyncAnchors();
+            if (syncAnchors.length < 2) return;
+            var target = interpDstToSrc(renderPanel.scrollTop);
+            syncLockUntil = Date.now() + 120;
+            sourcePanel.scrollTop = Math.max(0, target);
+        }
+        function syncRenderFromSource() {
+            if (!sourcePanel) return;
+            ensureSyncAnchors();
+            if (syncAnchors.length < 2) return;
+            var target = interpSrcToDst(sourcePanel.scrollTop);
+            syncLockUntil = Date.now() + 120;
+            renderPanel.scrollTop = Math.max(0, target);
+        }
+        function hookCM() {
+            if (syncCmHooked || !window.__nmCM) return;
+            syncCmHooked = true;
+            var cm = window.__nmCM;
+            /* CM 是全高展开的，滚动发生在其外层面板；同时监听 CM 自身滚动
+               以防未来改成受限高度模式。 */
+            sourcePanel.addEventListener('scroll', function () {
+                if (Date.now() < syncLockUntil) return;
+                if (!syncReady()) return;
+                syncRenderFromSource();
+            }, { passive: true });
+            var scroller = cm.getScrollerElement && cm.getScrollerElement();
+            if (scroller) scroller.addEventListener('scroll', function () {
+                if (Date.now() < syncLockUntil) return;
+                if (!syncReady()) return;
+                syncRenderFromSource();
+            }, { passive: true });
+            cm.on('change', markAnchorsDirty);
+            cm.on('swapDoc', markAnchorsDirty);
+            renderPanel.addEventListener('scroll', function () {
+                if (Date.now() < syncLockUntil) return;
+                if (!syncReady()) return;
+                syncSourceFromRender();
+            }, { passive: true });
+        }
+        function refreshSyncBtn() {
+            if (!syncBtn) return;
+            var show = body.classList.contains('nm-split') && !!window.__nmCM;
+            syncBtn.style.display = show ? '' : 'none';
+            syncBtn.classList.toggle('active', syncEnabled);
+            syncBtn.textContent = syncEnabled ? '\u540c\u6b65\u5f00' : '\u540c\u6b65\u5173';
+        }
+        if (syncBtn) {
+            syncBtn.addEventListener('click', function () {
+                syncEnabled = !syncEnabled;
+                try { localStorage.setItem('nm-sync-scroll', syncEnabled ? '1' : '0'); } catch (e) {}
+                refreshSyncBtn();
+                if (syncEnabled && syncReady()) syncSourceFromRender();
+            });
+        }
+        var syncCmPollCount = 0;
+        var syncCmPoll = setInterval(function () {
+            if (window.__nmCM && window.__nmCM.getScrollerElement) {
+                hookCM();
+                markAnchorsDirty();
+                refreshSyncBtn();
+                clearInterval(syncCmPoll);
+            } else if (++syncCmPollCount > 40) {
+                clearInterval(syncCmPoll);
+            }
+        }, 500);
+        window.addEventListener('resize', markAnchorsDirty);
+        window.addEventListener('load', markAnchorsDirty, true);
+        document.addEventListener('nm-layout-change', function () {
+            markAnchorsDirty();
+            refreshSyncBtn();
+        });
         var headingMap = null;
         function getHeadingMap() {
             if (headingMap !== null) return headingMap;
