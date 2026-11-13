@@ -7,8 +7,8 @@
 #   PyPI Project Name: notemanager
 #   Owner: Kenneth-Lee   Repository: NoteManager   Workflow: publish.yml
 #
-# 发布流程：bump notemanager/__init__.py 的 __version__ → 提交并推送到默认分支 →
-# 打 tag 并 push → 自动构建发布。
+# 发布流程：bump notemanager/__init__.py 的 __version__ → 在 HISTORY.md 追加版本记录 →
+# 提交并推送到默认分支 → 打 tag 并 push → 自动构建发布。
 # 注意：PyPI 同版本号不可重传，每次发布前必须改版本号。
 
 name: Publish to PyPI
