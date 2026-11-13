@@ -97,6 +97,94 @@ def _slugify(text, separator):
     return slug.lower()
 
 
+def _md_collect_headings(lines: list[str]) -> list[tuple[int, int, str]]:
+    """收集 Markdown 标题：(级别 1–6, 0-based 行号, 文本)。忽略 fenced code block 内行。"""
+    result: list[tuple[int, int, str]] = []
+    fence = False
+    i = 0
+    n = len(lines)
+    while i < n:
+        s = lines[i].strip()
+        if s.startswith("```"):
+            fence = not fence
+            i += 1
+            continue
+        if fence:
+            i += 1
+            continue
+        stripped = lines[i].lstrip()
+        if not stripped:
+            i += 1
+            continue
+        m = re.match(r"^(#{1,6})(?:\s+|$)(.*)$", stripped)
+        if m:
+            level = len(m.group(1))
+            rest = (m.group(2) or "").strip()
+            rest = re.sub(r"\s+#+\s*$", "", rest).strip()
+            if rest:
+                result.append((level, i, rest))
+            i += 1
+            continue
+        if i + 1 < n:
+            nxt = lines[i + 1].strip()
+            cur = stripped
+            if cur and not cur.startswith("#"):
+                if len(nxt) >= 3 and all(c == "=" for c in nxt):
+                    result.append((1, i, cur))
+                    i += 2
+                    continue
+                if len(nxt) >= 3 and all(c == "-" for c in nxt):
+                    result.append((2, i, cur))
+                    i += 2
+                    continue
+        i += 1
+    return result
+
+
+def _flatten_toc_tokens(tokens) -> list[dict]:
+    """把 toc 扩展的嵌套 token 树展平为文档顺序列表。"""
+    out: list[dict] = []
+    for t in tokens or []:
+        out.append(t)
+        out.extend(_flatten_toc_tokens(t.get("children")))
+    return out
+
+
+def _norm_md_heading(text: str) -> str:
+    """规范化 MD 标题文本：去链接/强调等标记与空白，小写。"""
+    t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text or "")
+    t = re.sub(r"[`*_~\[\]!]", "", t)
+    t = re.sub(r"\s+", "", t)
+    return t.lower()
+
+
+def _build_heading_line_map(content: str, toc_tokens) -> dict[str, int]:
+    """按文档顺序把 toc token 的 id 映射到源码行号（1-based，尽力而为）。"""
+    src_heads = _md_collect_headings(content.splitlines())
+    flat = _flatten_toc_tokens(toc_tokens)
+    out: dict[str, int] = {}
+    idx = 0
+    for tok in flat:
+        target = _norm_md_heading(str(tok.get("name", "")))
+        if not target:
+            continue
+        for j in range(idx, len(src_heads)):
+            level, line0, text = src_heads[j]
+            cand = _norm_md_heading(text)
+            hit = (
+                cand == target
+                or (len(target) >= 4 and cand.startswith(target))
+                or (len(cand) >= 4 and target.startswith(cand))
+            )
+            if hit:
+                tid = str(tok.get("id", ""))
+                if tid:
+                    out[tid] = line0 + 1
+                idx = j + 1
+                break
+    return out
+
+
 def render_md(content: str, source_path: str = "<string>") -> dict:
     """Render Markdown content to HTML.
 
@@ -138,8 +226,11 @@ def render_md(content: str, source_path: str = "<string>") -> dict:
 
     # TOC from markdown toc extension
     toc_html = _restore_math(getattr(md, "toc", "") or "", math_store)
+    # 行号扫描用原始 content（数学 stash 会把多行公式替换成单行 token，改变行数）
+    heading_lines = _build_heading_line_map(content, getattr(md, "toc_tokens", None))
 
-    return {"body": body, "toc": toc_html, "warnings": [], "dtags": extract_md_hashtags(content)}
+    return {"body": body, "toc": toc_html, "warnings": [], "dtags": extract_md_hashtags(content),
+            "heading_lines": heading_lines}
 
 
 def _convert_links(html: str) -> str:

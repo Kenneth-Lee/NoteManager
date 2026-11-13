@@ -191,6 +191,14 @@
     });
 
     var sourcePanel = document.getElementById('nm-panel-source');
+    function sourcePanelVisible() {
+      if (!sourcePanel) return false;
+      return (
+        sourcePanel.classList.contains('active') ||
+        (document.body.classList && document.body.classList.contains('nm-split'))
+      );
+    }
+
     var tabsLeft = document.querySelector('.nm-tabs-left');
     if (tabsLeft) {
       tabsLeft.addEventListener(
@@ -200,7 +208,7 @@
           if (!tab) return;
           var name = tab.getAttribute('data-tab');
           if (!name || name === 'source') return;
-          if (!sourcePanel || !sourcePanel.classList.contains('active')) return;
+          if (!sourcePanelVisible()) return;
           if (!window.__nmDirty) return;
           if (
             !window.confirm(
@@ -240,8 +248,13 @@
     }
 
     window.addEventListener('resize', function () {
-      if (!sourcePanel || !sourcePanel.classList.contains('active')) return;
+      if (!sourcePanelVisible()) return;
       scheduleRefresh(window.__nmCM);
+    });
+
+    document.addEventListener('nm-layout-change', function () {
+      if (!window.__nmCM) return;
+      if (sourcePanelVisible()) scheduleRefresh(window.__nmCM);
     });
 
     var saveBtn = document.getElementById('nm-source-save');

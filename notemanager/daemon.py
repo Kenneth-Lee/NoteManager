@@ -1027,6 +1027,7 @@ class NoteManagerDaemon:
             source_path=str(source),
             dtags=rendered.get("dtags", []),
             source_editable=False,
+            heading_lines=rendered.get("heading_lines"),
         )
 
         temp_dir = self.get_temp_view_dir()

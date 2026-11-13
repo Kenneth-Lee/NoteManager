@@ -78,6 +78,66 @@ def _collect_rst_separator_title_candidates(source: str) -> list[dict]:
     return out
 
 
+def _rst_clean_title_text(text: str) -> str:
+    """Clean RST title text (remove :index:`...` etc)."""
+    t = (text or "").strip()
+    # Prefer role-like titles: :index:`bash`
+    m = re.search(r":[A-Za-z][\w-]*:`([^`]+)`", t)
+    if not m:
+        # Fallback: any inline code: `bash`
+        m = re.search(r"`([^`]+)`", t)
+    if m:
+        t = m.group(1)
+
+    # RST escaping: "\ " -> space
+    t = re.sub(r"\\\s*", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _normalize_heading_text_for_match(text: str) -> str:
+    """规范化标题文本用于源码行匹配：role 就地替换为内容、去行内标记与空白、小写。
+
+    与 ``_rst_clean_title_text``（选文档标题用，会把整段替换为 role 内容）不同，
+    这里保留标题全文，只把行内 role/标记替换成纯文本，以便源码行与渲染文本对齐。
+    """
+    t = (text or "").strip()
+    t = re.sub(r":[A-Za-z][\w-]*:`([^`]+)`", r"\1", t)
+    t = re.sub(r"`([^`]+)`", r"\1", t)
+    t = re.sub(r"[*_~]+", "", t)
+    t = re.sub(r"\\\s*", " ", t)
+    t = re.sub(r"\s+", "", t)
+    return t.lower()
+
+
+def _build_heading_line_map(source: str, headings: list[dict]) -> dict[str, int]:
+    """按文档顺序把节标题 id 映射到源码行号（1-based，尽力而为）。
+
+    依据 ``_collect_rst_separator_title_candidates`` 的启发式扫描（其 ``line`` 指向
+    下划线行，标题在上一行），与 ``_extract_headings`` 输出的 (id, text) 按顺序做
+    规范化文本匹配；匹配不到的标题不出现在结果里。
+    """
+    cands = _collect_rst_separator_title_candidates(source)
+    out: dict[str, int] = {}
+    idx = 0
+    for h in headings:
+        target = _normalize_heading_text_for_match(h.get("text", ""))
+        if not target:
+            continue
+        for j in range(idx, len(cands)):
+            cand = _normalize_heading_text_for_match(cands[j]["title"])
+            hit = (
+                cand == target
+                or (len(target) >= 4 and cand.startswith(target))
+                or (len(cand) >= 4 and target.startswith(cand))
+            )
+            if hit:
+                out[h["id"]] = max(1, cands[j]["line"] - 1)
+                idx = j + 1
+                break
+    return out
+
+
 class _DocutilsRawH1OutlineParser(HTMLParser):
     """docutils html5 中节标题多为 ``<h1>``，用 ``<section>`` 嵌套深度表示层级。"""
 
@@ -420,7 +480,10 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
         )
         warnings.append(_rst_diagnostic_after_heading_repair(body))
 
-    return {"body": body, "toc": toc_html, "warnings": warnings, "dtags": dtags}
+    heading_lines = _build_heading_line_map(content, headings)
+
+    return {"body": body, "toc": toc_html, "warnings": warnings, "dtags": dtags,
+            "heading_lines": heading_lines}
 
 
 # ---------------------------------------------------------------------------

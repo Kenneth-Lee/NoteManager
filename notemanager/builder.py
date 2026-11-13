@@ -12,8 +12,8 @@ from pathlib import Path
 
 from notemanager.scanner import scan_directory, FileInfo, load_ignore_rules
 from notemanager.scan_manifest import build_manifest_payload, write_scan_manifest
-from notemanager.renderer.rst_renderer import render_rst
-from notemanager.renderer.md_renderer import render_md
+from notemanager.renderer.rst_renderer import render_rst, _rst_clean_title_text
+from notemanager.renderer.md_renderer import render_md, _md_collect_headings
 from notemanager.renderer.txt_renderer import render_txt
 from notemanager.renderer.template import wrap_html
 from notemanager.ref_resolver import extract_labels, resolve_references
@@ -403,6 +403,7 @@ def _write_html(html_dir, fi, rendered, ref_labels, ui_plugin: UiPluginBundle):
         source_path=str(fi.rel_path),
         dtags=rendered.get("dtags", []),
         source_editable=True,
+        heading_lines=rendered.get("heading_lines"),
         extra_css_files=ui_plugin.css_files,
         extra_js_files=ui_plugin.js_files,
     )
@@ -489,25 +490,6 @@ def _rst_collect_headings(lines: list[str]) -> list[tuple[str, str, int]]:
     return headings
 
 
-def _rst_clean_title_text(text: str) -> str:
-    """Clean RST title text (remove :index:`...` etc)."""
-    import re
-
-    t = (text or "").strip()
-    # Prefer role-like titles: :index:`bash`
-    m = re.search(r":[A-Za-z][\w-]*:`([^`]+)`", t)
-    if not m:
-        # Fallback: any inline code: `bash`
-        m = re.search(r"`([^`]+)`", t)
-    if m:
-        t = m.group(1)
-
-    # RST escaping: "\ " -> space
-    t = re.sub(r"\\\s*", " ", t)
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
-
-
 def _rst_pick_document_title(
     headings: list[tuple[str, str, int]], stem: str = ""
 ) -> str | None:
@@ -554,52 +536,6 @@ def _md_strip_yaml_frontmatter(content: str) -> str:
         if lines[i].strip() == "---":
             return "\n".join(lines[i + 1 :])
     return content
-
-
-def _md_collect_headings(lines: list[str]) -> list[tuple[int, int, str]]:
-    """收集 Markdown 标题：(级别 1–6, 行号, 文本)。忽略 fenced code block 内行。"""
-    import re
-
-    result: list[tuple[int, int, str]] = []
-    fence = False
-    i = 0
-    n = len(lines)
-    while i < n:
-        s = lines[i].strip()
-        if s.startswith("```"):
-            fence = not fence
-            i += 1
-            continue
-        if fence:
-            i += 1
-            continue
-        stripped = lines[i].lstrip()
-        if not stripped:
-            i += 1
-            continue
-        m = re.match(r"^(#{1,6})(?:\s+|$)(.*)$", stripped)
-        if m:
-            level = len(m.group(1))
-            rest = (m.group(2) or "").strip()
-            rest = re.sub(r"\s+#+\s*$", "", rest).strip()
-            if rest:
-                result.append((level, i, rest))
-            i += 1
-            continue
-        if i + 1 < n:
-            nxt = lines[i + 1].strip()
-            cur = stripped
-            if cur and not cur.startswith("#"):
-                if len(nxt) >= 3 and all(c == "=" for c in nxt):
-                    result.append((1, i, cur))
-                    i += 2
-                    continue
-                if len(nxt) >= 3 and all(c == "-" for c in nxt):
-                    result.append((2, i, cur))
-                    i += 2
-                    continue
-        i += 1
-    return result
 
 
 def _md_pick_document_title(headings: list[tuple[int, int, str]]) -> str | None:
@@ -1129,6 +1065,11 @@ _DEFAULT_JS = """\
             }
             var href = docHref(doc.path);
             href = upsertQParam(href, query);
+            if (doc.type === 'grep' && doc.source_path && doc.line_start) {
+                var sp = encodeURIComponent(String(doc.source_path));
+                var lsep = href.indexOf('?') >= 0 ? '&' : '?';
+                href = href + lsep + 'src=' + sp + '&line=' + encodeURIComponent(String(doc.line_start));
+            }
             var dp = escAttr(doc.path || '');
             html += '<a class="nm-result-item" data-doc-path="' + dp + '" href="' + escAttr(href) + '">' +
                 '<div class="nm-result-title">' + typeBadge(doc.type) + escapeHtml(doc.title || '') + '</div>' +
@@ -1353,4 +1294,189 @@ _DEFAULT_JS = """\
         });
     })();
 })();
+
+/* Layout features: split view, back-to-top, TOC -> source line jump, readonly line jump */
+(function () {
+    function ready(fn) {
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+        else fn();
+    }
+    ready(function () {
+        var body = document.body;
+        var splitBtn = document.getElementById('nm-split-btn');
+        var backtop = document.getElementById('nm-backtop');
+        var renderPanel = document.getElementById('nm-panel-render');
+        var sourcePanel = document.getElementById('nm-panel-source');
+        var warningsPanel = document.getElementById('nm-panel-warnings');
+        function layoutChanged() {
+            try { document.dispatchEvent(new CustomEvent('nm-layout-change')); } catch (e) {}
+            updateBacktop();
+        }
+        function sourceVisible() {
+            return !!sourcePanel && (sourcePanel.classList.contains('active') || body.classList.contains('nm-split'));
+        }
+        function panelVisible(el) {
+            return !!el && !!(el.offsetWidth || el.offsetHeight);
+        }
+        function setSplit(on) {
+            body.classList.toggle('nm-split', !!on);
+            if (splitBtn) {
+                splitBtn.classList.toggle('active', !!on);
+                splitBtn.textContent = on ? '\u9000\u51fa\u5206\u5c4f' : '\u5206\u5c4f';
+            }
+            if (on) {
+                var tabs = document.querySelectorAll('.nm-tab');
+                for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
+                var panels = document.querySelectorAll('.nm-tab-panel');
+                for (var j = 0; j < panels.length; j++) panels[j].classList.remove('active');
+                var rt = document.querySelector('.nm-tab[data-tab="render"]');
+                if (rt) rt.classList.add('active');
+                if (renderPanel) renderPanel.classList.add('active');
+            }
+            layoutChanged();
+        }
+        if (splitBtn) {
+            splitBtn.addEventListener('click', function () {
+                setSplit(!body.classList.contains('nm-split'));
+            });
+            document.addEventListener('click', function (e) {
+                var tab = e.target.closest && e.target.closest('.nm-tab');
+                if (!tab) return;
+                if (!body.classList.contains('nm-split')) return;
+                body.classList.remove('nm-split');
+                splitBtn.classList.remove('active');
+                splitBtn.textContent = '\u5206\u5c4f';
+                layoutChanged();
+            }, true);
+        }
+        function scrollablePanels() {
+            var out = [];
+            [renderPanel, sourcePanel, warningsPanel].forEach(function (el) {
+                if (panelVisible(el)) out.push(el);
+            });
+            return out;
+        }
+        function updateBacktop() {
+            if (!backtop) return;
+            var top = 0;
+            scrollablePanels().forEach(function (el) { top = Math.max(top, el.scrollTop); });
+            backtop.classList.toggle('show', top > 400);
+        }
+        if (backtop) {
+            [renderPanel, sourcePanel, warningsPanel].forEach(function (el) {
+                if (el) el.addEventListener('scroll', updateBacktop, { passive: true });
+            });
+            backtop.addEventListener('click', function () {
+                scrollablePanels().forEach(function (el) {
+                    try { el.scrollTo({ top: 0, behavior: 'smooth' }); }
+                    catch (err) { el.scrollTop = 0; }
+                });
+            });
+        }
+        var headingMap = null;
+        function getHeadingMap() {
+            if (headingMap !== null) return headingMap;
+            headingMap = {};
+            var el = document.getElementById('nm-heading-map');
+            if (el) {
+                try { headingMap = JSON.parse(el.textContent || '{}') || {}; } catch (e) { headingMap = {}; }
+            }
+            return headingMap;
+        }
+        function flashRect(rect) {
+            if (!rect) return;
+            var d = document.createElement('div');
+            d.className = 'nm-src-flash';
+            d.style.left = rect.left + 'px';
+            d.style.top = rect.top + 'px';
+            d.style.width = Math.max(rect.width || 0, 80) + 'px';
+            d.style.height = Math.max(rect.height || 0, 16) + 'px';
+            document.body.appendChild(d);
+            setTimeout(function () { d.className = 'nm-src-flash fade'; }, 900);
+            setTimeout(function () { if (d.parentNode) d.parentNode.removeChild(d); }, 1600);
+        }
+        function gotoReadonlyLine(line) {
+            var pre = sourcePanel ? sourcePanel.querySelector('pre') : null;
+            if (!pre) return;
+            var walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT, null, false);
+            var node, target = null, remaining = line - 1;
+            outerLoop:
+            while ((node = walker.nextNode())) {
+                var text = node.data;
+                for (var i = 0; i < text.length; i++) {
+                    if (text.charAt(i) === '\\n') {
+                        remaining--;
+                        if (remaining <= 0) { target = { node: node, offset: i + 1 }; break outerLoop; }
+                    }
+                }
+            }
+            if (!target) { sourcePanel.scrollTop = sourcePanel.scrollHeight; return; }
+            var range = document.createRange();
+            range.setStart(target.node, target.offset);
+            range.setEnd(target.node, Math.min(target.node.length, target.offset + 40));
+            var rect = range.getBoundingClientRect();
+            var pRect = sourcePanel.getBoundingClientRect();
+            sourcePanel.scrollTop += rect.top - pRect.top - 12;
+            requestAnimationFrame(function () { flashRect(range.getBoundingClientRect()); });
+        }
+        function gotoSourceLine(line) {
+            var ln = parseInt(line, 10);
+            if (!ln || ln < 1) return;
+            if (window.__nmCM) {
+                var cm = window.__nmCM;
+                var l = Math.min(ln - 1, Math.max(0, cm.lineCount() - 1));
+                if (!sourceVisible()) {
+                    var srcTab = document.querySelector('.nm-tab[data-tab="source"]');
+                    if (srcTab) srcTab.click();
+                }
+                cm.setCursor({ line: l, ch: 0 });
+                cm.scrollIntoView({ line: l, ch: 0 }, 80);
+                try {
+                    cm.addLineClass(l, 'background', 'nm-flash-line');
+                    setTimeout(function () { cm.removeLineClass(l, 'background', 'nm-flash-line'); }, 1500);
+                } catch (e) {}
+                return;
+            }
+            if (!sourcePanel) return;
+            if (!sourceVisible()) {
+                var tab = document.querySelector('.nm-tab[data-tab="source"]');
+                if (tab) tab.click();
+            }
+            setTimeout(function () { gotoReadonlyLine(ln); }, 30);
+        }
+        window.__nmGotoSourceLine = gotoSourceLine;
+        document.addEventListener('click', function (e) {
+            var a = e.target.closest && e.target.closest('.nm-sidebar-toc a');
+            if (!a) return;
+            var href = a.getAttribute('href') || '';
+            if (href.charAt(0) !== '#') return;
+            if (!sourceVisible()) return;
+            var line = getHeadingMap()[href.slice(1)];
+            if (!line) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            gotoSourceLine(line);
+        }, true);
+        (function initJumpParams() {
+            try {
+                var u = new URL(window.location.href);
+                var src = (u.searchParams.get('src') || '').trim().replace(/\\\\/g, '/');
+                var ln = parseInt(u.searchParams.get('line') || '0', 10);
+                if (!src || !ln) return;
+                if (window.__nmCM) return;
+                var expected = '';
+                var metaEl = document.getElementById('nm-temp-meta') || document.getElementById('nm-page-meta');
+                if (metaEl) {
+                    try { expected = String((JSON.parse(metaEl.textContent) || {}).source_path || ''); } catch (err) {}
+                }
+                if (expected && expected.replace(/\\\\/g, '/') !== src) return;
+                gotoSourceLine(ln);
+                u.searchParams.delete('src');
+                u.searchParams.delete('line');
+                window.history.replaceState({}, '', u.pathname + (u.search || '') + u.hash);
+            } catch (e) {}
+        })();
+    });
+})();
+
 """

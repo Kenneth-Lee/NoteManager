@@ -53,6 +53,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
               toc: str = "", source: str = "", warnings: list | None = None,
               source_path: str = "", dtags: list | None = None,
               *, source_editable: bool = False,
+              heading_lines: dict[str, int] | None = None,
               extra_css_files: list[str] | None = None,
               extra_js_files: list[str] | None = None) -> str:
     """Wrap an HTML body fragment in a full HTML5 page.
@@ -67,6 +68,8 @@ def wrap_html(body: str, title: str, html_rel_path: str,
         source_path: Optional original source file path for display.
         dtags: Optional list of dtag strings for this document.
         source_editable: When True, source tab uses CodeMirror + save API (managed projects only).
+        heading_lines: Optional mapping of heading anchor id -> 1-based source line number,
+            used by the frontend to jump from TOC entries to source positions.
 
     Returns:
         Complete HTML document string.
@@ -78,6 +81,9 @@ def wrap_html(body: str, title: str, html_rel_path: str,
     extra_js_files = extra_js_files or []
 
     source_path_display = _escape(source_path) if source_path else ""
+    heading_map_json = (
+        json.dumps(heading_lines or {}, ensure_ascii=False).replace("<", "\\u003c")
+    )
 
     extra_css_tags = "\n".join(
         f'<link rel="stylesheet" href="{prefix}_static/{_escape(name)}">'
@@ -249,10 +255,16 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .toc a:hover {{ text-decoration: underline; }}
 .section-number {{ color: #666; margin-right: 0.5em; }}
 /* Main content area with tabs */
-.nm-main {{ margin-left: 280px; min-height: 100vh; display: flex; flex-direction: column; }}
+.nm-main {{ margin-left: 280px; height: 100vh; display: flex; flex-direction: column; }}
 .nm-tabs {{ display: flex; align-items: center; justify-content: space-between;
-           border-bottom: 1px solid #e0e0e0; background: #fafafa; padding: 0 20px; }}
+           border-bottom: 1px solid #e0e0e0; background: #fafafa; padding: 0 20px; flex: 0 0 auto; }}
 .nm-tabs-left {{ display: flex; align-items: center; gap: 0; }}
+.nm-tabs-right {{ display: flex; align-items: center; gap: 10px; }}
+.nm-split-btn {{ font-size: 12px; color: #1565c0; border: 1px solid #bbdefb; background: #e3f2fd;
+                 border-radius: 4px; padding: 4px 10px; cursor: pointer; }}
+.nm-split-btn:hover {{ background: #bbdefb; color: #0d47a1; }}
+.nm-split-btn.active {{ background: #1565c0; color: #fff; border-color: #1565c0; font-weight: 600; }}
+@media (max-width: 1000px) {{ .nm-split-btn {{ display: none; }} }}
 .nm-console-btn {{ text-decoration: none; font-size: 12px; color: #1565c0; border: 1px solid #bbdefb;
                   background: #e3f2fd; border-radius: 4px; padding: 4px 10px; }}
 .nm-console-btn:hover {{ background: #bbdefb; color: #0d47a1; }}
@@ -260,9 +272,39 @@ def wrap_html(body: str, title: str, html_rel_path: str,
            background: none; font-size: 13px; color: #666; border-radius: 4px 4px 0 0; margin-top: 4px; }}
 .nm-tab:hover {{ color: #333; background: #f0f0f0; }}
 .nm-tab.active {{ background: white; color: #333; border-color: #e0e0e0; font-weight: 500; }}
-.nm-tab-panels {{ flex: 1; position: relative; }}
-.nm-tab-panel {{ display: none; padding: 20px; overflow-y: auto; }}
-.nm-tab-panel.active {{ display: block; }}
+.nm-tab-panels {{ flex: 1 1 auto; position: relative; overflow: hidden; min-height: 0; }}
+.nm-tab-panel {{ display: none; padding: 20px 20px 48px; overflow-y: auto; height: 100%;
+                 box-sizing: border-box; overscroll-behavior: contain; }}
+.nm-tab-panel.active {{ display: block; position: absolute; top: 0; left: 0; right: 0; bottom: 0; }}
+/* Split view: render + source side by side */
+body.nm-split .nm-tab-panels {{ display: flex; }}
+body.nm-split .nm-tab-panel {{ position: static; }}
+body.nm-split #nm-panel-render, body.nm-split #nm-panel-source {{ display: block !important;
+    flex: 1 1 0; min-width: 0; height: 100%; }}
+body.nm-split #nm-panel-source {{ border-left: 1px solid #e0e0e0; }}
+body.nm-split #nm-panel-warnings {{ display: none !important; }}
+/* Anchor jump offset inside the scrolling panel */
+#nm-panel-render [id] {{ scroll-margin-top: 16px; }}
+/* Back to top */
+#nm-backtop {{ position: fixed; right: 26px; bottom: 26px; width: 40px; height: 40px; border-radius: 50%;
+               border: 1px solid #ccc; background: #fff; color: #555; font-size: 18px; line-height: 1;
+               cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,0.18); display: none; z-index: 90; }}
+#nm-backtop.show {{ display: block; }}
+#nm-backtop:hover {{ background: #eef4fb; color: #0066cc; }}
+/* Source line jump flash highlight */
+.nm-src-flash {{ position: fixed; background: rgba(255,213,79,0.4); border-radius: 3px;
+                 pointer-events: none; z-index: 95; transition: opacity 0.6s ease; }}
+.nm-src-flash.fade {{ opacity: 0; }}
+#nm-editor-mount .CodeMirror .nm-flash-line {{ background: rgba(255,213,79,0.22); }}
+@media print {{
+  .nm-sidebar, .nm-tabs, #nm-backtop {{ display: none !important; }}
+  .nm-main {{ margin-left: 0; height: auto; }}
+  .nm-tab-panels {{ overflow: visible; display: block; }}
+  .nm-tab-panel {{ display: none !important; height: auto; overflow: visible; position: static; }}
+  .nm-tab-panel.active {{ display: block !important; }}
+  body.nm-split .nm-tab-panels {{ display: block; }}
+  body.nm-split #nm-panel-render, body.nm-split #nm-panel-source {{ display: block !important; }}
+}}
 /* Source view */
 .nm-source-panel {{ background: #282c34; color: #f8f8f2; }}
 .nm-source-panel pre, .nm-source-panel code {{ background: none; color: #f8f8f2; padding: 0; border-radius: 0;
@@ -364,7 +406,10 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 <button class="nm-tab" data-tab="source">源文件</button>
 <button class="nm-tab" data-tab="warnings">诊断</button>
 </div>
+<div class="nm-tabs-right">
+<button class="nm-split-btn" id="nm-split-btn" type="button" title="左右分屏，同时查看渲染与源文件">分屏</button>
 <a class="nm-console-btn" href="/" title="返回控制台">控制台</a>
+</div>
 </div>
 <div class="nm-tab-panels">
 <div id="nm-panel-render" class="nm-tab-panel active">
@@ -378,6 +423,8 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 </div>
 </div>
 </div>
+<button id="nm-backtop" type="button" title="回到文档开头">\u2191</button>
+<script type="application/json" id="nm-heading-map">{heading_map_json}</script>
 {temp_monitor_script}
 <script>window.NM_PREFIX="{prefix}";</script>
 {cm_foot}

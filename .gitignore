@@ -9,3 +9,4 @@ ref_project_md_viewer
 tags
 *.swp
 .cursor
+.atlas
