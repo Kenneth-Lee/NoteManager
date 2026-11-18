@@ -1028,6 +1028,8 @@ class NoteManagerDaemon:
             dtags=rendered.get("dtags", []),
             source_editable=False,
             heading_lines=rendered.get("heading_lines"),
+            # 临时单文件不属于任何工程，没有工程首页；Home 回控制台让用户选工程。
+            home_href="/",
         )
 
         temp_dir = self.get_temp_view_dir()

@@ -56,7 +56,8 @@ def wrap_html(body: str, title: str, html_rel_path: str,
               *, source_editable: bool = False,
               heading_lines: dict[str, int] | None = None,
               extra_css_files: list[str] | None = None,
-              extra_js_files: list[str] | None = None) -> str:
+              extra_js_files: list[str] | None = None,
+              home_href: str | None = None) -> str:
     """Wrap an HTML body fragment in a full HTML5 page.
 
     Args:
@@ -71,11 +72,16 @@ def wrap_html(body: str, title: str, html_rel_path: str,
         source_editable: When True, source tab uses CodeMirror + save API (managed projects only).
         heading_lines: Optional mapping of heading anchor id -> 1-based source line number,
             used by the frontend to jump from TOC entries to source positions.
+        home_href: Optional target of the sidebar Home link. Defaults to the project
+            landing page next to this document. Temp single-file views have no
+            project home and pass "/" so Home falls back to the console.
 
     Returns:
         Complete HTML document string.
     """
     prefix = _static_prefix(html_rel_path)
+    if home_href is None:
+        home_href = prefix + "index.html"
     warnings = warnings or []
     dtags = dtags or []
     extra_css_files = extra_css_files or []
@@ -378,7 +384,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 </head>
 <body>
 <div class="nm-sidebar">
-<div class="nm-sidebar-home"><a href="{prefix}index.html">Home</a></div>
+<div class="nm-sidebar-home"><a href="{_escape(home_href)}">Home</a></div>
 <div class="nm-sidebar-search">
 <input type="text" id="nm-search" placeholder="搜索...">
 <button class="nm-search-help" onclick="nmToggleHelp()" title="搜索语法帮助">?</button>

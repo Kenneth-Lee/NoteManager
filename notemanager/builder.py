@@ -1218,18 +1218,6 @@ _DEFAULT_JS = """\
         sidebarViewResultsBtn.addEventListener('click', function() { setSidebarView('results'); });
     }
     setSidebarView('toc');
-    (function() {
-        var p = window.location.pathname || '';
-        if (p.indexOf('/temp/') === 0) {
-            var h = document.querySelector('.nm-sidebar-home a');
-            if (h) {
-                h.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    window.history.back();
-                });
-            }
-        }
-    })();
     document.querySelectorAll('.nm-dtag-badge').forEach(function(badge) {
         badge.addEventListener('click', function() {
             var tag = this.getAttribute('data-dtag');
