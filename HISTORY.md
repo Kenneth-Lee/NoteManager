@@ -11,6 +11,8 @@
 - `nmr main [id]` 查看/切换主页面
 - `nmr status` 列出所有页面 id、所属工程、路径与主页面标记；支持 `--json`
 - `nmr start --restart` 一键重启 daemon，默认沿用当前端口
+- 页面「外部编辑」按钮：由 daemon 启动 gvim（macOS 为 MacVim），
+  支持 `~/.NoteManager/config.json` 的 `editor` 覆盖；托管页与临时页均可用
 - SSE 增加同源校验；页面通过 `/api/client_active` 上报活跃时间
 
 ## v0.2.0（2026-11-13）

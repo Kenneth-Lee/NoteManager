@@ -369,6 +369,8 @@ class WebHandler(BaseHTTPRequestHandler):
             resp = self.daemon_ref.handle_default(data)
         elif path == "/api/client_active":
             resp = self.daemon_ref.touch_web_client(str(data.get("client_id", "")))
+        elif path == "/api/open_editor":
+            resp = self.daemon_ref.open_editor(data)
         elif path == "/api/save_source":
             try:
                 pj = int(data.get("project", -1))

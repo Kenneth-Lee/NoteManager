@@ -417,6 +417,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <button class="nm-tab" data-tab="warnings">诊断</button>
 </div>
 <div class="nm-tabs-right">
+<button class="nm-split-btn" id="nm-open-external" type="button" title="在外部编辑器中打开当前源文件（默认 gvim）" style="display:none">外部编辑</button>
 <button class="nm-split-btn" id="nm-split-btn" type="button" title="左右分屏，同时查看渲染与源文件">分屏</button>
 <button class="nm-split-btn" id="nm-sync-btn" type="button" title="分屏时双向同步滚动（点击开/关）">同步</button>
 <a class="nm-console-btn" href="/" title="返回控制台">控制台</a>
@@ -440,6 +441,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <script>window.NM_PREFIX="{prefix}";</script>
 {cm_foot}
 <script src="{prefix}_static/notemanager.js?v={asset_version}"></script>
+<script src="{prefix}_static/nm-external-editor.js?v={asset_version}"></script>
 <script src="{prefix}_static/katex.min.js"></script>
 <script src="{prefix}_static/katex-auto-render.min.js"></script>
 <script src="{prefix}_static/mermaid.min.js"></script>

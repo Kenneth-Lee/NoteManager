@@ -207,6 +207,46 @@ nmr main d4e5f6
 
 > 升级后已有的工程页需要执行一次 `nmr rebuild` 才会加载新的页面 id 脚本；临时页会自动刷新。
 
+### 在外部编辑器中打开
+
+托管工程页和临时单文件页的顶部工具栏都有「**外部编辑**」按钮，点击后由 daemon 启动本机编辑器打开当前源文件。
+
+默认目标是 **gvim**：
+
+- Linux/Windows：启动 `gvim` / `gvim.exe`，每次点击新实例；
+- macOS：优先 `mvim`，其次是 `/Applications/MacVim.app`；MacVim 通常复用已有实例，由其自身决定；
+- 需要精确控制复用行为时，可在 `editor` 中自行加 `--remote-tab-silent`。
+
+可通过 `~/.NoteManager/config.json` 的 `editor` 覆盖，支持字符串或数组，占位符 `{file}`、`{dir}`：
+
+```json
+{
+  "editor": ["gvim", "{file}"]
+}
+```
+
+```json
+{
+  "editor": ["code", "-r", "{file}"]
+}
+```
+
+```json
+{
+  "editor": ["gvim", "--remote-tab-silent", "{file}"]
+}
+```
+
+说明：
+
+- 配置中的命令直接以 argv 方式执行，不经过 shell；
+- 修改 `config.json` 后下一次点击即生效，无需重启 daemon；
+- gvim 需要图形会话环境（`DISPLAY` / `WAYLAND_DISPLAY`），建议从桌面终端启动 daemon；
+- 如果网页编辑器中有未保存修改，会先确认“外部编辑器打开的是磁盘版本”；
+- 托管页的源文件保存后由 watcher 重建并刷新页面；临时页由现有的 `/temp/check` 轮询刷新。
+
+> 升级后已有工程页需要执行一次 `nmr rebuild` 才会复制新的 `nm-external-editor.js` 并显示按钮；临时页会自动刷新。
+
 ### Web 控制面板
 
 启动 daemon 后访问 http://localhost:19833 ，可以：

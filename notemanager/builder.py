@@ -694,6 +694,7 @@ _RUNTIME_STATIC_TOP_LEVEL = {
     "notemanager.css",
     "notemanager.js",
     "nm-editor.js",
+    "nm-external-editor.js",
     "preformatted.css",
     "katex.min.css",
     "katex.min.js",

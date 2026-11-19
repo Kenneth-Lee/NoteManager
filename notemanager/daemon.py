@@ -30,6 +30,7 @@ from notemanager.watcher import start_watcher
 from notemanager.watcher import suppress_path
 from notemanager.web import broadcaster, notify_event
 from notemanager.indexer import filter_search_documents
+from notemanager import editor_launcher
 from notemanager.renderer.rst_renderer import render_rst
 from notemanager.renderer.md_renderer import render_md
 from notemanager.renderer.txt_renderer import render_txt
@@ -58,6 +59,7 @@ def _temp_renderer_fingerprint() -> str:
         # Temp pages load notemanager.js generated from builder._DEFAULT_JS.
         base / "builder.py",
         base / "web_client_js.py",
+        base / "renderer" / "assets" / "nm-external-editor.js",
     ]
     sig: list[str] = []
     for f in files:
@@ -513,6 +515,72 @@ class NoteManagerDaemon:
         if sep:
             out += "#" + fragment
         return out
+
+    def open_editor(self, payload: dict) -> dict:
+        """Open the source associated with a Web page in the configured editor.
+
+        Managed pages identify their source with (project, source_rel_path);
+        temp pages use the temp key so the server resolves the path from its
+        own metadata instead of trusting an arbitrary client path.
+        """
+        if not isinstance(payload, dict):
+            return {"ok": False, "error": "无效的请求"}
+        kind = str(payload.get("kind") or "").strip()
+
+        abs_path: Path | None = None
+        if kind == "temp" or (not kind and payload.get("temp_key")):
+            key = str(payload.get("temp_key") or "").strip()
+            if not re.fullmatch(r"[0-9a-f]{16}", key):
+                return {"ok": False, "error": "无效的临时页面 id"}
+            meta_path = self.get_temp_view_dir() / f"{key}.meta.json"
+            if not meta_path.is_file():
+                return {"ok": False, "error": "临时页面不存在或已过期"}
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                return {"ok": False, "error": "无法读取临时页面信息"}
+            raw_source = str(meta.get("source_path") or "").strip()
+            if not raw_source:
+                return {"ok": False, "error": "临时页面没有源文件路径"}
+            candidate = Path(raw_source).expanduser().resolve()
+            if candidate.suffix.lower() not in (".md", ".rst", ".txt"):
+                return {"ok": False, "error": "仅支持 .md/.rst/.txt 文件"}
+            if not candidate.is_file():
+                return {"ok": False, "error": f"文件不存在: {candidate}"}
+            abs_path = candidate
+        else:
+            try:
+                project_idx = int(payload.get("project", -1))
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "无效工程编号"}
+            with self._lock:
+                dirs = list(self._observers.keys())
+            if not (0 <= project_idx < len(dirs)):
+                return {"ok": False, "error": "无效工程编号"}
+            root, rel = self._validated_source_rel(
+                Path(dirs[project_idx]), str(payload.get("source_rel_path") or ""),
+            )
+            if rel is None:
+                return {"ok": False, "error": "非法源文件路径"}
+            candidate = (root / rel).resolve()
+            if not candidate.is_file():
+                return {"ok": False, "error": f"文件不存在: {candidate}"}
+            abs_path = candidate
+
+        # Read the config fresh so an editor setting takes effect without a
+        # daemon restart; fall back to the in-memory copy if it is unreadable.
+        try:
+            editor_config = _load_config().get("editor")
+        except (OSError, ValueError, json.JSONDecodeError):
+            editor_config = self.config.get("editor")
+
+        result = editor_launcher.open_in_editor(editor_config, abs_path)
+        result["source_path"] = str(abs_path)
+        if result.get("ok"):
+            logger.info("外部编辑器打开: %s", abs_path)
+        else:
+            logger.warning("外部编辑器打开失败: %s: %s", abs_path, result.get("error"))
+        return result
 
     @staticmethod
     def _tokenize_search_query(query: str) -> list[str]:
@@ -1791,6 +1859,8 @@ class NoteManagerDaemon:
             return self.handle_default(cmd)
         elif action == "main":
             return self.handle_main(cmd)
+        elif action == "open_editor":
+            return self.open_editor(cmd)
         elif action == "view":
             return self.handle_view(cmd)
         elif action == "rebuild":
