@@ -1,5 +1,18 @@
 # 版本历史
 
+## 未发布
+
+### 多页面与定向查看
+
+- 每个浏览器 tab 使用 `window.name` 中的稳定页面 id；新 tab 默认是从页面
+- 第一个页面为主页面，`nmr view` / `nmr search` 默认只影响主页面
+- 主页面刷新/跳转有 3 秒宽限；关闭后最近活动的从页面自动继任
+- `nmr view/search --id <id>` 精确指定页面，`--new` 新开页面并返回新 id
+- `nmr main [id]` 查看/切换主页面
+- `nmr status` 列出所有页面 id、所属工程、路径与主页面标记；支持 `--json`
+- `nmr start --restart` 一键重启 daemon，默认沿用当前端口
+- SSE 增加同源校验；页面通过 `/api/client_active` 上报活跃时间
+
 ## v0.2.0（2026-11-13）
 
 ### 渲染界面优化

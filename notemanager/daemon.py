@@ -40,6 +40,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_WEB_PORT = 19833
 
+# A main page that disconnects (navigation/reload) keeps its role for a short
+# grace period so a normal page transition does not hand the role to another tab.
+WEB_MAIN_GRACE_SECONDS = 3.0
+_WEB_CLIENT_ID_RE = re.compile(r"^nm-[A-Za-z0-9_-]{4,40}$")
+
 
 def _temp_renderer_fingerprint() -> str:
     """Fingerprint renderer sources to invalidate stale temp HTML cache."""
@@ -50,6 +55,9 @@ def _temp_renderer_fingerprint() -> str:
         base / "renderer" / "txt_renderer.py",
         base / "renderer" / "template.py",
         base / "renderer" / "export_template.py",
+        # Temp pages load notemanager.js generated from builder._DEFAULT_JS.
+        base / "builder.py",
+        base / "web_client_js.py",
     ]
     sig: list[str] = []
     for f in files:
@@ -303,6 +311,208 @@ class NoteManagerDaemon:
         self._add_jobs: dict[int, dict] = {}
         self._add_next_id = 1
         self._add_active_job_id: int | None = None
+        self._web_lock = threading.RLock()
+        self._web_state_path = HOME_NM_DIR / "web_state.json"
+        self._main_id: str | None = None
+        self._main_disconnected_since: float | None = None
+        self._load_web_state()
+
+    # ---- Web page (SSE client) registry ---------------------------------
+    @staticmethod
+    def _valid_web_client_id(client_id: str) -> bool:
+        return bool(_WEB_CLIENT_ID_RE.fullmatch(str(client_id or "").strip()))
+
+    def _load_web_state(self) -> None:
+        main_id = None
+        try:
+            raw = self._web_state_path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            candidate = str(data.get("main_client_id") or "").strip()
+            if self._valid_web_client_id(candidate):
+                main_id = candidate
+        except (OSError, ValueError, json.JSONDecodeError):
+            main_id = None
+        self._main_id = main_id
+        self._main_disconnected_since = time.time() if main_id else None
+
+    def _save_web_state_locked(self) -> None:
+        try:
+            self._web_state_path.parent.mkdir(parents=True, exist_ok=True)
+            self._web_state_path.write_text(
+                json.dumps({"main_client_id": self._main_id}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError as e:
+            logger.warning("保存 Web 页面状态失败: %s", e)
+
+    def _new_web_client_id(self) -> str:
+        for _ in range(30):
+            client_id = "nm-" + secrets.token_hex(4)
+            if client_id != self._main_id and broadcaster.get_client(client_id) is None:
+                return client_id
+        return "nm-" + secrets.token_hex(8)
+
+    @staticmethod
+    def _normalize_web_path(path: str) -> str:
+        p = str(path or "").strip()
+        if not p.startswith("/"):
+            p = "/" + p if p else "/"
+        p = p.split("?", 1)[0].split("#", 1)[0]
+        return p or "/"
+
+    @staticmethod
+    def _project_from_path(path: str) -> int | None:
+        m = re.match(r"^/p/(\d+)(?:/|$)", path or "")
+        return int(m.group(1)) if m else None
+
+    def _web_client_payloads_locked(self) -> list[dict]:
+        clients = broadcaster.list_clients()
+        out = []
+        for client in clients:
+            out.append({
+                "id": client.id,
+                "path": client.path,
+                "project": client.project,
+                "connected_at": round(client.connected_at, 3),
+                "last_active": round(client.last_active, 3),
+                "is_main": client.id == self._main_id,
+            })
+        out.sort(key=lambda c: (not c["is_main"], -c["last_active"], c["id"]))
+        return out
+
+    def _find_web_client_locked(self, raw: str) -> str | None:
+        wanted = str(raw or "").strip()
+        if not wanted:
+            return None
+        if broadcaster.get_client(wanted) is not None:
+            return wanted
+        matches = [c.id for c in broadcaster.list_clients() if c.id.startswith(wanted)]
+        return matches[0] if len(matches) == 1 else None
+
+    def _maybe_elect_main_locked(self, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        if self._main_id and broadcaster.get_client(self._main_id) is not None:
+            self._main_disconnected_since = None
+            return
+
+        if self._main_id is not None:
+            if self._main_disconnected_since is None:
+                self._main_disconnected_since = now
+            if now - self._main_disconnected_since < WEB_MAIN_GRACE_SECONDS:
+                return
+
+        clients = broadcaster.list_clients()
+        if not clients:
+            if self._main_id is not None:
+                self._main_id = None
+                self._main_disconnected_since = None
+                self._save_web_state_locked()
+            return
+
+        # Most recently active secondary takes over; fall back to connect time.
+        best = max(clients, key=lambda c: (c.last_active, c.connected_at, c.id))
+        if best.id != self._main_id:
+            self._main_id = best.id
+            self._main_disconnected_since = None
+            self._save_web_state_locked()
+
+    def register_web_client(self, wfile, client_id: str, path: str) -> dict:
+        """Register an SSE page and return its routing info for the init event."""
+        now = time.time()
+        cid = str(client_id or "").strip()
+        if not self._valid_web_client_id(cid):
+            cid = self._new_web_client_id()
+        norm_path = self._normalize_web_path(path)
+        project = self._project_from_path(norm_path)
+
+        with self._web_lock:
+            existing = broadcaster.get_client(cid)
+            replaced = existing is not None and existing.wfile is not wfile
+            broadcaster.add_client(cid, wfile, norm_path, project)
+
+            if self._main_id is None:
+                self._main_id = cid
+                self._main_disconnected_since = None
+                self._save_web_state_locked()
+            elif cid == self._main_id:
+                self._main_disconnected_since = None
+            else:
+                self._maybe_elect_main_locked(now)
+
+            clients = self._web_client_payloads_locked()
+            return {
+                "client_id": cid,
+                "is_main": self._main_id == cid,
+                "main_client": self._main_id,
+                "main_connected": bool(
+                    self._main_id and broadcaster.get_client(self._main_id) is not None
+                ),
+                "clients": clients,
+                "replaced_existing": replaced,
+            }
+
+    def unregister_web_client(self, wfile) -> None:
+        """Remove a page; keep main role through the grace period on navigation."""
+        with self._web_lock:
+            broadcaster.remove_client(wfile)
+            # The broadcaster may already have pruned this wfile after a write
+            # failure, so don't rely on the return value here.
+            if self._main_id and broadcaster.get_client(self._main_id) is None:
+                if self._main_disconnected_since is None:
+                    self._main_disconnected_since = time.time()
+
+    def touch_web_client(self, client_id: str) -> dict:
+        cid = str(client_id or "").strip()
+        if not self._valid_web_client_id(cid):
+            return {"ok": False, "error": "无效的页面 id"}
+        known = broadcaster.touch(cid)
+        return {"ok": True, "known": known}
+
+    def handle_main(self, cmd: dict) -> dict:
+        """Show or change the main page (default target of view/search)."""
+        raw = str(cmd.get("client", "") or "").strip()
+        now = time.time()
+        with self._web_lock:
+            self._maybe_elect_main_locked(now)
+            clients = self._web_client_payloads_locked()
+            if not raw:
+                main = self._main_id
+                message = f"当前主页面: {main}" if main else "当前没有主页面"
+                return {
+                    "ok": True,
+                    "message": message,
+                    "main_client": main,
+                    "main_connected": bool(
+                        main and broadcaster.get_client(main) is not None
+                    ),
+                    "clients": clients,
+                }
+            cid = self._find_web_client_locked(raw)
+            if not cid:
+                return {
+                    "ok": False,
+                    "error": f"找不到已连接的页面: {raw}",
+                    "clients": clients,
+                }
+            self._main_id = cid
+            self._main_disconnected_since = None
+            self._save_web_state_locked()
+            return {
+                "ok": True,
+                "message": f"主页面已设为 {cid}",
+                "main_client": cid,
+                "main_connected": True,
+                "clients": self._web_client_payloads_locked(),
+            }
+
+    @staticmethod
+    def _append_query_param(url: str, key: str, value: str) -> str:
+        base, sep, fragment = str(url or "").partition("#")
+        joiner = "&" if "?" in base else "?"
+        out = f"{base}{joiner}{key}={quote(str(value), safe='')}"
+        if sep:
+            out += "#" + fragment
+        return out
 
     @staticmethod
     def _tokenize_search_query(query: str) -> list[str]:
@@ -847,6 +1057,14 @@ class NoteManagerDaemon:
                     status_info[d] = {"error": "无法读取状态"}
             else:
                 status_info[d] = {"error": "尚未构建"}
+        now = time.time()
+        with self._web_lock:
+            self._maybe_elect_main_locked(now)
+            web_clients = self._web_client_payloads_locked()
+            main_client = self._main_id
+            main_connected = bool(
+                main_client and broadcaster.get_client(main_client) is not None
+            )
         return {
             "ok": True,
             "data": {
@@ -860,11 +1078,15 @@ class NoteManagerDaemon:
                 "details": status_info,
                 "default_project": self.config.get("default_project"),
                 "startup_complete": self._startup_complete_event.is_set(),
+                "clients": web_clients,
+                "client_count": len(web_clients),
+                "main_client": main_client,
+                "main_connected": main_connected,
             },
         }
 
     def handle_search(self, cmd: dict) -> dict:
-        """Handle CLI 'search' command: broadcast search query to web UI."""
+        """Handle CLI 'search' command: send it to the main/specified page."""
         query = cmd.get("query", "")
         if not query:
             return {"ok": False, "error": "需要搜索关键词"}
@@ -885,8 +1107,64 @@ class NoteManagerDaemon:
         open_url = _first_search_hit_open_url(idx, project_dir, query)
         if open_url:
             payload["open_url"] = open_url
-        notify_event("cli_search", payload)
-        return {"ok": True, "message": f"已发送搜索: {query}"}
+
+        if cmd.get("new"):
+            with self._web_lock:
+                new_id = self._new_web_client_id()
+            base_url = open_url or f"/p/{idx}/?q={quote(str(query), safe='')}"
+            new_url = self._append_query_param(base_url, "nm_client_id", new_id)
+            return {
+                "ok": True,
+                "message": f"已在新页面打开搜索: {query}",
+                "url": new_url,
+                "new_url": new_url,
+                "new_client_id": new_id,
+                "web_port": self.web_port,
+                "delivered": False,
+            }
+
+        raw_target = str(cmd.get("target", "") or "").strip()
+        now = time.time()
+        with self._web_lock:
+            self._maybe_elect_main_locked(now)
+            clients = self._web_client_payloads_locked()
+            if raw_target:
+                target = self._find_web_client_locked(raw_target)
+                if not target:
+                    return {
+                        "ok": False,
+                        "error": f"找不到已连接的页面: {raw_target}",
+                        "clients": clients,
+                    }
+            else:
+                target = self._main_id if (
+                    self._main_id and broadcaster.get_client(self._main_id) is not None
+                ) else None
+            main_client = self._main_id
+            main_connected = bool(
+                main_client and broadcaster.get_client(main_client) is not None
+            )
+
+        delivered = broadcaster.send_to(target, "cli_search", payload) if target else False
+        if delivered:
+            message = f"已发送搜索: {query}"
+            if target:
+                message += f"（页面 {target}）"
+        elif raw_target:
+            message = f"页面 {raw_target} 已断开"
+        else:
+            message = "没有可用的主页面，搜索结果仅在终端显示"
+        return {
+            "ok": True,
+            "message": message,
+            "url": open_url,
+            "web_port": self.web_port,
+            "delivered": delivered,
+            "target_client": target,
+            "main_client": main_client,
+            "main_connected": main_connected,
+            "clients": clients,
+        }
 
     def handle_default(self, cmd: dict) -> dict:
         """Set the default project."""
@@ -913,7 +1191,7 @@ class NoteManagerDaemon:
         return {"ok": True, "message": f"已设置默认工程: [{idx}] {Path(dirs[idx]).name}"}
 
     def handle_view(self, cmd: dict) -> dict:
-        """Handle CLI 'view' command: open a source file in web UI."""
+        """Handle CLI 'view' command: show a source file in one web page."""
         file_path = cmd.get("file", "")
         if not file_path:
             return {"ok": False, "error": "缺少文件路径"}
@@ -926,6 +1204,8 @@ class NoteManagerDaemon:
         with self._lock:
             dirs = list(self._observers.keys())
 
+        target_url = ""
+        message = ""
         # If file belongs to a managed project, jump to that project HTML directly.
         for idx, d in enumerate(dirs):
             root = Path(d)
@@ -933,28 +1213,68 @@ class NoteManagerDaemon:
                 rel = source.relative_to(root)
             except ValueError:
                 continue
-            target = f"/p/{idx}/{rel.with_suffix('.html').as_posix()}"
-            notify_event("cli_view", {"url": target})
-            return self._view_response(target, f"已跳转: {target}")
+            target_url = f"/p/{idx}/{rel.with_suffix('.html').as_posix()}"
+            message = f"已跳转: {target_url}"
+            break
+        if not target_url:
+            target_url = self._render_temp_view(source)
+            message = f"已临时渲染: {target_url}"
 
-        # Otherwise render a temporary single-file page.
-        temp_url = self._render_temp_view(source)
-        notify_event("cli_view", {"url": temp_url})
-        return self._view_response(temp_url, f"已临时渲染: {temp_url}")
+        if cmd.get("new"):
+            with self._web_lock:
+                new_id = self._new_web_client_id()
+            new_url = self._append_query_param(target_url, "nm_client_id", new_id)
+            return {
+                "ok": True,
+                "message": f"已在新页面打开: {target_url}",
+                "url": new_url,
+                "new_url": new_url,
+                "new_client_id": new_id,
+                "web_port": self.web_port,
+                "delivered": False,
+            }
 
-    def _view_response(self, url: str, message: str) -> dict:
-        """Tell the CLI the target URL and whether a web client received the event.
+        raw_target = str(cmd.get("target", "") or "").strip()
+        now = time.time()
+        with self._web_lock:
+            self._maybe_elect_main_locked(now)
+            clients = self._web_client_payloads_locked()
+            if raw_target:
+                target = self._find_web_client_locked(raw_target)
+                if not target:
+                    return {
+                        "ok": False,
+                        "error": f"找不到已连接的页面: {raw_target}",
+                        "clients": clients,
+                    }
+            else:
+                target = self._main_id if (
+                    self._main_id and broadcaster.get_client(self._main_id) is not None
+                ) else None
+            main_client = self._main_id
+            main_connected = bool(
+                main_client and broadcaster.get_client(main_client) is not None
+            )
 
-        When no SSE client is connected (e.g. the daemon was just started by this
-        very command), the broadcast reaches nobody; the CLI then opens the URL
-        in a browser itself so a single `nmr view` invocation is enough.
-        """
+        delivered = broadcaster.send_to(target, "cli_view", {"url": target_url}) if target else False
+        if delivered:
+            message += f"（页面 {target}）"
+        elif raw_target:
+            message = f"页面 {raw_target} 已断开"
+        elif not clients:
+            message = f"没有已连接的 Web 页面: {target_url}"
+        else:
+            message = "没有可用的主页面（可用 nmr status 查看页面）"
         return {
             "ok": True,
             "message": message,
-            "url": url,
+            "url": target_url,
             "web_port": self.web_port,
-            "delivered": broadcaster.has_clients(),
+            "delivered": delivered,
+            "target_client": target,
+            "main_client": main_client,
+            "main_connected": main_connected,
+            "clients": clients,
         }
 
     def get_temp_view_dir(self) -> Path:
@@ -1469,6 +1789,8 @@ class NoteManagerDaemon:
             return self.handle_search(cmd)
         elif action == "default":
             return self.handle_default(cmd)
+        elif action == "main":
+            return self.handle_main(cmd)
         elif action == "view":
             return self.handle_view(cmd)
         elif action == "rebuild":

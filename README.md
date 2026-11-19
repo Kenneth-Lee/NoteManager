@@ -96,6 +96,9 @@ twine upload dist/*
 notemanager start
 # 或
 nmr start
+
+# 重启（默认沿用当前 daemon 的端口）
+nmr start --restart
 ```
 
 Daemon 启动后自动开启 Web 控制面板，默认地址：http://localhost:19833
@@ -135,10 +138,12 @@ nmr add /path/to/your/notes
 ### 其他命令
 
 ```bash
-nmr status                  # 查看 daemon 状态和所有项目信息
+nmr status                  # 查看 daemon、项目信息与所有 Web 页面 id
 nmr list                    # 列出所有监控中的目录
 nmr remove <目录>           # 停止监控并删除生成的文件
 nmr default [工程]          # 设置/查看默认工程
+nmr main [页面id]           # 查看/设置主页面（view/search 的默认目标）
+nmr start --restart         # 重启 daemon，默认沿用当前端口
 nmr stop                    # 停止 daemon
 ```
 
@@ -180,6 +185,27 @@ nmr view <文件路径.md|.rst|.txt>
 
 - 若文件属于已管理项目：跳转到该文件对应的项目 HTML 页面
 - 若文件未纳入管理：临时渲染单文件页面（`/temp/...`）并跳转显示
+- 默认只影响**主页面**；用 `--id <页面id>` 指定其他页面，或 `--new` 新开一个页面
+
+### 多页面与主页面
+
+每个浏览器 tab 会在 `window.name` 里保存一个稳定的页面 id（`nm-...`），刷新/跳转后不变；新开的 tab 是新的从页面。
+
+- **主页面**：第一个打开的页面。`nmr view` / `nmr search` 默认只发给它，不再影响其他页面。
+- **从页面**：后续打开的页面，默认不接收命令；可用 `nmr view --id <id>`、`nmr search --id <id>` 精确指定。
+- **新页面**：`nmr view --new` / `nmr search --new` 会新开 tab，并打印新页面 id，后续可用 `--id` 继续控制它。
+- **主页面关闭/刷新**：刷新或跳转有 3 秒宽限期，同一 id 重连后仍是主页面；真正关闭后，最近活动的从页面自动继任。也可用 `nmr main <id>` 手动切换。
+- `nmr status` 会列出所有页面 id、所属工程、当前路径和主页面标记；`nmr status --json` 输出机器可读格式。
+
+```bash
+nmr status
+nmr view --id a1b2c3 notes/design.md
+nmr view --new notes/design.md
+nmr search --id a1b2c3 关键词
+nmr main d4e5f6
+```
+
+> 升级后已有的工程页需要执行一次 `nmr rebuild` 才会加载新的页面 id 脚本；临时页会自动刷新。
 
 ### Web 控制面板
 

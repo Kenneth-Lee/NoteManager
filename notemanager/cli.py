@@ -100,14 +100,20 @@ def _resolve_windows_editor(parts: list[str]) -> list[str]:
 
 
 def cmd_start(args):
+    if getattr(args, "restart", False):
+        _restart_daemon(args)
+        return
     pid = is_daemon_running()
     if pid:
         web_port = get_daemon_web_port()
         print(f"Daemon 已在运行 (PID: {pid})")
         if web_port:
             print(f"Web UI: http://localhost:{web_port}")
+        print("提示: 使用 nmr start --restart 重启")
         return
-    daemon = NoteManagerDaemon(port=args.port, web_port=args.web_port)
+    port = getattr(args, "port", 0) or DEFAULT_PORT
+    web_port = getattr(args, "web_port", 0) or DEFAULT_WEB_PORT
+    daemon = NoteManagerDaemon(port=port, web_port=web_port)
     if not daemon.run_background():
         sys.exit(1)
 
@@ -132,6 +138,86 @@ def cmd_stop(args):
         _remove_daemon_info()
 
 
+def _restart_daemon(args):
+    """Stop the running daemon (if any) and start a fresh one.
+
+    Used by ``nmr start --restart``.  Ports are inherited from the running
+    daemon unless overridden; when the daemon is not running this is equivalent
+    to a plain ``nmr start``.
+    """
+    pid = is_daemon_running()
+    old_port = None
+    old_web_port = None
+    if pid:
+        old_port = _get_daemon_port()
+        old_web_port = get_daemon_web_port()
+        print(f"正在停止 Daemon (PID: {pid})...")
+        try:
+            resp = send_command(
+                {"cmd": "stop"},
+                port=old_port,
+                timeout=3,
+                socket_path=_get_daemon_socket_path(),
+            )
+            print(resp.get("message", "正在停止..."))
+        except (ConnectionError, TimeoutError):
+            print("错误: 无法连接 Daemon，无法确认其已停止；请先检查 nmr status")
+            sys.exit(1)
+
+        # The stop command only sets the shutdown event; wait for the process
+        # to actually exit so the new daemon can bind the same ports.
+        for _ in range(100):  # up to ~10s
+            if not is_daemon_running():
+                break
+            time.sleep(0.1)
+        else:
+            print("错误: Daemon 未在预期时间内退出，未启动新实例")
+            sys.exit(1)
+    else:
+        print("Daemon 未运行，直接启动")
+
+    port = args.port or old_port or DEFAULT_PORT
+    web_port = args.web_port or old_web_port or DEFAULT_WEB_PORT
+    daemon = NoteManagerDaemon(port=port, web_port=web_port)
+    if not daemon.run_background():
+        sys.exit(1)
+
+
+def _format_age(timestamp) -> str:
+    try:
+        delta = max(0, int(time.time() - float(timestamp)))
+    except (TypeError, ValueError):
+        return "?"
+    if delta < 60:
+        return f"{delta}s 前"
+    if delta < 3600:
+        return f"{delta // 60}m 前"
+    return f"{delta // 3600}h 前"
+
+
+def _print_web_clients_hint(clients, directories=None) -> None:
+    if not clients:
+        print("  当前没有已连接的 Web 页面。")
+        return
+    print("  已连接的页面：")
+    for c in clients:
+        mark = "[主]" if c.get("is_main") else "    "
+        project = c.get("project")
+        if isinstance(project, int):
+            if directories and 0 <= project < len(directories):
+                label = f"[{project}] {Path(directories[project]).name}"
+            else:
+                label = f"[{project}]"
+        elif str(c.get("path") or "").startswith("/temp/"):
+            label = "(临时页)"
+        else:
+            label = "(控制台)"
+        print(
+            f"    {mark} {c.get('id')}  {label}  {c.get('path')}  "
+            f"{_format_age(c.get('last_active'))}"
+        )
+
+
 def cmd_status(args):
     pid = is_daemon_running()
     if not pid:
@@ -149,6 +235,9 @@ def cmd_status(args):
             print(f"错误: {resp.get('error')}")
             return
         data = resp["data"]
+        if getattr(args, "json", False):
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+            return
         print(f"Daemon PID: {data['pid']}")
         if data.get("transport") == "unix":
             print(f"监听方式: unix ({data.get('socket_path')})")
@@ -178,6 +267,18 @@ def cmd_status(args):
                 )
         if default:
             print("  * = 默认工程")
+
+        clients = data.get("clients") or []
+        main = data.get("main_client")
+        main_connected = data.get("main_connected")
+        if main:
+            suffix = f"，主页面 {main}" if main_connected else f"，主页面 {main} 正在重连"
+        else:
+            suffix = ""
+        print(f"Web 页面: {len(clients)}{suffix}")
+        _print_web_clients_hint(clients, data.get("directories"))
+        if main and not main_connected:
+            print("  提示: 主页面正在重连宽限期内；可用 nmr main <id> 手动切换。")
     except ConnectionError:
         print("无法连接 Daemon（PID 存在但连接失败）")
 
@@ -436,6 +537,10 @@ def cmd_search(args):
     port = _get_daemon_port()
     sock = _get_daemon_socket_path()
     payload: dict = {"cmd": "search", "query": args.query, "project": _resolve_project(args)}
+    if getattr(args, "target", None):
+        payload["target"] = args.target
+    if getattr(args, "new", False):
+        payload["new"] = True
     try:
         resp = send_command(
             payload,
@@ -449,9 +554,18 @@ def cmd_search(args):
 
     if not resp.get("ok"):
         print(f"错误: {resp.get('error')}")
+        _print_web_clients_hint(resp.get("clients"))
         sys.exit(1)
 
-    print(resp.get("message", ""))
+    if resp.get("new_client_id"):
+        web_port = resp.get("web_port") or get_daemon_web_port() or DEFAULT_WEB_PORT
+        url = resp.get("new_url") or resp.get("url")
+        full_url = f"http://localhost:{web_port}{url}"
+        webbrowser.open_new_tab(full_url)
+        print(f"已在新页面打开: {full_url}")
+        print(f"新页面 id: {resp['new_client_id']}（之后可用 --id 指定）")
+    else:
+        print(resp.get("message", ""))
     try:
         list_resp = send_command(
             {"cmd": "list"},
@@ -490,6 +604,9 @@ def cmd_search(args):
             use_color=use_color,
         )
         print(f"{full}: {body}")
+
+    if not getattr(args, "target", None) and not resp.get("new_client_id") and not resp.get("delivered"):
+        print("（没有可用的主页面，以上结果仅在终端显示）")
 
 def cmd_default(args):
     """Set or show the default project."""
@@ -691,15 +808,20 @@ def cmd_export(args):
 
 
 def cmd_view(args):
-    """Open a source file in web UI, render temp page if unmanaged."""
+    """Open a source file in the main (or specified) browser page."""
     if not _ensure_daemon():
         print("错误: 无法启动 Daemon")
         sys.exit(1)
     src = str(Path(args.file).expanduser().resolve())
     port = _get_daemon_port()
+    payload = {"cmd": "view", "file": src}
+    if getattr(args, "target", None):
+        payload["target"] = args.target
+    if getattr(args, "new", False):
+        payload["new"] = True
     try:
         resp = send_command(
-            {"cmd": "view", "file": src},
+            payload,
             port=port,
             timeout=8,
             socket_path=_get_daemon_socket_path(),
@@ -707,22 +829,66 @@ def cmd_view(args):
     except ConnectionError:
         print("错误: 无法连接 Daemon")
         sys.exit(1)
-    if resp.get("ok"):
-        # 没有已连接的 Web UI（例如 daemon 刚被本次命令拉起）时，
-        # SSE 事件无人接收；直接用系统浏览器打开，一次命令即可看到。
-        url = resp.get("url")
-        if url and not resp.get("delivered"):
-            web_port = (
-                resp.get("web_port") or get_daemon_web_port() or DEFAULT_WEB_PORT
-            )
-            full_url = f"http://localhost:{web_port}{url}"
-            webbrowser.open(full_url)
-            print(f"已在浏览器打开: {full_url}")
-        else:
-            print(resp.get("message", "已发送查看请求"))
-    else:
+    if not resp.get("ok"):
         print(f"错误: {resp.get('error')}")
+        _print_web_clients_hint(resp.get("clients"))
         sys.exit(1)
+
+    web_port = resp.get("web_port") or get_daemon_web_port() or DEFAULT_WEB_PORT
+    if resp.get("new_client_id"):
+        url = resp.get("new_url") or resp.get("url")
+        full_url = f"http://localhost:{web_port}{url}"
+        webbrowser.open_new_tab(full_url)
+        print(f"已在新页面打开: {full_url}")
+        print(f"新页面 id: {resp['new_client_id']}（之后可用 --id 指定）")
+        return
+
+    if resp.get("delivered"):
+        print(resp.get("message", "已发送查看请求"))
+        return
+
+    if getattr(args, "target", None):
+        print(resp.get("message", f"页面 {args.target} 不可用"))
+        _print_web_clients_hint(resp.get("clients"))
+        return
+
+    # 没有可用目标（例如 daemon 刚启动、页面还没重连）时，退回直接开新页面。
+    url = resp.get("url")
+    if url:
+        full_url = f"http://localhost:{web_port}{url}"
+        webbrowser.open_new_tab(full_url)
+        print(f"已在浏览器打开: {full_url}")
+        if resp.get("message"):
+            print(resp.get("message"))
+    else:
+        print(resp.get("message", "没有可用的 Web 页面"))
+
+
+def cmd_main(args):
+    """Show or change the main page used by view/search by default."""
+    if not is_daemon_running():
+        print("Daemon 未运行")
+        sys.exit(1)
+    port = _get_daemon_port()
+    try:
+        resp = send_command(
+            {"cmd": "main", "client": args.client or ""},
+            port=port,
+            timeout=3,
+            socket_path=_get_daemon_socket_path(),
+        )
+    except ConnectionError:
+        print("错误: 无法连接 Daemon")
+        sys.exit(1)
+    if not resp.get("ok"):
+        print(f"错误: {resp.get('error')}")
+        _print_web_clients_hint(resp.get("clients"))
+        sys.exit(1)
+    print(resp.get("message", ""))
+    if not args.client:
+        _print_web_clients_hint(resp.get("clients"))
+        if resp.get("main_client") and not resp.get("main_connected"):
+            print("  主页面正在重连宽限期内。")
 
 
 def cmd_check(args):
@@ -779,11 +945,15 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
 
     start_p = subparsers.add_parser("start", help="启动后台 daemon")
-    start_p.add_argument("--port", type=int, default=DEFAULT_PORT, help="TCP 端口")
-    start_p.add_argument("--web-port", type=int, default=DEFAULT_WEB_PORT, help="Web UI 端口")
-
+    start_p.add_argument("--port", type=int, default=0,
+                         help="TCP 端口（默认 19832；--restart 时默认沿用当前 daemon）")
+    start_p.add_argument("--web-port", type=int, default=0,
+                         help="Web UI 端口（默认 19833；--restart 时默认沿用当前 daemon）")
+    start_p.add_argument("--restart", action="store_true",
+                         help="先停止当前 daemon，再用相同端口启动新实例")
     subparsers.add_parser("stop", help="停止后台 daemon")
-    subparsers.add_parser("status", help="查看 daemon 和监控状态")
+    status_p = subparsers.add_parser("status", help="查看 daemon、项目与 Web 页面状态")
+    status_p.add_argument("--json", action="store_true", help="以 JSON 输出完整状态")
 
     add_p = subparsers.add_parser("add", help="添加目录到监控")
     add_p.add_argument("directory", help="要监控的目录路径")
@@ -827,6 +997,10 @@ def main():
         help="搜索关键词（正则）；grep: 为全局正文块搜索，chapter:/label:/ 等仅当前工程",
     )
     search_p.add_argument("--project", "-p", help="指定工程 (编号或目录名)")
+    search_target = search_p.add_mutually_exclusive_group()
+    search_target.add_argument("--id", dest="target", help="发送到指定页面 id（可用唯一前缀）")
+    search_target.add_argument("--new", action="store_true",
+                               help="在新页面中打开搜索结果，不占用主页面")
     searche_p = subparsers.add_parser("searche", help="搜索并交互选择后进入目录或编辑")
     searche_p.add_argument(
         "query",
@@ -835,6 +1009,10 @@ def main():
     searche_p.add_argument("--project", "-p", help="指定工程 (编号或目录名)")
     view_p = subparsers.add_parser("view", help="在 Web UI 查看指定 md/rst/txt 文件")
     view_p.add_argument("file", help="要查看的 md/rst/txt 文件路径")
+    view_target = view_p.add_mutually_exclusive_group()
+    view_target.add_argument("--id", dest="target", help="发送到指定页面 id（可用唯一前缀）")
+    view_target.add_argument("--new", action="store_true",
+                             help="在新页面中打开，不占用主页面")
 
     check_p = subparsers.add_parser("check", help="检查文件或标准输入中的渲染语法问题")
     check_p.add_argument("file", nargs="?", help="要检查的文件路径（md/rst）。若使用 --stdin 可省略")
@@ -856,6 +1034,10 @@ def main():
     default_p.add_argument("project", nargs="?", default="",
                            help="工程编号或目录名 (省略则查看当前默认)")
 
+    main_p = subparsers.add_parser("main", help="查看或设置主页面（view/search 默认目标）")
+    main_p.add_argument("client", nargs="?", default="",
+                        help="页面 id（可用唯一前缀）；省略则查看当前主页面")
+
     args = parser.parse_args()
     commands = {
         "start": cmd_start,
@@ -871,6 +1053,7 @@ def main():
         "view": cmd_view,
         "check": cmd_check,
         "default": cmd_default,
+        "main": cmd_main,
     }
     handler = commands.get(args.command)
     if handler:

@@ -17,6 +17,8 @@ from pathlib import Path
 import threading
 import time
 
+from notemanager.web_client_js import CLIENT_BOOTSTRAP_JS
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,28 +27,88 @@ logger = logging.getLogger(__name__)
 # not pollute daemon.log with scary tracebacks.
 _EXPECTED_CONN_ERRORS = (ConnectionError, TimeoutError)
 
+
+class WebClient:
+    """One connected browser page (SSE connection) plus routing metadata."""
+
+    __slots__ = ("id", "wfile", "path", "project", "connected_at", "last_active")
+
+    def __init__(self, client_id: str, wfile, path: str, project: int | None, now: float):
+        self.id = client_id
+        self.wfile = wfile
+        self.path = path or "/"
+        self.project = project
+        self.connected_at = now
+        self.last_active = now
+
+
 class EventBroadcaster:
-    """Manages SSE client connections and broadcasts events."""
+    """Manages SSE client connections and targeted/broadcast event delivery."""
 
     def __init__(self):
-        self._clients = []  # list of writable file-like objects
+        self._clients: dict[str, WebClient] = {}
         self._lock = threading.Lock()
 
-    def add_client(self, wfile) -> None:
-        with self._lock:
-            self._clients.append(wfile)
+    def add_client(self, client_id: str, wfile, path: str = "/",
+                   project: int | None = None) -> WebClient:
+        """Register a page, replacing any previous connection with the same id.
 
-    def remove_client(self, wfile) -> None:
+        Replacing (rather than rejecting) makes tab reloads/navigations keep the
+        same logical page and therefore the same main-page role.
+        """
+        now = time.time()
+        client = WebClient(client_id, wfile, path, project, now)
         with self._lock:
-            try:
-                self._clients.remove(wfile)
-            except ValueError:
-                pass
+            self._clients[client_id] = client
+        return client
+
+    def remove_client(self, wfile) -> WebClient | None:
+        """Remove the client owning *wfile*. Old takeover connections are ignored."""
+        with self._lock:
+            for client_id, client in list(self._clients.items()):
+                if client.wfile is wfile:
+                    del self._clients[client_id]
+                    return client
+        return None
+
+    def get_client(self, client_id: str) -> WebClient | None:
+        with self._lock:
+            return self._clients.get(client_id)
+
+    def list_clients(self) -> list[WebClient]:
+        with self._lock:
+            return list(self._clients.values())
 
     def has_clients(self) -> bool:
         """Whether any SSE client (web UI page) is currently connected."""
         with self._lock:
             return bool(self._clients)
+
+    def touch(self, client_id: str, when: float | None = None) -> bool:
+        with self._lock:
+            client = self._clients.get(client_id)
+            if not client:
+                return False
+            client.last_active = time.time() if when is None else when
+            return True
+
+    def send_to(self, client_id: str, event_type: str, data: dict = None) -> bool:
+        """Send one SSE event to a single page. Returns True when written."""
+        payload = json.dumps(data or {}, ensure_ascii=False)
+        message = f"event: {event_type}\ndata: {payload}\n\n"
+        encoded = message.encode("utf-8")
+        with self._lock:
+            client = self._clients.get(client_id)
+            if not client:
+                return False
+            try:
+                client.wfile.write(encoded)
+                client.wfile.flush()
+                client.last_active = time.time()
+                return True
+            except Exception:
+                self._clients.pop(client_id, None)
+                return False
 
     def broadcast(self, event_type: str, data: dict = None) -> None:
         """Send an SSE event to all connected clients."""
@@ -55,14 +117,14 @@ class EventBroadcaster:
         encoded = message.encode("utf-8")
         dead = []
         with self._lock:
-            for wfile in self._clients:
+            for client in self._clients.values():
                 try:
-                    wfile.write(encoded)
-                    wfile.flush()
+                    client.wfile.write(encoded)
+                    client.wfile.flush()
                 except Exception:
-                    dead.append(wfile)
-            for wfile in dead:
-                self._clients.remove(wfile)
+                    dead.append(client.id)
+            for client_id in dead:
+                self._clients.pop(client_id, None)
 
 
 # Global broadcaster instance
@@ -153,14 +215,53 @@ class WebHandler(BaseHTTPRequestHandler):
         if not path.startswith("/api/"):
             self._send_error(404, "Not Found")
             return
+        if not self._origin_allowed():
+            self._send_error(403, "Forbidden")
+            return
         ctype = self.headers.get("Content-Type", "")
         if path == "/api/paste_image" and "multipart/form-data" in ctype.lower():
             self._handle_paste_image_post(ctype)
             return
         self._handle_api_post(path)
 
+    def _origin_allowed(self) -> bool:
+        """Reject cross-origin SSE clients (they could hijack the main page)."""
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        if origin == "null":
+            return False
+        host = self.headers.get("Host")
+        if not host:
+            return False
+        try:
+            return urllib.parse.urlparse(origin).netloc.lower() == host.lower()
+        except ValueError:
+            return False
+
+    def _sse_request_path(self, params: dict) -> str:
+        """Page path sent by the client, falling back to the Referer header."""
+        path = (params.get("path") or [""])[0]
+        if path:
+            return path
+        referer = self.headers.get("Referer") or ""
+        if referer:
+            try:
+                return urllib.parse.urlparse(referer).path or "/"
+            except ValueError:
+                pass
+        return "/"
+
     def _handle_sse(self):
         """Handle SSE connection: keep alive and push events."""
+        if not self._origin_allowed():
+            self._send_error(403, "Forbidden")
+            return
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query or "", keep_blank_values=True)
+        client_id = (params.get("client_id") or [""])[0]
+        path = self._sse_request_path(params)
+
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -168,13 +269,29 @@ class WebHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
-        # Send initial state
-        status = self.daemon_ref.get_status()
-        self._sse_send("init", status.get("data", {}))
-
-        # Register as client
-        broadcaster.add_client(self.wfile)
+        info = self.daemon_ref.register_web_client(self.wfile, client_id, path)
         try:
+            # Send initial state (includes the assigned client id and main role).
+            status = self.daemon_ref.get_status()
+            data = dict(status.get("data", {}))
+            data.update(info)
+            self._sse_send("init", data)
+
+            # SSE is one-way; read the request stream in a helper thread so a
+            # browser tab close/navigation is noticed immediately instead of
+            # waiting for a heartbeat write to fail (which can be delayed by
+            # socket buffers).  This keeps main-page handoff timely.
+            def _watch_client_close():
+                try:
+                    while not self.close_connection:
+                        if not self.rfile.read(1):
+                            break
+                except Exception:
+                    pass
+                self.close_connection = True
+
+            threading.Thread(target=_watch_client_close, daemon=True).start()
+
             # Keep connection alive with heartbeat
             while not self.close_connection:
                 time.sleep(1)
@@ -184,7 +301,7 @@ class WebHandler(BaseHTTPRequestHandler):
                 except Exception:
                     break
         finally:
-            broadcaster.remove_client(self.wfile)
+            self.daemon_ref.unregister_web_client(self.wfile)
             # Mark the connection dead so BaseHTTPRequestHandler.handle() does
             # not loop back into handle_one_request() and read from the broken
             # socket. On Windows that extra read raises ConnectionAbortedError
@@ -250,6 +367,8 @@ class WebHandler(BaseHTTPRequestHandler):
             return
         elif path == "/api/default":
             resp = self.daemon_ref.handle_default(data)
+        elif path == "/api/client_active":
+            resp = self.daemon_ref.touch_web_client(str(data.get("client_id", "")))
         elif path == "/api/save_source":
             try:
                 pj = int(data.get("project", -1))
@@ -944,7 +1063,11 @@ function refreshProjects(data) {{
 }}
 
 // SSE: listen for server-pushed events
-var evtSource = new EventSource('/api/events');
+{CLIENT_BOOTSTRAP_JS}
+var evtSource = window.NM_EVENT_SOURCE;
+if (!evtSource) {{
+    evtSource = new EventSource('/api/events');
+}}
 evtSource.addEventListener('directories_changed', function(e) {{
     var data = JSON.parse(e.data);
     refreshProjects(data);

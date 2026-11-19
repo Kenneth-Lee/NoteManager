@@ -21,6 +21,7 @@ from notemanager.index_body import extract_render_panel_inner_html
 from notemanager.indexer import build_index, extract_rst_index_directives
 from notemanager.indexer import extract_dtags_from_sources
 from notemanager.scanner import is_ignored_path
+from notemanager.web_client_js import CLIENT_BOOTSTRAP_JS
 
 logger = logging.getLogger(__name__)
 
@@ -1229,9 +1230,10 @@ _DEFAULT_JS = """\
             }
         });
     });
+    __NM_CLIENT_BOOTSTRAP__
     (function() {
-        var evtSource;
-        try { evtSource = new EventSource('/api/events'); } catch(e) { return; }
+        var evtSource = window.NM_EVENT_SOURCE;
+        if (!evtSource) return;
         evtSource.addEventListener('cli_search', function(e) {
             var data = JSON.parse(e.data);
             if (data.open_url) {
@@ -1240,12 +1242,13 @@ _DEFAULT_JS = """\
             }
             var query = data.query || '';
             if (!query) return;
-            var parts = window.location.pathname.split('/');
-            if (parts.length > 2 && parts[1] === 'p') {
-                if (data.project !== undefined && parseInt(parts[2], 10) !== data.project) {
-                    window.location.href = '/p/' + data.project + '/?q=' + encodeURIComponent(query);
-                    return;
-                }
+            var parts = window.location.pathname.split('/').filter(function(s) { return s; });
+            var curProject = (parts.length >= 2 && parts[0] === 'p')
+                ? parseInt(parts[1], 10) : null;
+            if (data.project !== undefined && data.project !== null
+                    && curProject !== data.project) {
+                window.location.href = '/p/' + data.project + '/?q=' + encodeURIComponent(query);
+                return;
             }
             searchInput.value = query;
             clearTimeout(debounceTimer);
@@ -1631,3 +1634,6 @@ _DEFAULT_JS = """\
 })();
 
 """
+
+# 共用页面 id/EventSource 引导脚本：维护 window.name 中的 tab id，并上报活跃时间。
+_DEFAULT_JS = _DEFAULT_JS.replace("__NM_CLIENT_BOOTSTRAP__", CLIENT_BOOTSTRAP_JS)
