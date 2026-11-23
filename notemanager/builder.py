@@ -8,6 +8,7 @@ import logging
 import datetime
 from collections.abc import Callable
 from dataclasses import dataclass
+from html import escape as html_escape
 from pathlib import Path
 
 from notemanager.scanner import scan_directory, FileInfo, load_ignore_rules
@@ -764,21 +765,25 @@ def _remove_overview_outputs(html_dir) -> None:
             logger.warning("无法清理旧的概览文件: %s", path)
 
 
-def _ensure_overview_styles(html_dir) -> None:
-    """Refresh static CSS once for projects built before the overview feature."""
-    css_path = html_dir / "_static" / "notemanager.css"
+def _ensure_overview_assets(html_dir) -> None:
+    """Refresh static CSS/JS once for projects built before this feature."""
+    static_dir = html_dir / "_static"
     try:
-        css = css_path.read_text(encoding="utf-8")
+        css = (static_dir / "notemanager.css").read_text(encoding="utf-8")
     except OSError:
         css = ""
-    if ".nm-overview" not in css:
-        _copy_static_assets(html_dir / "_static")
+    try:
+        js = (static_dir / "notemanager.js").read_text(encoding="utf-8")
+    except OSError:
+        js = ""
+    if ".nm-overview" not in css or "nmRevealSidebarDir" not in js:
+        _copy_static_assets(static_dir)
 
 
 def _build_overview_safe(project_root, html_dir, documents) -> dict | None:
     """Build overview data; never let a summary failure break the build."""
     try:
-        _ensure_overview_styles(html_dir)
+        _ensure_overview_assets(html_dir)
         data = overview_mod.build_and_write(project_root, html_dir, documents)
         if data is None:
             _remove_overview_outputs(html_dir)
@@ -821,23 +826,34 @@ def _generate_landing_page(html_dir, documents, ui_plugin=None, overview_data=No
     (html_dir / "index.html").write_text(full_html, encoding="utf-8")
 
 
-def _render_tree(node, depth):
-    """Recursively render a directory tree as nested HTML."""
+def _render_tree(node, depth, parent_path=""):
+    """Recursively render a directory tree as nested HTML.
+
+    Directory <details> elements get stable ids so the overview graph can
+    expand the sidebar to the corresponding directory.
+    """
     parts = []
     parts.append('<ul class="nm-tree">')
     for name, value in node.items():
         if isinstance(value, dict) and "path" not in value:
-            # Directory node
-            open_attr = ' open' if depth < 1 else ''
-            parts.append(f'<li class="nm-dir"><details{open_attr}>')
-            parts.append(f'<summary>{name}</summary>')
-            parts.append(_render_tree(value, depth + 1))
+            child_path = f"{parent_path}/{name}" if parent_path else name
+            dir_id = overview_mod.dir_node_id(child_path)
+            # Directory node: collapsed by default.  Opening every
+            # first-level directory made the sidebar hard to scan.
+            parts.append(
+                f'<li class="nm-dir"><details id="{html_escape(dir_id, quote=True)}">'
+            )
+            parts.append(f'<summary>{html_escape(name)}</summary>')
+            parts.append(_render_tree(value, depth + 1, child_path))
             parts.append('</details></li>')
         else:
             # File node
             path = value["path"]
             title = value["title"]
-            parts.append(f'<li class="nm-file"><a href="{path}">{title}</a></li>')
+            parts.append(
+                f'<li class="nm-file"><a href="{html_escape(path, quote=True)}">'
+                f"{html_escape(title)}</a></li>"
+            )
     parts.append('</ul>')
     return "\n".join(parts)
 
@@ -941,15 +957,13 @@ img { max-width: 100%; }
 .nm-file::before {
     content: "\\1F4C4 ";
 }
+.nm-tree-highlight { background: #fff3cd; border-radius: 3px; }
 
 /* Project overview / topic map */
 .nm-overview { max-width: 900px; }
 .nm-overview-title { margin: 0 0 4px; font-size: 26px; }
 .nm-overview-stats { color: #777; font-size: 13px; margin-bottom: 18px; }
 .nm-overview-heading { font-size: 17px; margin: 20px 0 10px; }
-.nm-treemap { width: 100%; height: auto; display: block; background: #fafafa;
-              border-radius: 8px; margin-bottom: 8px; }
-.nm-treemap a:hover rect { filter: brightness(0.96); }
 .nm-topic-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
                  gap: 14px; }
 .nm-topic-card { background: #fff; border: 1px solid #e5e5e5; border-radius: 8px;
@@ -975,12 +989,52 @@ img { max-width: 100%; }
 .nm-doc-list a:hover { text-decoration: underline; }
 .nm-doc-meta { color: #999; font-size: 11px; }
 .nm-overview-empty { color: #888; font-size: 13px; }
+
+/* Directory graph overview */
+.nm-dir-hint { color: #888; font-size: 12px; margin: -4px 0 10px; }
+.nm-dir-graph-wrap { overflow: auto; max-height: 80vh; background: #fff;
+                     border: 1px solid #e5e5e5; border-radius: 8px; padding: 8px; }
+.nm-dir-graph { display: block; width: 100%; height: auto; margin: 0 auto; }
+.nm-dir-graph-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+                      margin: 4px 0 8px; color: #777; font-size: 12px; }
+.nm-dir-graph-tools input[type=range] { width: 130px; }
+.nm-dir-graph-tools button { padding: 2px 8px; border: 1px solid #bbdefb; border-radius: 4px;
+                             background: #fff; color: #1565c0; cursor: pointer; font-size: 12px; }
+.nm-dir-graph-tools button:hover { background: #e3f2fd; }
+.nm-g-edge { fill: none; stroke: #cfd8dc; stroke-width: 1.4; }
+.nm-g-node circle { transition: filter .12s; }
+.nm-g-node:hover circle { filter: brightness(.95); }
+a.nm-g-node { cursor: pointer; }
 @media (max-width: 700px) {
     .nm-overview-columns { grid-template-columns: 1fr; }
 }
 """
 
 _DEFAULT_JS = """\
+/* Reveal a directory node in the sidebar tree from the overview graph. */
+window.nmRevealSidebarDir = function(id) {
+    var el = document.getElementById(id);
+    if (!el) return false;
+    var node = el;
+    while (node && node !== document.body) {
+        if (node.tagName === 'DETAILS') node.open = true;
+        node = node.parentElement;
+    }
+    var tocBtn = document.getElementById('nm-sidebar-view-toc');
+    if (tocBtn) tocBtn.click();
+    var summary = el.querySelector('summary');
+    if (summary) {
+        summary.classList.remove('nm-tree-highlight');
+        void summary.offsetWidth;
+        summary.classList.add('nm-tree-highlight');
+        setTimeout(function() { summary.classList.remove('nm-tree-highlight'); }, 1800);
+        summary.scrollIntoView({block: 'center'});
+    } else {
+        el.scrollIntoView({block: 'center'});
+    }
+    return false;
+};
+
 /* NoteManager sidebar search */
 (function() {
     (function removeLegacyFulltextUI() {

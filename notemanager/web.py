@@ -4,6 +4,7 @@ Serves a control panel, project HTML files, and SSE event stream.
 """
 
 import email.utils
+import errno
 import json
 import logging
 import os
@@ -780,7 +781,22 @@ def start_web_server(daemon_ref, port: int) -> HTTPServer:
             raise
 
     WebHandler.daemon_ref = daemon_ref
-    server = ReuseThreadingHTTPServer(("127.0.0.1", port), WebHandler)
+    # The old daemon may still be releasing the port during a restart.  Retry
+    # briefly instead of making the new daemon crash with EADDRINUSE.
+    deadline = time.time() + 5.0
+    while True:
+        try:
+            server = ReuseThreadingHTTPServer(("127.0.0.1", port), WebHandler)
+            break
+        except OSError as exc:
+            in_use = exc.errno in (
+                errno.EADDRINUSE,
+                getattr(errno, "WSAEADDRINUSE", 10048),
+            )
+            if in_use and time.time() < deadline:
+                time.sleep(0.2)
+                continue
+            raise
     thread = threading.Thread(target=_serve_with_guard, args=(server,), daemon=True)
     thread.start()
     return server

@@ -20,6 +20,7 @@ from notemanager.daemon import (
     DEFAULT_WEB_PORT,
     DAEMON_ENSURE_WAIT_STEPS,
     _daemon_responded_startup_complete,
+    _pid_exists,
     _load_config,
 )
 from notemanager.protocol import (
@@ -208,10 +209,12 @@ def _restart_daemon(args):
             print("错误: 无法连接 Daemon，无法确认其已停止；请先检查 nmr status")
             sys.exit(1)
 
-        # The stop command only sets the shutdown event; wait for the process
-        # to actually exit so the new daemon can bind the same ports.
+        # The stop command only sets the shutdown event.  daemon.json is
+        # removed during cleanup, before the process has necessarily exited
+        # and released the Web port.  Wait for the actual PID too, not just
+        # for the metadata file to disappear.
         for _ in range(100):  # up to ~10s
-            if not is_daemon_running():
+            if not _pid_exists(pid) and not is_daemon_running():
                 break
             time.sleep(0.1)
         else:

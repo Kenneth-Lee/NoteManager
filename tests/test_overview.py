@@ -40,21 +40,29 @@ def test_full_build_creates_overview_and_topic_page(tmp_path):
     assert "a" in names
     assert "b" in names
     assert "Common" in names
+    assert "a" not in {t["name"] for t in overview["themes"]}
     assert any(d["inlinks"] >= 1 for d in overview["core_docs"])
 
+    tree = overview["directory_tree"]
+    assert tree["dirs"]["a"]["doc_count"] == 2
+    assert tree["dirs"]["a"]["section_count"] > 0
+    assert tree["dirs"]["a"]["files"]
+
     landing = (html_dir / "index.html").read_text(encoding="utf-8")
-    assert "nm-treemap" in landing
+    assert "nm-dir-overview" in landing
+    assert "nm-dir-graph" in landing
+    assert "nm-g-node" in landing
     assert "nm-tree" in landing  # directory tree still in the sidebar
     assert "topics.html" in landing
-    assert "重点主题" in landing
+    assert "主题" in landing
 
     topics_page = (html_dir / "topics.html").read_text(encoding="utf-8")
     assert "nm-topic-section" in topics_page
     assert "a/one.html" in topics_page
     assert "index.html" in topics_page
-    for topic in overview["topics"][:6]:
-        assert f'topics.html#{topic["id"]}' in landing
-        assert f'id="{topic["id"]}"' in topics_page
+    for theme in overview["themes"][:6]:
+        assert f'topics.html#{theme["id"]}' in landing
+        assert f'id="{theme["id"]}"' in topics_page
 
 
 def test_update_and_remove_refresh_overview(tmp_path):
@@ -80,21 +88,36 @@ def test_update_and_remove_refresh_overview(tmp_path):
     assert overview["stats"]["documents"] == 3
     assert "c" not in {t["name"] for t in overview["topics"]}
     # remove_file also rewrites the landing page with a valid overview.
-    assert "nm-treemap" in (html_dir / "index.html").read_text(encoding="utf-8")
+    assert "nm-dir-overview" in (html_dir / "index.html").read_text(encoding="utf-8")
 
 
-def test_treemap_svg_handles_empty_and_many_topics():
+def test_directory_graph_renders_metadata_and_file_sections():
     from notemanager import overview
-    assert overview._treemap_svg({"treemap": []}) == ""
-    items = [
-        {"id": f"t{i}", "name": f"主题{i}", "kind": "tag", "doc_count": i + 1,
-         "weight": float(i + 1)}
-        for i in range(15)
-    ]
-    svg = overview._treemap_svg({"treemap": items})
-    assert "<svg" in svg
-    assert svg.count("<rect") == 15
-    assert "topics.html#t" in svg
+    tree = overview._build_directory_tree(
+        {
+            "a/one.html": {
+                "title": "One", "path": "a/one.html", "chapter_count": 3,
+                "inlinks": 2, "mtime": 0.0,
+            },
+            "a/two.html": {
+                "title": "Two", "path": "a/two.html", "chapter_count": 2,
+                "inlinks": 0, "mtime": 0.0,
+            },
+            "b/three.html": {
+                "title": "Three", "path": "b/three.html", "chapter_count": 1,
+                "inlinks": 1, "mtime": 0.0,
+            },
+        },
+        recent_cutoff=0.0,
+    )
+    html = overview.render_directory_overview({"directory_tree": tree})
+    assert "nm-dir-overview" in html
+    assert "nm-dir-graph" in html
+    assert "nm-g-node" in html
+    assert "a" in html and "b" in html
+    assert "2 篇" in html
+    assert "nmRevealSidebarDir" in html
+    assert "nm-dir-graph" in html
 
 
 def test_removing_last_document_clears_stale_overview(tmp_path):
@@ -114,7 +137,7 @@ def test_removing_last_document_clears_stale_overview(tmp_path):
     assert "NoteManager" in (html_dir / "index.html").read_text(encoding="utf-8")
 
 
-def test_flat_project_uses_cards_instead_of_tiny_treemap(tmp_path):
+def test_flat_project_uses_directory_tree_and_cards(tmp_path):
     root = tmp_path / "flat"
     root.mkdir()
     for i in range(3):
@@ -125,9 +148,21 @@ def test_flat_project_uses_cards_instead_of_tiny_treemap(tmp_path):
     builder.full_build(root)
     html_dir = root / ".NoteManager" / "html"
     overview = _overview(root)
-    assert overview["treemap"] == []
-    assert any(t["kind"] == "document" for t in overview["topics"])
+    assert "treemap" not in overview
+    assert any(t["kind"] == "document" for t in overview["themes"])
     landing = (html_dir / "index.html").read_text(encoding="utf-8")
-    assert "nm-treemap" not in landing
+    assert "nm-dir-overview" not in landing
+    assert "nm-dir-graph" not in landing
     assert "nm-topic-card" in landing
     assert "topics.html" in landing
+
+
+def test_sidebar_tree_is_collapsed_by_default():
+    from notemanager.builder import _render_tree
+    html = _render_tree(
+        {"a": {"x.html": {"path": "a/x.html", "title": "X"}}},
+        0,
+    )
+    assert "<details" in html
+    assert "nm-dir-" in html
+    assert "<details open" not in html

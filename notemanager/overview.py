@@ -11,8 +11,10 @@ import datetime
 import hashlib
 import html
 import json
+import math
 import posixpath
 import re
+import time
 from collections import defaultdict
 from html.parser import HTMLParser
 from pathlib import Path
@@ -21,10 +23,10 @@ from urllib.parse import unquote, urlparse
 from notemanager.index_body import extract_render_panel_inner_html
 
 MAX_TOPICS = 20
-TREEMAP_TOPICS = 12
 MAX_TOPIC_DOCS = 12
 MAX_CORE_DOCS = 8
 MAX_RECENT_DOCS = 6
+RECENT_DAYS = 30
 
 _KIND_LABELS = {
     "directory": "目录",
@@ -45,16 +47,6 @@ _GENERIC_CHAPTERS = {
     "overview", "introduction", "summary", "references", "contents",
     "appendix", "background", "conclusion", "notes",
 }
-
-_COLORS = {
-    "directory": ("#e3f2fd", "#90caf9"),
-    "tag": ("#e8f5e9", "#a5d6a7"),
-    "index": ("#fff3e0", "#ffcc80"),
-    "chapter": ("#f3e5f5", "#ce93d8"),
-    "document": ("#eceff1", "#b0bec5"),
-    "other": ("#f5f5f5", "#cfcfcf"),
-}
-
 
 def _escape(value) -> str:
     return html.escape(str(value or ""), quote=True)
@@ -90,6 +82,101 @@ def _chapter_topic_name(title: str) -> str:
 def _document_topic_name(title: str, path: str) -> str:
     name = _chapter_topic_name(title)
     return name or Path(path).stem
+
+
+def _format_mtime(mtime: float) -> str:
+    if not mtime:
+        return ""
+    try:
+        return datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
+    except (ValueError, OSError):
+        return ""
+
+
+def _new_dir_node(name: str, path: str) -> dict:
+    return {
+        "name": name,
+        "path": path,
+        "dirs": {},
+        "files": [],
+        "doc_count": 0,
+        "section_count": 0,
+        "inlinks": 0,
+        "last_mtime": 0.0,
+        "recent_count": 0,
+        "score": 0.0,
+        "heat": "",
+        "bar_width": 0,
+    }
+
+
+def _build_directory_tree(meta: dict, recent_cutoff: float) -> dict:
+    """Build a directory tree with counts and recency, independent of topics."""
+    root = _new_dir_node("根目录", "")
+
+    for path, m in meta.items():
+        parts = path.split("/")
+        node = root
+        ancestors = [root]
+        for idx, part in enumerate(parts[:-1]):
+            child = node["dirs"].get(part)
+            if child is None:
+                child = _new_dir_node(part, "/".join(parts[: idx + 1]))
+                node["dirs"][part] = child
+            node = child
+            ancestors.append(node)
+
+        mtime = float(m.get("mtime") or 0.0)
+        recent = 1 if mtime >= recent_cutoff else 0
+        file_entry = {
+            "title": m["title"],
+            "path": path,
+            "chapter_count": m["chapter_count"],
+            "inlinks": m["inlinks"],
+            "mtime": mtime,
+            "date": _format_mtime(mtime),
+        }
+        node["files"].append(file_entry)
+        for ancestor in ancestors:
+            ancestor["doc_count"] += 1
+            ancestor["section_count"] += m["chapter_count"]
+            ancestor["inlinks"] += m["inlinks"]
+            ancestor["last_mtime"] = max(ancestor["last_mtime"], mtime)
+            ancestor["recent_count"] += recent
+
+    def finalize(node: dict) -> None:
+        node["dirs"] = dict(sorted(node["dirs"].items()))
+        node["files"].sort(key=lambda f: (f["title"].lower(), f["path"]))
+        node["score"] = (
+            node["doc_count"] * 3.0
+            + node["section_count"] * 0.5
+            + node["inlinks"] * 2.0
+            + node["recent_count"] * 5.0
+        )
+        node["date"] = _format_mtime(node["last_mtime"])
+        for child in node["dirs"].values():
+            finalize(child)
+
+    finalize(root)
+
+    top_dirs = list(root["dirs"].values())
+    max_docs = max((n["doc_count"] for n in top_dirs), default=0)
+    # Highlight the most important top-level directories by rank rather than
+    # an absolute score ratio: a huge directory would otherwise leave every
+    # sibling unhighlighted.
+    ranked = sorted(
+        top_dirs,
+        key=lambda n: (n["score"], n["doc_count"]),
+        reverse=True,
+    )
+    for rank, node in enumerate(ranked):
+        if rank == 0:
+            node["heat"] = "hot"
+        elif rank < 3:
+            node["heat"] = "warm"
+        if max_docs > 0:
+            node["bar_width"] = int(15 + 85 * ((node["doc_count"] / max_docs) ** 0.5))
+    return root
 
 
 def _is_generic_chapter(name: str) -> bool:
@@ -377,7 +464,15 @@ def build_overview(project_root: Path, html_dir: Path, documents: list[dict]) ->
         })
 
     built_topics.sort(key=lambda t: (t["score"], t["doc_count"]), reverse=True)
-    top_topics = built_topics[:MAX_TOPICS]
+    # Directory structure is the primary navigation on the landing page.
+    directory_tree = _build_directory_tree(
+        meta, time.time() - RECENT_DAYS * 86400
+    )
+
+    # Themes are tag/index/chapter/document topics; directory topics are
+    # already represented by the tree above.
+    themes = [t for t in built_topics if t["kind"] != "directory"]
+    top_themes = themes[:MAX_TOPICS]
     more_topics = [
         {
             "id": t["id"],
@@ -386,41 +481,9 @@ def build_overview(project_root: Path, html_dir: Path, documents: list[dict]) ->
             "kind_label": t["kind_label"],
             "doc_count": t["doc_count"],
         }
-        for t in built_topics[MAX_TOPICS:]
+        for t in themes[MAX_TOPICS:]
     ]
-
-    # A treemap needs a handful of comparable structural topics.  For a
-    # flat project where the only entries are one-document topics, a treemap
-    # degenerates into a field of tiny unreadable tiles; use the topic cards
-    # (and the full topics page) instead.
-    structural = [
-        t for t in built_topics if t["kind"] in ("directory", "tag", "index")
-    ]
-    chapter_topics = [
-        t for t in built_topics if t["kind"] == "chapter" and t["doc_count"] >= 2
-    ]
-    treemap_source = structural if len(structural) >= 3 else structural + chapter_topics
-    treemap = []
-    if len(treemap_source) >= 3:
-        for t in treemap_source[:TREEMAP_TOPICS]:
-            treemap.append({
-                "id": t["id"],
-                "name": t["name"],
-                "kind": t["kind"],
-                "kind_label": t["kind_label"],
-                "doc_count": t["doc_count"],
-                "weight": max(float(t["score"]), 1.0),
-                "summary": t["summary"],
-            })
-        if len(treemap_source) > TREEMAP_TOPICS:
-            treemap.append({
-                "id": "",
-                "name": "其他主题",
-                "kind": "other",
-                "kind_label": _kind_label("other"),
-                "doc_count": sum(t["doc_count"] for t in treemap_source[TREEMAP_TOPICS:]),
-                "weight": sum(max(float(t["score"]), 1.0) for t in treemap_source[TREEMAP_TOPICS:]),
-            })
+    top_topics = built_topics[:MAX_TOPICS]
 
     core_docs = []
     for path, m in sorted(meta.items(), key=lambda kv: kv[1]["doc_score"], reverse=True)[:MAX_CORE_DOCS]:
@@ -473,8 +536,9 @@ def build_overview(project_root: Path, html_dir: Path, documents: list[dict]) ->
             "topics": len(built_topics),
         },
         "topics": top_topics,
+        "themes": top_themes,
         "more_topics": more_topics,
-        "treemap": treemap,
+        "directory_tree": directory_tree,
         "core_docs": core_docs,
         "recent_docs": recent_docs,
     }
@@ -498,95 +562,6 @@ def build_and_write(project_root: Path, html_dir: Path, documents: list[dict]) -
     return overview
 
 
-def _binary_layout(items: list[dict], x: float, y: float, w: float, h: float) -> list[tuple[dict, float, float, float, float]]:
-    if not items:
-        return []
-    if len(items) == 1:
-        return [(items[0], x, y, w, h)]
-    total = sum(float(i.get("weight") or 1.0) for i in items)
-    if total <= 0:
-        return []
-    acc = 0.0
-    split = 1
-    for i, item in enumerate(items[:-1], start=1):
-        acc += float(item.get("weight") or 1.0)
-        split = i
-        if acc >= total / 2:
-            break
-    left = items[:split]
-    right = items[split:]
-    left_weight = sum(float(i.get("weight") or 1.0) for i in left)
-    ratio = left_weight / total if total else 0.5
-    if w >= h:
-        lw = w * ratio
-        return (
-            _binary_layout(left, x, y, lw, h)
-            + _binary_layout(right, x + lw, y, w - lw, h)
-        )
-    lh = h * ratio
-    return (
-        _binary_layout(left, x, y, w, lh)
-        + _binary_layout(right, x, y + lh, w, h - lh)
-    )
-
-
-def _treemap_svg(overview: dict) -> str:
-    items = overview.get("treemap") or []
-    if not items:
-        return ""
-    items = sorted(items, key=lambda i: float(i.get("weight") or 1.0), reverse=True)
-    height = 220.0 if len(items) <= 4 else (280.0 if len(items) <= 8 else 320.0)
-    tiles = _binary_layout(items, 0.0, 0.0, 800.0, height)
-    parts = [
-        f'<svg class="nm-treemap" viewBox="0 0 800 {height:.0f}" role="img" '
-        'aria-label="主题地图" preserveAspectRatio="xMidYMid meet">'
-    ]
-    for item, x, y, w, h in tiles:
-        if w < 4 or h < 4:
-            continue
-        kind = str(item.get("kind") or "document")
-        fill, stroke = _COLORS.get(kind, _COLORS["document"])
-        if not item.get("id"):
-            href = "topics.html#more" if overview.get("more_topics") else "topics.html"
-        else:
-            href = f"topics.html#{_escape(item['id'])}"
-        title = f"{item.get('name') or ''}（{item.get('doc_count') or 0} 篇）"
-        parts.append(f'<a href="{href}" class="nm-tm-tile">')
-        parts.append(
-            f'<rect x="{x + 1:.1f}" y="{y + 1:.1f}" width="{max(w - 2, 0):.1f}" '
-            f'height="{max(h - 2, 0):.1f}" rx="4" fill="{fill}" stroke="{stroke}"/>'
-        )
-        parts.append(f"<title>{_escape(title)}</title>")
-        if w >= 72 and h >= 42:
-            name = str(item.get("name") or "")
-            max_chars = max(4, int((w - 16) / 12))
-            if len(name) > max_chars:
-                name = name[:max_chars - 1] + "…"
-            parts.append(
-                f'<text x="{x + 8:.1f}" y="{y + 20:.1f}" font-size="13" '
-                f'font-family="sans-serif" fill="#263238">{_escape(name)}</text>'
-            )
-        if w >= 72 and h >= 60:
-            count = f"{item.get('doc_count') or 0} 篇 · {item.get('kind_label') or ''}"
-            parts.append(
-                f'<text x="{x + 8:.1f}" y="{y + 38:.1f}" font-size="11" '
-                f'font-family="sans-serif" fill="#607d8b">{_escape(count)}</text>'
-            )
-        if w >= 200 and h >= 100:
-            summary = re.sub(r"\s+", " ", str(item.get("summary") or "")).strip()
-            if summary:
-                max_chars = max(8, int((w - 16) / 11))
-                if len(summary) > max_chars:
-                    summary = summary[:max_chars - 1] + "…"
-                parts.append(
-                    f'<text x="{x + 8:.1f}" y="{y + 58:.1f}" font-size="11" '
-                    f'font-family="sans-serif" fill="#546e7a">{_escape(summary)}</text>'
-                )
-        parts.append("</a>")
-    parts.append("</svg>")
-    return "".join(parts)
-
-
 def _doc_list(items: list[dict], limit: int | None = None) -> str:
     out = ['<ul class="nm-overview-doc-list">']
     for doc in items[:limit] if limit else items:
@@ -602,6 +577,326 @@ def _doc_list(items: list[dict], limit: int | None = None) -> str:
         out.append("</li>")
     out.append("</ul>")
     return "".join(out)
+
+
+def dir_node_id(path: str) -> str:
+    """Stable id shared by the radial graph and the sidebar directory tree."""
+    return "nm-dir-" + hashlib.sha1((path or ".").encode("utf-8")).hexdigest()[:10]
+
+
+def _node_radius(node: dict, depth: int, max_docs: int) -> float:
+    if depth == 0:
+        return 28.0
+    docs = max(1, int(node.get("doc_count") or 0))
+    return 8.0 + 22.0 * math.sqrt(docs / max(1, max_docs))
+
+
+def _leaf_counts(tree: dict) -> dict[str, int]:
+    counts: dict[str, int] = {}
+
+    def walk(node: dict) -> int:
+        children = list((node.get("dirs") or {}).values())
+        if children:
+            n = sum(walk(child) for child in children)
+        else:
+            n = 1
+        counts[str(node.get("path") or "")] = n
+        return n
+
+    walk(tree)
+    return counts
+
+
+def _radial_layout(tree: dict) -> tuple[dict, float]:
+    leaf_counts = _leaf_counts(tree)
+    max_docs = max(
+        (int(n.get("doc_count") or 0) for n in _walk_dirs(tree)),
+        default=1,
+    )
+    max_node_r = max(
+        (_node_radius(n, d, max_docs) for n, d in _walk_dirs_with_depth(tree)),
+        default=12.0,
+    )
+    depth_counts: dict[int, int] = {}
+    for _, depth in _walk_dirs_with_depth(tree):
+        depth_counts[depth] = depth_counts.get(depth, 0) + 1
+    max_depth = max(depth_counts, default=0)
+    rings = [0.0]
+    for depth in range(1, max_depth + 1):
+        required = depth_counts.get(depth, 0) * (2 * max_node_r + 12) / (2 * math.pi)
+        if depth == 1:
+            rings.append(max(140.0, required))
+        else:
+            rings.append(max(rings[-1] + 95.0, required))
+    max_ring = rings[-1]
+    size = 2 * (max_ring + max_node_r + 80.0)
+    cx = cy = size / 2
+    positions: dict[str, tuple[float, float, dict, int, float, float]] = {}
+
+    def place(node: dict, angle: float, span: float, depth: int) -> None:
+        radius = rings[depth]
+        x = cx + radius * math.cos(angle)
+        y = cy + radius * math.sin(angle)
+        node_r = _node_radius(node, depth, max_docs)
+        positions[str(node.get("path") or "")] = (x, y, node, depth, node_r, angle)
+        children = list((node.get("dirs") or {}).values())
+        if not children:
+            return
+        n = len(children)
+        gap = min(0.05, span * 0.15 / (n - 1)) if n > 1 else 0.0
+        usable = max(span - gap * (n - 1), 0.001)
+        start = -math.pi / 2 if depth == 0 else angle - span / 2
+        total = sum(leaf_counts[str(c.get("path") or "")] for c in children) or 1
+        cursor = start
+        for child in children:
+            child_path = str(child.get("path") or "")
+            child_span = usable * leaf_counts[child_path] / total
+            child_angle = cursor + child_span / 2
+            place(child, child_angle, child_span, depth + 1)
+            cursor += child_span + gap
+
+    place(tree, -math.pi / 2, 2 * math.pi, 0)
+    return positions, size
+
+
+def _walk_dirs(tree: dict):
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        yield node
+        stack.extend((node.get("dirs") or {}).values())
+
+
+def _walk_dirs_with_depth(tree: dict):
+    stack = [(tree, 0)]
+    while stack:
+        node, depth = stack.pop()
+        yield node, depth
+        stack.extend((child, depth + 1) for child in (node.get("dirs") or {}).values())
+
+
+def _graph_node_colors(node: dict, depth: int) -> tuple[str, str]:
+    if depth == 0:
+        return "#eceff1", "#90a4ae"
+    heat = str(node.get("heat") or "")
+    if heat == "hot":
+        return "#e3f2fd", "#42a5f5"
+    if heat == "warm":
+        return "#f4f9ff", "#90caf9"
+    return "#ffffff", "#cfd8dc"
+
+
+def _node_title(node: dict, depth: int, project: str) -> str:
+    name = project if depth == 0 else str(node.get("name") or "")
+    bits = [
+        f"{name}：{node.get('doc_count', 0)} 篇，"
+        f"{node.get('section_count', 0)} 节"
+    ]
+    if node.get("recent_count"):
+        bits.append(f"近 {RECENT_DAYS} 天 {node['recent_count']} 篇")
+    if node.get("date"):
+        bits.append(f"最近 {node['date']}")
+    if node.get("inlinks"):
+        bits.append(f"被引 {node['inlinks']}")
+    return "；".join(bits)
+
+
+def _render_radial_node(
+    x: float,
+    y: float,
+    node: dict,
+    depth: int,
+    node_r: float,
+    angle: float,
+    project: str,
+) -> str:
+    name = project if depth == 0 else str(node.get("name") or "")
+    fill, stroke = _graph_node_colors(node, depth)
+    node_id = dir_node_id(str(node.get("path") or ""))
+    title = _node_title(node, depth, project)
+    count = str(node.get("doc_count", 0))
+    parts = []
+    if depth == 0:
+        parts.append('<g class="nm-g-node nm-g-root">')
+    else:
+        parts.append(
+            f'<a class="nm-g-node" href="#{node_id}" '
+            f'onclick="return nmRevealSidebarDir(\'{node_id}\')">'
+        )
+    parts.append(f"<title>{_escape(title)}</title>")
+    parts.append(
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{node_r:.1f}" '
+        f'fill="{fill}" stroke="{stroke}"/>'
+    )
+    if node_r >= 12:
+        parts.append(
+            f'<text x="{x:.1f}" y="{y + 3:.1f}" font-size="9" text-anchor="middle" '
+            f'font-family="sans-serif" fill="#546e7a">{_escape(count)}</text>'
+        )
+    if node.get("recent_count"):
+        parts.append(
+            f'<circle cx="{x + node_r * 0.7:.1f}" cy="{y - node_r * 0.7:.1f}" '
+            'r="3" fill="#43a047"/>'
+        )
+    # Labels sit outside the circle so the diameter remains readable.
+    if depth == 0:
+        lx, ly = x, y + node_r + 15
+        anchor = "middle"
+    else:
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+        lx = x + cos_a * (node_r + 6)
+        ly = y + sin_a * (node_r + 6)
+        if cos_a > 0.25:
+            anchor = "start"
+        elif cos_a < -0.25:
+            anchor = "end"
+        else:
+            anchor = "middle"
+    label = name
+    if len(label) > 13:
+        label = label[:12] + "…"
+    parts.append(
+        f'<text x="{lx:.1f}" y="{ly:.1f}" font-size="11" text-anchor="{anchor}" '
+        'dominant-baseline="middle" font-family="sans-serif" fill="#37474f">'
+        f"{_escape(label)}</text>"
+    )
+    parts.append("</a>" if depth else "</g>")
+    return "".join(parts)
+
+
+def _graph_bounds(positions: dict, project: str) -> tuple[float, float, float, float]:
+    """Tight bounding box for circles + outside labels, including padding."""
+    min_x = min_y = float("inf")
+    max_x = max_y = float("-inf")
+    for _, (x, y, node, depth, node_r, angle) in positions.items():
+        min_x = min(min_x, x - node_r)
+        max_x = max(max_x, x + node_r)
+        min_y = min(min_y, y - node_r)
+        max_y = max(max_y, y + node_r)
+
+        name = project if depth == 0 else str(node.get("name") or "")
+        label = name if len(name) <= 13 else name[:12] + "…"
+        text_w = len(label) * 11.0
+        text_h = 12.0
+        if depth == 0:
+            lx, ly = x, y + node_r + 15
+            left, right = lx - text_w / 2, lx + text_w / 2
+        else:
+            cos_a, sin_a = math.cos(angle), math.sin(angle)
+            lx, ly = x + cos_a * (node_r + 6), y + sin_a * (node_r + 6)
+            if cos_a > 0.25:
+                left, right = lx, lx + text_w
+            elif cos_a < -0.25:
+                left, right = lx - text_w, lx
+            else:
+                left, right = lx - text_w / 2, lx + text_w / 2
+        min_x = min(min_x, left)
+        max_x = max(max_x, right)
+        min_y = min(min_y, ly - text_h / 2)
+        max_y = max(max_y, ly + text_h / 2)
+    pad = 16.0
+    return min_x - pad, min_y - pad, (max_x - min_x) + 2 * pad, (max_y - min_y) + 2 * pad
+
+
+def _render_directory_graph(tree: dict, project: str) -> str:
+    positions, _size = _radial_layout(tree)
+    vx, vy, vw, vh = _graph_bounds(positions, project)
+    parts = [
+        '<div class="nm-dir-graph-wrap">',
+        f'<svg class="nm-dir-graph" viewBox="{vx:.0f} {vy:.0f} {vw:.0f} {vh:.0f}" '
+        'role="img" aria-label="目录关系图">',
+    ]
+    # Edges first, clipped to the circle boundaries.
+    for path, (x, y, node, depth, node_r, angle) in positions.items():
+        for child in (node.get("dirs") or {}).values():
+            child_pos = positions.get(str(child.get("path") or ""))
+            if not child_pos:
+                continue
+            cx, cy, _, _, child_r, _ = child_pos
+            dx, dy = cx - x, cy - y
+            dist = math.hypot(dx, dy)
+            if dist <= 0:
+                continue
+            ux, uy = dx / dist, dy / dist
+            x1, y1 = x + ux * (node_r + 1), y + uy * (node_r + 1)
+            x2, y2 = cx - ux * (child_r + 1), cy - uy * (child_r + 1)
+            parts.append(
+                f'<line class="nm-g-edge" x1="{x1:.1f}" y1="{y1:.1f}" '
+                f'x2="{x2:.1f}" y2="{y2:.1f}"/>'
+            )
+    for path, (x, y, node, depth, node_r, angle) in positions.items():
+        parts.append(
+            _render_radial_node(x, y, node, depth, node_r, angle, project)
+        )
+    parts.append("</svg></div>")
+    return "".join(parts)
+
+
+def render_directory_overview(overview: dict | None) -> str:
+    if not overview:
+        return ""
+    tree = overview.get("directory_tree")
+    if not tree:
+        return ""
+    dirs = tree.get("dirs") or {}
+    if not dirs:
+        # A flat project has no directory structure to draw; the sidebar still
+        # lists its root files.
+        return ""
+    project = str(overview.get("project") or "")
+    return (
+        '<section class="nm-dir-overview">'
+        '<h2 class="nm-overview-heading">目录概览</h2>'
+        '<p class="nm-dir-hint">从中心向外展示完整目录层级；圆直径表示文档数，'
+        "蓝色表示重要目录，绿色圆点表示近期修改。点击节点在左侧目录树中展开。</p>"
+        '<div class="nm-dir-graph-tools">'
+        '<label for="nm-dir-graph-scale">比例</label>'
+        '<input id="nm-dir-graph-scale" type="range" min="50" max="300" step="10" value="100">'
+        '<span id="nm-dir-graph-scale-label">100%</span>'
+        '<button id="nm-dir-graph-scale-fit" type="button">适应</button>'
+        '<button id="nm-dir-graph-scale-reset" type="button">重置</button>'
+        "</div>"
+        + _render_directory_graph(tree, project)
+        + "<script>"
+        "(function(){"
+        "var graph=document.querySelector('.nm-dir-graph');"
+        "var wrap=document.querySelector('.nm-dir-graph-wrap');"
+        "var input=document.getElementById('nm-dir-graph-scale');"
+        "var label=document.getElementById('nm-dir-graph-scale-label');"
+        "var fit=document.getElementById('nm-dir-graph-scale-fit');"
+        "var reset=document.getElementById('nm-dir-graph-scale-reset');"
+        "if(!graph||!input||!label||!fit||!reset)return;"
+        "function apply(v){graph.style.width=v+'%';label.textContent=v+'%';}"
+        "function fitValue(){"
+        "var vb=graph.viewBox&&graph.viewBox.baseVal;"
+        "if(!wrap||!vb||!vb.height)return 100;"
+        "var availW=Math.max(200,wrap.clientWidth-16);"
+        "var availH=Math.max(200,window.innerHeight*0.8-16);"
+        "var fitW=Math.min(availW,availH*(vb.width/vb.height));"
+        "return Math.max(50,Math.min(100,Math.round(fitW/availW*100)));"
+        "}"
+        "var saved=null;"
+        "try{saved=localStorage.getItem('nmGraphScale');}catch(e){}"
+        "var initial=saved?parseInt(saved,10):fitValue();"
+        "if(!(initial>=50&&initial<=300))initial=100;"
+        "input.value=String(initial);apply(initial);"
+        "input.addEventListener('input',function(){"
+        "var v=parseInt(input.value,10)||100;apply(v);"
+        "try{localStorage.setItem('nmGraphScale',String(v));}catch(e){}"
+        "});"
+        "fit.addEventListener('click',function(){"
+        "var v=fitValue();apply(v);input.value=String(v);"
+        "try{localStorage.setItem('nmGraphScale',String(v));}catch(e){}"
+        "});"
+        "reset.addEventListener('click',function(){"
+        "apply(100);input.value='100';"
+        "try{localStorage.removeItem('nmGraphScale');}catch(e){}"
+        "});"
+        "})();"
+        "</script>"
+        "</section>"
+    )
 
 
 def render_landing_overview(overview: dict | None) -> str:
@@ -620,15 +915,15 @@ def render_landing_overview(overview: dict | None) -> str:
         f'{stats.get("links", 0)} 条内部链接',
         "</div>",
     ]
-    treemap = _treemap_svg(overview)
-    if treemap:
-        parts.append('<h2 class="nm-overview-heading">主题地图</h2>')
-        parts.append(treemap)
-    topics = overview.get("topics") or []
-    if topics:
-        parts.append('<h2 class="nm-overview-heading">重点主题</h2>')
+    directory_html = render_directory_overview(overview)
+    if directory_html:
+        parts.append(directory_html)
+
+    themes = overview.get("themes") or []
+    if themes:
+        parts.append('<h2 class="nm-overview-heading">主题</h2>')
         parts.append('<div class="nm-topic-grid">')
-        for topic in topics[:6]:
+        for topic in themes[:6]:
             parts.append('<div class="nm-topic-card">')
             parts.append(
                 f'<h3><a href="topics.html#{_escape(topic.get("id"))}">'
@@ -652,10 +947,6 @@ def render_landing_overview(overview: dict | None) -> str:
             parts.append("</div>")
         parts.append("</div>")
         parts.append('<p class="nm-overview-more"><a href="topics.html">查看全部主题 →</a></p>')
-    else:
-        parts.append(
-            '<p class="nm-overview-empty">尚未提取到主题；可以继续使用左侧目录树或搜索。</p>'
-        )
 
     core = overview.get("core_docs") or []
     recent = overview.get("recent_docs") or []
@@ -697,7 +988,7 @@ def render_landing_overview(overview: dict | None) -> str:
 def render_topics_page(overview: dict) -> str:
     project = str(overview.get("project") or "NoteManager")
     stats = overview.get("stats") or {}
-    topics = overview.get("topics") or []
+    topics = overview.get("themes") or []
     more = overview.get("more_topics") or []
     parts = [
         "<!DOCTYPE html>",
@@ -736,11 +1027,14 @@ def render_topics_page(overview: dict) -> str:
         '<div class="nm-topics-stats">',
         f'{stats.get("documents", 0)} 篇文档 · '
         f'{stats.get("chapters", 0)} 个章节 · '
-        f'{stats.get("topics", 0)} 个主题',
+        f'{len(topics)} 个主题',
         "</div>",
     ]
     if not topics:
-        parts.append('<p class="nm-overview-empty">尚未提取到主题。</p>')
+        parts.append(
+            '<p class="nm-overview-empty">当前工程没有独立的标签/章节主题；'
+            '请使用首页的目录概览定位内容。</p>'
+        )
     for topic in topics:
         parts.append(
             f'<section class="nm-topic-section" id="{_escape(topic.get("id"))}">'

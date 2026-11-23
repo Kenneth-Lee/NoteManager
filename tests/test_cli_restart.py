@@ -143,3 +143,26 @@ def test_plain_start_uses_config_ports(monkeypatch):
     cli.cmd_start(SimpleNamespace(restart=False, port=0, web_port=0))
 
     assert created == {"port": 18888, "web_port": 18889}
+
+
+def test_restart_waits_for_old_pid_to_exit(monkeypatch):
+    created = {}
+    checks = {"count": 0}
+
+    _patch_restart(
+        monkeypatch,
+        config={"port": 18888, "web_port": 18889},
+        created=created,
+    )
+
+    def fake_pid_exists(pid):
+        checks["count"] += 1
+        assert pid == 123
+        return checks["count"] < 3
+
+    monkeypatch.setattr(cli, "_pid_exists", fake_pid_exists)
+
+    cli.cmd_start(SimpleNamespace(restart=True, port=0, web_port=0))
+
+    assert checks["count"] >= 3
+    assert created == {"port": 18888, "web_port": 18889}

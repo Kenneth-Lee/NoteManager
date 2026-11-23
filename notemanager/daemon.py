@@ -119,6 +119,7 @@ def _first_search_hit_open_url(project_idx: int, project_dir: Path, query: str) 
 # 父进程等子进程写完索引再返回；首次 full_build 可能远超 1 分钟。
 _DAEMON_PARENT_STARTUP_POLL_S = 0.2
 _DAEMON_PARENT_STARTUP_MAX_STEPS = 6000  # ×0.2s ≈ 20 分钟
+_DAEMON_STARTUP_FAIL_GRACE_STEPS = 50  # ×0.2s ≈ 10s
 
 # CLI `_ensure_daemon` 轮询（与父进程等待同量级，避免 daemon 已在跑但构建未结束）
 DAEMON_ENSURE_WAIT_STEPS = 2400  # ×0.5s ≈ 20 分钟
@@ -2302,6 +2303,10 @@ class NoteManagerDaemon:
         self._tcp_server.shutdown()
         self._tcp_server.server_close()
         self._web_server.shutdown()
+        # shutdown() stops serve_forever() but does not close the listening
+        # socket.  Without server_close() the old process can still hold the
+        # Web port while the parent starts a replacement daemon.
+        self._web_server.server_close()
         with self._lock:
             for observer in self._observers.values():
                 observer.stop()
@@ -2338,6 +2343,19 @@ class NoteManagerDaemon:
                         print(f"Daemon 已启动 (PID: {real_pid})")
                         print(f"Web UI: http://localhost:{self.web_port}")
                         return True
+                    # A child that crashes before writing daemon.json (or is
+                    # removed after its PID dies) must fail fast instead of
+                    # leaving the CLI blocked for the full startup timeout.
+                    if (
+                        step >= _DAEMON_STARTUP_FAIL_GRACE_STEPS
+                        and not DAEMON_FILE.exists()
+                    ):
+                        print(
+                            "Daemon 启动失败：后台进程已退出，请查看 "
+                            f"{HOME_NM_DIR / 'daemon.log'} 末尾的 traceback。",
+                            file=sys.stderr,
+                        )
+                        return False
                     if step > 0 and step % 150 == 0:
                         print(
                             "仍在等待 daemon 完成首次构建与恢复监控…",
@@ -2413,6 +2431,16 @@ class NoteManagerDaemon:
                 print(f"Daemon 已启动 (PID: {proc.pid})")
                 print(f"Web UI: http://localhost:{self.web_port}")
                 return True
+            if (
+                step >= _DAEMON_STARTUP_FAIL_GRACE_STEPS
+                and (not DAEMON_FILE.exists() or proc.poll() is not None)
+            ):
+                print(
+                    "Daemon 启动失败：后台进程已退出，请查看 "
+                    f"{HOME_NM_DIR / 'daemon.log'} 末尾的 traceback。",
+                    file=sys.stderr,
+                )
+                return False
             if step > 0 and step % 150 == 0:
                 print(
                     "仍在等待 daemon 完成首次构建与恢复监控…",
