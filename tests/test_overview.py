@@ -52,6 +52,9 @@ def test_full_build_creates_overview_and_topic_page(tmp_path):
     assert "nm-dir-overview" in landing
     assert "nm-dir-graph" in landing
     assert "nm-g-node" in landing
+    assert "nm-dir-graph-data" in landing
+    assert "nm-dir-back" in landing
+    assert "nm-overview.js" in landing
     assert "nm-tree" in landing  # directory tree still in the sidebar
     assert "topics.html" in landing
     assert "主题" in landing
@@ -117,7 +120,9 @@ def test_directory_graph_renders_metadata_and_file_sections():
     assert "a" in html and "b" in html
     assert "2 篇" in html
     assert "nmRevealSidebarDir" in html
-    assert "nm-dir-graph" in html
+    assert "nm-dir-graph-data" in html
+    assert "nm-dir-back" in html
+    assert "nm-dir-graph-scale" in html
 
 
 def test_removing_last_document_clears_stale_overview(tmp_path):

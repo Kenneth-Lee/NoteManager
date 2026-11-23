@@ -833,6 +833,24 @@ def _render_directory_graph(tree: dict, project: str) -> str:
     return "".join(parts)
 
 
+def _compact_dir_node(node: dict, name: str) -> dict:
+    return {
+        "id": dir_node_id(str(node.get("path") or "")),
+        "name": name,
+        "path": str(node.get("path") or ""),
+        "doc_count": int(node.get("doc_count") or 0),
+        "section_count": int(node.get("section_count") or 0),
+        "recent_count": int(node.get("recent_count") or 0),
+        "date": str(node.get("date") or ""),
+        "inlinks": int(node.get("inlinks") or 0),
+        "heat": str(node.get("heat") or ""),
+        "children": [
+            _compact_dir_node(child, str(child.get("name") or ""))
+            for child in (node.get("dirs") or {}).values()
+        ],
+    }
+
+
 def render_directory_overview(overview: dict | None) -> str:
     if not overview:
         return ""
@@ -845,11 +863,22 @@ def render_directory_overview(overview: dict | None) -> str:
         # lists its root files.
         return ""
     project = str(overview.get("project") or "")
+    graph_data = _compact_dir_node(tree, project)
+    graph_json = json.dumps(graph_data, ensure_ascii=False, separators=(",", ":")).replace(
+        "<", "\\u003c"
+    )
     return (
         '<section class="nm-dir-overview">'
         '<h2 class="nm-overview-heading">目录概览</h2>'
-        '<p class="nm-dir-hint">从中心向外展示完整目录层级；圆直径表示文档数，'
-        "蓝色表示重要目录，绿色圆点表示近期修改。点击节点在左侧目录树中展开。</p>"
+        '<p class="nm-dir-hint">从中心向外展示目录层级；圆直径表示文档数，'
+        "蓝色表示重要目录，绿色圆点表示近期修改。点击有子目录的节点可将它设为新的根；"
+        "叶子节点打开侧边栏，返回按钮回到上一视图。</p>"
+        '<div class="nm-dir-nav">'
+        '<button id="nm-dir-back" type="button" disabled>← 返回</button>'
+        '<button id="nm-dir-root" type="button" disabled>⌂ 根</button>'
+        '<span id="nm-dir-breadcrumb"></span>'
+        '<button id="nm-dir-open-sidebar" type="button">侧栏定位</button>'
+        "</div>"
         '<div class="nm-dir-graph-tools">'
         '<label for="nm-dir-graph-scale">比例</label>'
         '<input id="nm-dir-graph-scale" type="range" min="50" max="300" step="10" value="100">'
@@ -858,44 +887,8 @@ def render_directory_overview(overview: dict | None) -> str:
         '<button id="nm-dir-graph-scale-reset" type="button">重置</button>'
         "</div>"
         + _render_directory_graph(tree, project)
-        + "<script>"
-        "(function(){"
-        "var graph=document.querySelector('.nm-dir-graph');"
-        "var wrap=document.querySelector('.nm-dir-graph-wrap');"
-        "var input=document.getElementById('nm-dir-graph-scale');"
-        "var label=document.getElementById('nm-dir-graph-scale-label');"
-        "var fit=document.getElementById('nm-dir-graph-scale-fit');"
-        "var reset=document.getElementById('nm-dir-graph-scale-reset');"
-        "if(!graph||!input||!label||!fit||!reset)return;"
-        "function apply(v){graph.style.width=v+'%';label.textContent=v+'%';}"
-        "function fitValue(){"
-        "var vb=graph.viewBox&&graph.viewBox.baseVal;"
-        "if(!wrap||!vb||!vb.height)return 100;"
-        "var availW=Math.max(200,wrap.clientWidth-16);"
-        "var availH=Math.max(200,window.innerHeight*0.8-16);"
-        "var fitW=Math.min(availW,availH*(vb.width/vb.height));"
-        "return Math.max(50,Math.min(100,Math.round(fitW/availW*100)));"
-        "}"
-        "var saved=null;"
-        "try{saved=localStorage.getItem('nmGraphScale');}catch(e){}"
-        "var initial=saved?parseInt(saved,10):fitValue();"
-        "if(!(initial>=50&&initial<=300))initial=100;"
-        "input.value=String(initial);apply(initial);"
-        "input.addEventListener('input',function(){"
-        "var v=parseInt(input.value,10)||100;apply(v);"
-        "try{localStorage.setItem('nmGraphScale',String(v));}catch(e){}"
-        "});"
-        "fit.addEventListener('click',function(){"
-        "var v=fitValue();apply(v);input.value=String(v);"
-        "try{localStorage.setItem('nmGraphScale',String(v));}catch(e){}"
-        "});"
-        "reset.addEventListener('click',function(){"
-        "apply(100);input.value='100';"
-        "try{localStorage.removeItem('nmGraphScale');}catch(e){}"
-        "});"
-        "})();"
-        "</script>"
-        "</section>"
+        + f'<script type="application/json" id="nm-dir-graph-data">{graph_json}</script>'
+        + "</section>"
     )
 
 

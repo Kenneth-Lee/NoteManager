@@ -704,6 +704,7 @@ _RUNTIME_STATIC_TOP_LEVEL = {
     "notemanager.js",
     "nm-editor.js",
     "nm-external-editor.js",
+    "nm-overview.js",
     "preformatted.css",
     "katex.min.css",
     "katex.min.js",
@@ -776,7 +777,15 @@ def _ensure_overview_assets(html_dir) -> None:
         js = (static_dir / "notemanager.js").read_text(encoding="utf-8")
     except OSError:
         js = ""
-    if ".nm-overview" not in css or "nmRevealSidebarDir" not in js:
+    try:
+        overview_js = (static_dir / "nm-overview.js").read_text(encoding="utf-8")
+    except OSError:
+        overview_js = ""
+    if (
+        ".nm-overview" not in css
+        or "nmRevealSidebarDir" not in js
+        or "Radial directory graph" not in overview_js
+    ):
         _copy_static_assets(static_dir)
 
 
@@ -821,7 +830,7 @@ def _generate_landing_page(html_dir, documents, ui_plugin=None, overview_data=No
         "index.html",
         toc=tree_html,
         extra_css_files=ui_plugin.css_files,
-        extra_js_files=ui_plugin.js_files,
+        extra_js_files=list(ui_plugin.js_files) + ["nm-overview.js"],
     )
     (html_dir / "index.html").write_text(full_html, encoding="utf-8")
 
@@ -995,6 +1004,17 @@ img { max-width: 100%; }
 .nm-dir-graph-wrap { overflow: auto; max-height: 80vh; background: #fff;
                      border: 1px solid #e5e5e5; border-radius: 8px; padding: 8px; }
 .nm-dir-graph { display: block; width: 100%; height: auto; margin: 0 auto; }
+.nm-dir-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+              margin: 4px 0; color: #777; font-size: 12px; }
+.nm-dir-nav button { padding: 2px 8px; border: 1px solid #bbdefb; border-radius: 4px;
+                     background: #fff; color: #1565c0; cursor: pointer; font-size: 12px; }
+.nm-dir-nav button:hover:not(:disabled) { background: #e3f2fd; }
+.nm-dir-nav button:disabled { opacity: .45; cursor: default; }
+#nm-dir-breadcrumb { margin-left: 4px; }
+.nm-crumb { border: 0; background: none; color: #1565c0; cursor: pointer;
+            font: inherit; padding: 0; }
+button.nm-crumb:hover { text-decoration: underline; }
+.nm-crumb-sep { color: #bbb; }
 .nm-dir-graph-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
                       margin: 4px 0 8px; color: #777; font-size: 12px; }
 .nm-dir-graph-tools input[type=range] { width: 130px; }
