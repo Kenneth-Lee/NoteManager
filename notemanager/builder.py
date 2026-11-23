@@ -22,6 +22,7 @@ from notemanager.indexer import build_index, extract_rst_index_directives
 from notemanager.indexer import extract_dtags_from_sources
 from notemanager.scanner import is_ignored_path
 from notemanager.web_client_js import CLIENT_BOOTSTRAP_JS
+from notemanager import overview as overview_mod
 
 logger = logging.getLogger(__name__)
 
@@ -172,9 +173,12 @@ def full_build(
     # Copy project assets (images, etc.) to html directory
     _copy_project_assets(project_root, html_dir)
 
+    # Generate the project overview/topic map (best effort).
+    overview_data = _build_overview_safe(project_root, html_dir, documents)
+
     # Generate landing page
     p("  生成首页与状态…")
-    _generate_landing_page(html_dir, documents, ui_plugin)
+    _generate_landing_page(html_dir, documents, ui_plugin, overview_data)
 
     # Write status
     _write_status(
@@ -296,7 +300,8 @@ def update_file(
     )
 
     # Update landing page
-    _generate_landing_page(html_dir, documents, ui_plugin)
+    overview_data = _build_overview_safe(project_root, html_dir, documents)
+    _generate_landing_page(html_dir, documents, ui_plugin, overview_data)
 
     # Update status
     _write_status(
@@ -327,6 +332,8 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
     if html_file.exists():
         html_file.unlink()
     logger.info("已删除: %s", html_rel)
+
+    ui_plugin = _load_ui_plugin_bundle(project_root)
 
     # Re-scan and rebuild index
     files = scan_directory(project_root)
@@ -362,7 +369,8 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
         encoding="utf-8",
     )
 
-    _generate_landing_page(html_dir, documents)
+    overview_data = _build_overview_safe(project_root, html_dir, documents)
+    _generate_landing_page(html_dir, documents, ui_plugin, overview_data)
     _write_status(
         nm_dir,
         len(files),
@@ -746,8 +754,46 @@ def _copy_project_assets(project_root, html_dir):
             shutil.copy2(path, dest)
 
 
-def _generate_landing_page(html_dir, documents, ui_plugin: UiPluginBundle):
-    """Generate a top-level index.html with directory tree navigation."""
+def _remove_overview_outputs(html_dir) -> None:
+    for path in (html_dir / "topics.html", html_dir / "_index" / "overview.json"):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            logger.warning("无法清理旧的概览文件: %s", path)
+
+
+def _ensure_overview_styles(html_dir) -> None:
+    """Refresh static CSS once for projects built before the overview feature."""
+    css_path = html_dir / "_static" / "notemanager.css"
+    try:
+        css = css_path.read_text(encoding="utf-8")
+    except OSError:
+        css = ""
+    if ".nm-overview" not in css:
+        _copy_static_assets(html_dir / "_static")
+
+
+def _build_overview_safe(project_root, html_dir, documents) -> dict | None:
+    """Build overview data; never let a summary failure break the build."""
+    try:
+        _ensure_overview_styles(html_dir)
+        data = overview_mod.build_and_write(project_root, html_dir, documents)
+        if data is None:
+            _remove_overview_outputs(html_dir)
+        return data
+    except Exception:
+        logger.exception("生成主题概览失败")
+        _remove_overview_outputs(html_dir)
+        return None
+
+
+def _generate_landing_page(html_dir, documents, ui_plugin=None, overview_data=None):
+    """Generate the landing page: project overview + sidebar directory tree."""
+    if ui_plugin is None:
+        ui_plugin = UiPluginBundle(css_files=[], js_files=[])
+
     # Build a nested tree from flat document paths
     tree = {}
     for doc in sorted(documents, key=lambda d: d["path"]):
@@ -758,10 +804,15 @@ def _generate_landing_page(html_dir, documents, ui_plugin: UiPluginBundle):
         node[parts[-1]] = doc
 
     tree_html = _render_tree(tree, depth=0)
-    body = '<h1>NoteManager</h1>'
+    body = overview_mod.render_landing_overview(overview_data)
+    project_name = ""
+    if overview_data:
+        project_name = str(overview_data.get("project") or "")
+    if not project_name:
+        project_name = html_dir.parent.parent.name or "NoteManager"
     full_html = wrap_html(
         body,
-        "NoteManager",
+        project_name,
         "index.html",
         toc=tree_html,
         extra_css_files=ui_plugin.css_files,
@@ -889,6 +940,43 @@ img { max-width: 100%; }
 .nm-file a:hover { text-decoration: underline; }
 .nm-file::before {
     content: "\\1F4C4 ";
+}
+
+/* Project overview / topic map */
+.nm-overview { max-width: 900px; }
+.nm-overview-title { margin: 0 0 4px; font-size: 26px; }
+.nm-overview-stats { color: #777; font-size: 13px; margin-bottom: 18px; }
+.nm-overview-heading { font-size: 17px; margin: 20px 0 10px; }
+.nm-treemap { width: 100%; height: auto; display: block; background: #fafafa;
+              border-radius: 8px; margin-bottom: 8px; }
+.nm-treemap a:hover rect { filter: brightness(0.96); }
+.nm-topic-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+                 gap: 14px; }
+.nm-topic-card { background: #fff; border: 1px solid #e5e5e5; border-radius: 8px;
+                 padding: 12px 14px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.nm-topic-card h3 { font-size: 15px; margin: 0 0 3px; }
+.nm-topic-card h3 a { color: #1565c0; text-decoration: none; }
+.nm-topic-card h3 a:hover { text-decoration: underline; }
+.nm-topic-meta { font-size: 11px; color: #888; margin-bottom: 6px; }
+.nm-topic-summary { font-size: 12px; color: #666; margin: 6px 0; }
+.nm-overview-doc-list { list-style: none; padding: 0; margin: 6px 0 0; }
+.nm-overview-doc-list li { margin: 5px 0; font-size: 13px; }
+.nm-overview-doc-list a { color: #0066cc; text-decoration: none; }
+.nm-overview-doc-list a:hover { text-decoration: underline; }
+.nm-overview-snippet { font-size: 11px; color: #888; margin-top: 2px; }
+.nm-more-link { font-size: 12px; color: #0066cc; text-decoration: none; display: inline-block; margin-top: 6px; }
+.nm-overview-more { margin-top: 10px; font-size: 13px; }
+.nm-overview-more a { color: #0066cc; text-decoration: none; }
+.nm-overview-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 8px; }
+.nm-overview-column { min-width: 0; }
+.nm-doc-list { list-style: none; padding: 0; margin: 0; }
+.nm-doc-list li { font-size: 13px; margin: 6px 0; overflow-wrap: anywhere; }
+.nm-doc-list a { color: #0066cc; text-decoration: none; }
+.nm-doc-list a:hover { text-decoration: underline; }
+.nm-doc-meta { color: #999; font-size: 11px; }
+.nm-overview-empty { color: #888; font-size: 13px; }
+@media (max-width: 700px) {
+    .nm-overview-columns { grid-template-columns: 1fr; }
 }
 """
 

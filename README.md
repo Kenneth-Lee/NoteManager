@@ -290,6 +290,19 @@ nmr start --restart
 - 需要回到管理界面时，在浏览器地址栏打开 http://localhost:19833/ 即可
 - 进入具体文档后，在「源文件」页签可用内置编辑器修改 `.md`/`.rst`/`.txt`，**保存并刷新渲染**；粘贴剪贴板中的截图可自动保存到源文件同目录并插入引用（详见 `docs/web-source-editor.md`）
 
+### 项目主页概览 / 主题地图
+
+每个工程构建后会生成一个概览主页：
+
+- **主题地图**：用可点击的 treemap 展示目录、标签、索引词等主题；
+- **重点主题**：每个主题给出篇数、章节数、摘录和代表文档；
+- **核心文档 / 最近更新**：按入链、章节数和修改时间排序；
+- **主题页** `topics.html`：列出主题下的文档、章节和摘录；
+- 左侧目录树和搜索仍然保留。
+
+概览完全在构建时生成，离线可用，不依赖 LLM。`full_build`、增量更新和删除
+文件后都会同步刷新。设计细节见 `docs/project-overview.md`。
+
 ### 扫描格式与忽略规则
 
 - 受管理项目默认扫描并渲染：`.md`、`.rst`、`.txt`（txt 按段落简单渲染）。
@@ -311,12 +324,16 @@ nmr start --restart
 ```
 .NoteManager/
 ├── html/                   # 渲染后的 HTML，保持原目录结构
-├── index/
-│   ├── search_index.json   # 全文搜索索引
-│   └── ref_labels.json     # 交叉引用标签映射
-├── static/
-│   ├── notemanager.css
-│   └── notemanager.js
+│   ├── index.html          # 项目概览 / 主题地图主页
+│   ├── topics.html         # 全部主题页
+│   ├── _index/
+│   │   ├── search_index.json
+│   │   ├── dtag_index.json
+│   │   ├── ref_labels.json
+│   │   └── overview.json   # 概览数据
+│   └── _static/
+│       ├── notemanager.css
+│       └── notemanager.js
 └── status.json
 ```
 

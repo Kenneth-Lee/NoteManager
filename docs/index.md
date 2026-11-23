@@ -10,3 +10,4 @@
 * [解释搜索文本的逻辑](搜索策略说明.md)
 * [AI写的网页内置的源代码编辑器](web-source-editor.md)
 * [配置文件编辑器设计](config-file-editor.md)
+* [项目主页概览 / 主题地图设计](project-overview.md)
