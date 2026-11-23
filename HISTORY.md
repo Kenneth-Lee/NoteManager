@@ -21,6 +21,8 @@
 - 启动时读取配置中的 `port` / `web_port` / `transport` / `socket_path`；
   CLI 参数只覆盖本次运行，不写回文件
 - SSE 增加同源校验；页面通过 `/api/client_active` 上报活跃时间
+- 文档页新增「文档关系」：被引用/引用/相关文档，以及孤立文档标记；
+  基于内部链接、标签、章节标题和词项相似度，完全构建时生成，不依赖 LLM
 - 修复 `nmr start --restart` 偶发 `Address already in use` / 长时间等待：
   停止时关闭 Web listening socket，重启等待旧 PID 真正退出，
   后台子进程启动失败时快速报错，Web 端口绑定短暂重试

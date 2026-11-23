@@ -24,6 +24,7 @@ from notemanager.indexer import extract_dtags_from_sources
 from notemanager.scanner import is_ignored_path
 from notemanager.web_client_js import CLIENT_BOOTSTRAP_JS
 from notemanager import overview as overview_mod
+from notemanager import relations as relations_mod
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,9 @@ def full_build(
         encoding="utf-8",
     )
 
+    # Build backlinks / related documents for the per-page panel.
+    _build_relations_safe(html_dir, documents)
+
     # Copy static assets
     p("  写入 _static（notemanager.js / css 等）…")
     _copy_static_assets(static_dir)
@@ -300,6 +304,8 @@ def update_file(
         encoding="utf-8",
     )
 
+    _build_relations_safe(html_dir, documents)
+
     # Update landing page
     overview_data = _build_overview_safe(project_root, html_dir, documents)
     _generate_landing_page(html_dir, documents, ui_plugin, overview_data)
@@ -369,6 +375,8 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
         json.dumps(dtag_index, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+    _build_relations_safe(html_dir, documents)
 
     overview_data = _build_overview_safe(project_root, html_dir, documents)
     _generate_landing_page(html_dir, documents, ui_plugin, overview_data)
@@ -705,6 +713,7 @@ _RUNTIME_STATIC_TOP_LEVEL = {
     "nm-editor.js",
     "nm-external-editor.js",
     "nm-overview.js",
+    "nm-relations.js",
     "preformatted.css",
     "katex.min.css",
     "katex.min.js",
@@ -756,6 +765,14 @@ def _copy_project_assets(project_root, html_dir):
             shutil.copy2(path, dest)
 
 
+def _build_relations_safe(html_dir, documents) -> dict | None:
+    try:
+        return relations_mod.build_and_write(html_dir, documents)
+    except Exception:
+        logger.exception("生成文档关系失败")
+        return None
+
+
 def _remove_overview_outputs(html_dir) -> None:
     for path in (html_dir / "topics.html", html_dir / "_index" / "overview.json"):
         try:
@@ -781,10 +798,15 @@ def _ensure_overview_assets(html_dir) -> None:
         overview_js = (static_dir / "nm-overview.js").read_text(encoding="utf-8")
     except OSError:
         overview_js = ""
+    try:
+        relations_js = (static_dir / "nm-relations.js").read_text(encoding="utf-8")
+    except OSError:
+        relations_js = ""
     if (
         ".nm-overview" not in css
         or "nmRevealSidebarDir" not in js
         or "Radial directory graph" not in overview_js
+        or "backlinks / related documents" not in relations_js
     ):
         _copy_static_assets(static_dir)
 
@@ -998,6 +1020,25 @@ img { max-width: 100%; }
 .nm-doc-list a:hover { text-decoration: underline; }
 .nm-doc-meta { color: #999; font-size: 11px; }
 .nm-overview-empty { color: #888; font-size: 13px; }
+
+/* Document backlinks / related documents */
+.nm-related-panel { margin-top: 36px; padding-top: 16px; border-top: 1px solid #e5e5e5; }
+.nm-related-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.nm-related-heading h2 { font-size: 17px; margin: 0; }
+.nm-related-orphan { font-size: 11px; color: #8d6e63; background: #efebe9;
+                     border: 1px solid #d7ccc8; border-radius: 8px; padding: 1px 7px; }
+.nm-related-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+                   gap: 16px; align-items: start; }
+.nm-related-col h3 { font-size: 13px; margin: 0 0 6px; color: #607d8b; }
+.nm-related-col ul { list-style: none; padding: 0; margin: 0; }
+.nm-related-col li { font-size: 13px; margin: 7px 0; overflow-wrap: anywhere; }
+.nm-related-col a { color: #0066cc; text-decoration: none; }
+.nm-related-col a:hover { text-decoration: underline; }
+.nm-related-snippet { font-size: 11px; color: #999; margin-top: 2px; line-height: 1.45; }
+.nm-related-empty { font-size: 12px; color: #aaa; margin: 4px 0; }
+@media (max-width: 800px) {
+    .nm-related-grid { grid-template-columns: 1fr; }
+}
 
 /* Directory graph overview */
 .nm-dir-hint { color: #888; font-size: 12px; margin: -4px 0 10px; }

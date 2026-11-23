@@ -426,6 +426,10 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <div class="nm-tab-panels">
 <div id="nm-panel-render" class="nm-tab-panel active">
 {body}
+<div id="nm-related" class="nm-related"
+     data-nm-related-src="{prefix}_index/relations.json"
+     data-nm-related-path="{_escape(str(html_rel_path))}"
+     data-nm-related-prefix="{prefix}"></div>
 </div>
 <div id="nm-panel-source" class="nm-tab-panel nm-source-panel">
 {source_panel_inner}
@@ -442,6 +446,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 {cm_foot}
 <script src="{prefix}_static/notemanager.js?v={asset_version}"></script>
 <script src="{prefix}_static/nm-external-editor.js?v={asset_version}"></script>
+<script src="{prefix}_static/nm-relations.js?v={asset_version}"></script>
 <script src="{prefix}_static/katex.min.js"></script>
 <script src="{prefix}_static/katex-auto-render.min.js"></script>
 <script src="{prefix}_static/mermaid.min.js"></script>
