@@ -29,7 +29,7 @@ def test_open_editor_for_managed_source(monkeypatch, tmp_path):
         return {"ok": True, "editor": "gvim", "file": str(path)}
 
     monkeypatch.setattr(editor_launcher, "open_in_editor", fake_open)
-    monkeypatch.setattr("notemanager.daemon._load_config", lambda: {"editor": ["gvim", "{file}"]})
+    daemon.config["editor"] = ["gvim", "{file}"]
 
     result = daemon.open_editor(
         {"kind": "managed", "project": 0, "source_rel_path": "note.md"}
@@ -68,7 +68,6 @@ def test_open_editor_for_temp_page(monkeypatch, tmp_path):
     temp_dir = tmp_path / "temp_views"
     monkeypatch.setattr(daemon, "get_temp_view_dir", lambda: temp_dir)
     monkeypatch.setattr(editor_launcher, "open_in_editor", lambda *a: {"ok": True})
-    monkeypatch.setattr("notemanager.daemon._load_config", lambda: {})
 
     url = daemon._render_temp_view(source)
     key = Path(url).stem

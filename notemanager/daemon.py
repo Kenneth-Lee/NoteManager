@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import secrets
+import socket
 import socketserver
 import subprocess
 import sys
@@ -31,6 +32,7 @@ from notemanager.watcher import suppress_path
 from notemanager.web import broadcaster, notify_event
 from notemanager.indexer import filter_search_documents
 from notemanager import editor_launcher
+from notemanager import config_store
 from notemanager.renderer.rst_renderer import render_rst
 from notemanager.renderer.md_renderer import render_md
 from notemanager.renderer.txt_renderer import render_txt
@@ -124,23 +126,97 @@ DAEMON_ENSURE_WAIT_STEPS = 2400  # ×0.5s ≈ 20 分钟
 # Global config directory
 HOME_NM_DIR = Path.home() / ".NoteManager"
 CONFIG_FILE = HOME_NM_DIR / "config.json"
+CONFIG_BACKUP_FILE = HOME_NM_DIR / "config.json.bak"
 DAEMON_FILE = HOME_NM_DIR / "daemon.json"
+
+
+def _default_config() -> dict:
+    return {
+        "directories": [],
+        "port": DEFAULT_PORT,
+        "web_port": DEFAULT_WEB_PORT,
+    }
 
 
 def _load_config() -> dict:
     """Load daemon config from ~/.NoteManager/config.json."""
     if not CONFIG_FILE.exists():
-        return {"directories": [], "port": DEFAULT_PORT}
-    return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        return _default_config()
+    data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise config_store.ConfigValidationError("配置文件顶层必须是 JSON 对象")
+    return data
 
 
-def _save_config(config: dict) -> None:
-    """Save daemon config."""
-    HOME_NM_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(
-        json.dumps(config, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+def _read_config_for_write() -> dict:
+    text, _ = config_store.read_text(CONFIG_FILE)
+    if text is None:
+        return _default_config()
+    return config_store.parse_config_text(text)
+
+
+def _config_file_mode() -> int:
+    try:
+        return CONFIG_FILE.stat().st_mode & 0o777
+    except OSError:
+        return 0o600
+
+
+def _write_config_data(config: dict) -> None:
+    """Write a full config dict; caller holds CONFIG_WRITE_LOCK."""
+    config_store.write_text_atomic(
+        CONFIG_FILE, config_store.dump_config(config), mode=_config_file_mode(),
     )
+
+
+def _backup_config() -> Path | None:
+    return config_store.backup_file(CONFIG_FILE, CONFIG_BACKUP_FILE)
+
+
+def _mutate_config_file(mutator) -> dict | None:
+    """Read the current file, apply *mutator*, and write it back atomically.
+
+    Runtime operations (add/remove/default) use this instead of writing their
+    possibly stale in-memory config, so a config-editor save is not clobbered.
+    """
+    with config_store.CONFIG_WRITE_LOCK:
+        try:
+            current = _read_config_for_write()
+        except (OSError, config_store.ConfigValidationError) as e:
+            logger.error("读取配置文件失败，未写入: %s", e)
+            return None
+        updated = mutator(current)
+        if updated is None:
+            updated = current
+        try:
+            _backup_config()
+            _write_config_data(updated)
+        except OSError as e:
+            logger.error("写入配置文件失败: %s", e)
+            return None
+        return updated
+
+
+def _cfg_add_directory(cfg: dict, directory: str) -> dict:
+    dirs = cfg.get("directories")
+    if not isinstance(dirs, list):
+        dirs = []
+    if directory not in dirs:
+        dirs.append(directory)
+    cfg["directories"] = dirs
+    return cfg
+
+
+def _cfg_remove_directory(cfg: dict, directory: str) -> dict:
+    dirs = cfg.get("directories")
+    if isinstance(dirs, list):
+        cfg["directories"] = [d for d in dirs if d != directory]
+    return cfg
+
+
+def _cfg_set_default(cfg: dict, default_project: str) -> dict:
+    cfg["default_project"] = default_project
+    return cfg
 
 
 def _write_daemon_info(pid: int, port: int, web_port: int,
@@ -161,12 +237,22 @@ def _write_daemon_info(pid: int, port: int, web_port: int,
 
 
 def _remove_daemon_info() -> None:
-    """Remove daemon runtime info on shutdown."""
+    """Remove daemon runtime info and the actual Unix socket (if any)."""
+    info: dict = {}
     if DAEMON_FILE.exists():
-        DAEMON_FILE.unlink()
-    if use_unix_socket():
         try:
-            DEFAULT_UNIX_SOCKET.unlink(missing_ok=True)
+            info = json.loads(DAEMON_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            info = {}
+        try:
+            DAEMON_FILE.unlink()
+        except OSError:
+            pass
+    transport = info.get("transport")
+    if transport == "unix" or (transport is None and use_unix_socket()):
+        raw = info.get("socket_path") or str(DEFAULT_UNIX_SOCKET)
+        try:
+            Path(raw).unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -289,13 +375,29 @@ class NoteManagerDaemon:
     def __init__(self, port: int = DEFAULT_PORT, web_port: int = DEFAULT_WEB_PORT):
         self.port = port
         self.web_port = web_port
-        self.transport = "unix" if use_unix_socket() else "tcp"
-        self.socket_path = str(DEFAULT_UNIX_SOCKET) if use_unix_socket() else ""
-        self.config = _load_config()
-        self.config["port"] = port
-        self.config["transport"] = self.transport
-        if self.socket_path:
-            self.config["socket_path"] = self.socket_path
+        try:
+            self.config = _load_config()  # startup snapshot of the file
+        except (OSError, ValueError, json.JSONDecodeError) as e:
+            logger.error("读取配置文件失败，使用默认配置: %s", e)
+            self.config = _default_config()
+        if not isinstance(self.config.get("directories"), list):
+            self.config["directories"] = []
+
+        transport = str(self.config.get("transport") or "").strip().lower()
+        if transport not in ("unix", "tcp"):
+            transport = "unix" if use_unix_socket() else "tcp"
+        if os.name == "nt":
+            transport = "tcp"
+        self.transport = transport
+        if transport == "unix":
+            raw_socket = str(self.config.get("socket_path") or "").strip()
+            if raw_socket and not Path(raw_socket).is_absolute():
+                logger.warning("socket_path 不是绝对路径，回退默认值: %s", raw_socket)
+                raw_socket = ""
+            self.socket_path = raw_socket or str(DEFAULT_UNIX_SOCKET)
+        else:
+            self.socket_path = ""
+
         self._observers = {}  # directory -> Observer
         self._lock = threading.Lock()
         self._shutdown = threading.Event()
@@ -567,12 +669,9 @@ class NoteManagerDaemon:
                 return {"ok": False, "error": f"文件不存在: {candidate}"}
             abs_path = candidate
 
-        # Read the config fresh so an editor setting takes effect without a
-        # daemon restart; fall back to the in-memory copy if it is unreadable.
-        try:
-            editor_config = _load_config().get("editor")
-        except (OSError, ValueError, json.JSONDecodeError):
-            editor_config = self.config.get("editor")
+        # Use the daemon-startup snapshot: config file edits only apply after a
+        # restart, consistently with the rest of the config model.
+        editor_config = self.config.get("editor")
 
         result = editor_launcher.open_in_editor(editor_config, abs_path)
         result["source_path"] = str(abs_path)
@@ -941,7 +1040,7 @@ class NoteManagerDaemon:
         with self._lock:
             if dir_str not in self.config["directories"]:
                 self.config["directories"].append(dir_str)
-                _save_config(self.config)
+        _mutate_config_file(lambda cfg: _cfg_add_directory(cfg, dir_str))
 
         logger.info("已添加监控: %s", path)
         self._notify_change("directories_changed")
@@ -1051,7 +1150,7 @@ class NoteManagerDaemon:
             observer = self._observers.pop(path, None)
             if path in self.config["directories"]:
                 self.config["directories"].remove(path)
-                _save_config(self.config)
+        _mutate_config_file(lambda cfg: _cfg_remove_directory(cfg, path))
 
         if observer:
             observer.stop()
@@ -1096,6 +1195,224 @@ class NoteManagerDaemon:
             root, progress=lambda m: logger.info("%s", m),
         )
 
+    def _runtime_config_info(self) -> dict:
+        return {
+            "pid": os.getpid(),
+            "port": self.port,
+            "web_port": self.web_port,
+            "transport": self.transport,
+            "socket_path": self.socket_path,
+        }
+
+    def get_pending_config_changes(self) -> dict:
+        """Compare config.json with the values this daemon actually runs with.
+
+        A non-empty ``fields`` list means the file has been edited but the
+        running instance has not been restarted (or was started with CLI
+        overrides that differ from the file).
+        """
+        try:
+            cfg = _load_config()
+        except (OSError, ValueError, json.JSONDecodeError) as e:
+            return {"fields": [], "changed": False, "error": str(e)}
+
+        fields: list[str] = []
+
+        def _int_or(value, default):
+            if isinstance(value, bool):
+                return default
+            try:
+                n = int(value)
+            except (TypeError, ValueError):
+                return default
+            return n if 1 <= n <= 65535 else default
+
+        if _int_or(cfg.get("port"), DEFAULT_PORT) != self.port:
+            fields.append("port")
+        if _int_or(cfg.get("web_port"), DEFAULT_WEB_PORT) != self.web_port:
+            fields.append("web_port")
+
+        cfg_transport = str(cfg.get("transport") or "").strip().lower()
+        if cfg_transport not in ("unix", "tcp"):
+            cfg_transport = "unix" if use_unix_socket() else "tcp"
+        if os.name == "nt":
+            cfg_transport = "tcp"
+        if cfg_transport != self.transport:
+            fields.append("transport")
+
+        if cfg_transport == "unix":
+            raw_socket = str(cfg.get("socket_path") or "").strip()
+            if raw_socket and not Path(raw_socket).is_absolute():
+                raw_socket = ""
+            effective_socket = raw_socket or str(DEFAULT_UNIX_SOCKET)
+            if effective_socket != self.socket_path:
+                fields.append("socket_path")
+
+        with self._lock:
+            runtime_dirs = [str(d) for d in self._observers.keys()]
+        file_dirs = cfg.get("directories")
+        if not isinstance(file_dirs, list):
+            file_dirs = []
+        file_dirs = [d for d in file_dirs if isinstance(d, str) and d]
+        if set(file_dirs) != set(runtime_dirs):
+            fields.append("directories")
+
+        if (cfg.get("default_project") or "") != (self.config.get("default_project") or ""):
+            fields.append("default_project")
+        if cfg.get("editor") != self.config.get("editor"):
+            fields.append("editor")
+
+        return {"fields": fields, "changed": bool(fields), "error": None}
+
+    def _port_warnings(self, data: dict) -> list[str]:
+        """Soft warnings for ports that cannot be bound (best effort)."""
+        warnings: list[str] = []
+        effective_transport = str(data.get("transport") or self.transport).lower()
+        checks = [("web_port", self.web_port)]
+        if effective_transport != "unix":
+            checks.append(("port", self.port))
+        for key, current in checks:
+            value = data.get(key)
+            if not isinstance(value, int) or isinstance(value, bool) or value == current:
+                continue
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    sock.bind(("127.0.0.1", value))
+            except OSError:
+                warnings.append(f"{key} {value} 当前可能已被占用或无权限绑定")
+        return warnings
+
+    def get_config_file(self, source: str = "") -> dict:
+        """Return config.json text for the Web config editor."""
+        pending = self.get_pending_config_changes()
+        try:
+            if source == "backup":
+                text, sha = config_store.read_text(CONFIG_BACKUP_FILE)
+                return {
+                    "ok": True,
+                    "source": "backup",
+                    "path": str(CONFIG_BACKUP_FILE),
+                    "exists": text is not None,
+                    "text": text or "",
+                    "sha256": sha,
+                    "runtime": self._runtime_config_info(),
+                    "pending_restart": pending["changed"],
+                    "pending_fields": pending["fields"],
+                    "pending_error": pending["error"],
+                }
+
+            text, sha = config_store.read_text(CONFIG_FILE)
+        except OSError as e:
+            return {"ok": False, "error": f"读取配置失败: {e}"}
+        exists = text is not None
+        if text is None:
+            text = config_store.dump_config(_default_config())
+            sha = None
+        return {
+            "ok": True,
+            "source": "config",
+            "path": str(CONFIG_FILE),
+            "exists": exists,
+            "text": text,
+            "sha256": sha,
+            "backup_path": str(CONFIG_BACKUP_FILE),
+            "backup_exists": CONFIG_BACKUP_FILE.is_file(),
+            "runtime": self._runtime_config_info(),
+            "pending_restart": pending["changed"],
+            "pending_fields": pending["fields"],
+            "pending_error": pending["error"],
+        }
+
+    def save_config_text(
+        self, text: str, base_sha256: str | None = None, force: bool = False,
+    ) -> dict:
+        """Validate and write config.json; never applies it to this process."""
+        if not isinstance(text, str):
+            return {"ok": False, "error": "配置内容必须是字符串"}
+        try:
+            data = config_store.parse_config_text(text)
+        except config_store.ConfigValidationError as e:
+            return {"ok": False, "error": str(e)}
+
+        errors, warnings = config_store.validate_config_data(data)
+        if errors:
+            return {
+                "ok": False,
+                "error": "；".join(errors),
+                "errors": errors,
+                "warnings": warnings,
+            }
+        editor_warning = config_store.editor_command_warning(data)
+        if editor_warning:
+            warnings.append(editor_warning)
+        warnings.extend(self._port_warnings(data))
+
+        with config_store.CONFIG_WRITE_LOCK:
+            try:
+                current_text, current_sha = config_store.read_text(CONFIG_FILE)
+            except OSError as e:
+                return {"ok": False, "error": f"读取配置失败: {e}"}
+            if base_sha256 and not force and current_sha != base_sha256:
+                return {
+                    "ok": False,
+                    "conflict": True,
+                    "error": "配置文件已被外部修改，请重新加载后再保存",
+                    "current_sha256": current_sha,
+                    "warnings": warnings,
+                }
+            if current_text == text:
+                pending = self.get_pending_config_changes()
+                return {
+                    "ok": True,
+                    "changed": False,
+                    "path": str(CONFIG_FILE),
+                    "sha256": current_sha,
+                    "runtime": self._runtime_config_info(),
+                    "warnings": warnings,
+                    "restart_required": pending["changed"],
+                    "pending_restart": pending["changed"],
+                    "pending_fields": pending["fields"],
+                    "pending_error": pending["error"],
+                }
+
+            backup_path = None
+            try:
+                backup_path = _backup_config()
+                config_store.write_text_atomic(
+                    CONFIG_FILE, text, mode=_config_file_mode(),
+                )
+            except OSError as e:
+                return {"ok": False, "error": f"保存配置失败: {e}"}
+
+        saved = {
+            "port": data.get("port"),
+            "web_port": data.get("web_port"),
+            "transport": data.get("transport"),
+            "socket_path": data.get("socket_path"),
+        }
+        saved_web = saved.get("web_port")
+        if isinstance(saved_web, int) and saved_web != self.web_port:
+            warnings.append(
+                f"web_port 已从 {self.web_port} 改为 {saved_web}；"
+                f"重启后请访问 http://localhost:{saved_web}/"
+            )
+        pending = self.get_pending_config_changes()
+        return {
+            "ok": True,
+            "changed": True,
+            "path": str(CONFIG_FILE),
+            "sha256": config_store.sha256_text(text),
+            "backup_path": str(backup_path) if backup_path else "",
+            "runtime": self._runtime_config_info(),
+            "saved": saved,
+            "warnings": warnings,
+            "restart_required": True,
+            "pending_restart": pending["changed"],
+            "pending_fields": pending["fields"],
+            "pending_error": pending["error"],
+        }
+
     def list_directories(self) -> dict:
         """List all monitored directories."""
         with self._lock:
@@ -1125,6 +1442,7 @@ class NoteManagerDaemon:
                     status_info[d] = {"error": "无法读取状态"}
             else:
                 status_info[d] = {"error": "尚未构建"}
+        config_pending = self.get_pending_config_changes()
         now = time.time()
         with self._web_lock:
             self._maybe_elect_main_locked(now)
@@ -1150,6 +1468,9 @@ class NoteManagerDaemon:
                 "client_count": len(web_clients),
                 "main_client": main_client,
                 "main_connected": main_connected,
+                "config_pending": config_pending["changed"],
+                "config_pending_fields": config_pending["fields"],
+                "config_pending_error": config_pending["error"],
             },
         }
 
@@ -1254,7 +1575,7 @@ class NoteManagerDaemon:
             return {"ok": False, "error": f"未找到工程: {project}"}
 
         self.config["default_project"] = dirs[idx]
-        _save_config(self.config)
+        _mutate_config_file(lambda cfg: _cfg_set_default(cfg, dirs[idx]))
         self._notify_change("default_changed")
         return {"ok": True, "message": f"已设置默认工程: [{idx}] {Path(dirs[idx]).name}"}
 
@@ -1906,7 +2227,7 @@ class NoteManagerDaemon:
                     return
                 logger.exception("处理来自 %s 的 CLI 请求时出错", client_address)
 
-        if use_unix_socket():
+        if self.transport == "unix":
             class ReuseUnixServer(socketserver.ThreadingUnixStreamServer):
                 daemon_threads = True
 
@@ -1939,7 +2260,7 @@ class NoteManagerDaemon:
         tcp_thread.daemon = True
         tcp_thread.start()
 
-        if use_unix_socket():
+        if self.transport == "unix":
             logger.info("Unix Socket 已启动 %s", self.socket_path)
         else:
             logger.info("TCP 已启动 %s:%d", DEFAULT_HOST, self.port)
@@ -1968,7 +2289,7 @@ class NoteManagerDaemon:
             else:
                 logger.warning("目录不存在，移除: %s", directory)
                 self.config["directories"].remove(directory)
-                _save_config(self.config)
+                _mutate_config_file(lambda cfg: _cfg_remove_directory(cfg, directory))
 
         self._startup_complete_event.set()
         logger.info("Daemon 就绪")

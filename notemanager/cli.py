@@ -20,6 +20,7 @@ from notemanager.daemon import (
     DEFAULT_WEB_PORT,
     DAEMON_ENSURE_WAIT_STEPS,
     _daemon_responded_startup_complete,
+    _load_config,
 )
 from notemanager.protocol import (
     send_command, DEFAULT_PORT, DEFAULT_UNIX_SOCKET,
@@ -31,11 +32,53 @@ from notemanager.indexer import (
 from notemanager.checker import check_file_with_options, CHECK_SCOPES, INPUT_FORMATS
 
 
-def _ensure_daemon(port: int = DEFAULT_PORT, web_port: int = DEFAULT_WEB_PORT) -> bool:
+def _load_config_safe() -> dict:
+    try:
+        return _load_config()
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def _valid_port(value) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return None
+    return port if 1 <= port <= 65535 else None
+
+
+def _startup_ports(
+    port=None,
+    web_port=None,
+    *,
+    fallback_port=None,
+    fallback_web_port=None,
+) -> tuple[int, int]:
+    """Resolve startup ports: explicit CLI > config.json > fallback > default."""
+    cfg = _load_config_safe()
+    resolved_port = (
+        _valid_port(port)
+        or _valid_port(cfg.get("port"))
+        or _valid_port(fallback_port)
+        or DEFAULT_PORT
+    )
+    resolved_web = (
+        _valid_port(web_port)
+        or _valid_port(cfg.get("web_port"))
+        or _valid_port(fallback_web_port)
+        or DEFAULT_WEB_PORT
+    )
+    return resolved_port, resolved_web
+
+
+def _ensure_daemon(port: int | None = None, web_port: int | None = None) -> bool:
     """Make sure daemon is running and finished restoring projects. Start if needed."""
     if not is_daemon_running():
+        start_port, start_web_port = _startup_ports(port, web_port)
         print("Daemon 未运行，正在启动...")
-        daemon = NoteManagerDaemon(port=port, web_port=web_port)
+        daemon = NoteManagerDaemon(port=start_port, web_port=start_web_port)
         if not daemon.run_background():
             return False
 
@@ -111,8 +154,9 @@ def cmd_start(args):
             print(f"Web UI: http://localhost:{web_port}")
         print("提示: 使用 nmr start --restart 重启")
         return
-    port = getattr(args, "port", 0) or DEFAULT_PORT
-    web_port = getattr(args, "web_port", 0) or DEFAULT_WEB_PORT
+    port, web_port = _startup_ports(
+        getattr(args, "port", 0), getattr(args, "web_port", 0),
+    )
     daemon = NoteManagerDaemon(port=port, web_port=web_port)
     if not daemon.run_background():
         sys.exit(1)
@@ -141,9 +185,9 @@ def cmd_stop(args):
 def _restart_daemon(args):
     """Stop the running daemon (if any) and start a fresh one.
 
-    Used by ``nmr start --restart``.  Ports are inherited from the running
-    daemon unless overridden; when the daemon is not running this is equivalent
-    to a plain ``nmr start``.
+    Used by ``nmr start --restart``.  Without explicit CLI ports, config.json
+    wins over the current runtime values; explicit flags only override this
+    run and are not written back to the config file.
     """
     pid = is_daemon_running()
     old_port = None
@@ -176,8 +220,12 @@ def _restart_daemon(args):
     else:
         print("Daemon 未运行，直接启动")
 
-    port = args.port or old_port or DEFAULT_PORT
-    web_port = args.web_port or old_web_port or DEFAULT_WEB_PORT
+    port, web_port = _startup_ports(
+        args.port,
+        args.web_port,
+        fallback_port=old_port,
+        fallback_web_port=old_web_port,
+    )
     daemon = NoteManagerDaemon(port=port, web_port=web_port)
     if not daemon.run_background():
         sys.exit(1)
@@ -279,6 +327,18 @@ def cmd_status(args):
         _print_web_clients_hint(clients, data.get("directories"))
         if main and not main_connected:
             print("  提示: 主页面正在重连宽限期内；可用 nmr main <id> 手动切换。")
+
+        if data.get("config_pending_error"):
+            print(f"配置: 无法解析（{data.get('config_pending_error')}）")
+        elif data.get("config_pending"):
+            labels = {
+                "port": "TCP 端口", "web_port": "Web 端口",
+                "transport": "传输方式", "socket_path": "Socket 路径",
+                "directories": "监控目录", "default_project": "默认工程",
+                "editor": "外部编辑器",
+            }
+            fields = [labels.get(f, f) for f in (data.get("config_pending_fields") or [])]
+            print(f"配置: 有未重启修改（{'、'.join(fields)}）；执行 nmr start --restart 生效")
     except ConnectionError:
         print("无法连接 Daemon（PID 存在但连接失败）")
 
@@ -288,11 +348,12 @@ def cmd_add(args):
     if not Path(directory).is_dir():
         print(f"错误: 目录不存在: {directory}")
         sys.exit(1)
-    port = args.port if args.port else _get_daemon_port()
-    web_port = args.web_port if args.web_port else DEFAULT_WEB_PORT
-    if not _ensure_daemon(port, web_port):
+    requested_port = args.port or None
+    requested_web_port = args.web_port or None
+    if not _ensure_daemon(requested_port, requested_web_port):
         print("错误: 无法启动 Daemon")
         sys.exit(1)
+    port = _get_daemon_port()
     try:
         resp = send_command(
             {"cmd": "add_with_progress", "directory": directory},

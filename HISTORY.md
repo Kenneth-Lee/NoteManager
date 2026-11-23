@@ -10,9 +10,16 @@
 - `nmr view/search --id <id>` 精确指定页面，`--new` 新开页面并返回新 id
 - `nmr main [id]` 查看/切换主页面
 - `nmr status` 列出所有页面 id、所属工程、路径与主页面标记；支持 `--json`
-- `nmr start --restart` 一键重启 daemon，默认沿用当前端口
+- `nmr start --restart` 一键重启 daemon；端口按 CLI > config.json > 当前值解析
 - 页面「外部编辑」按钮：由 daemon 启动 gvim（macOS 为 MacVim），
   支持 `~/.NoteManager/config.json` 的 `editor` 覆盖；托管页与临时页均可用
+- 新增「配置文件编辑器」（`/config`）：按类型分组的表单，可编辑工程、端口、
+  传输方式、socket、外部编辑器；高级区保留原始 JSON。保存后需重启生效；
+  支持校验、`config.json.bak`、加载上一版
+- 配置文件与运行实例不一致时，配置页、控制台和 `nmr status` 持续提示
+  “有未重启修改”，重启后自动消失
+- 启动时读取配置中的 `port` / `web_port` / `transport` / `socket_path`；
+  CLI 参数只覆盖本次运行，不写回文件
 - SSE 增加同源校验；页面通过 `/api/client_active` 上报活跃时间
 
 ## v0.2.0（2026-11-13）

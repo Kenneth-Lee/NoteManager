@@ -18,6 +18,7 @@ import threading
 import time
 
 from notemanager.web_client_js import CLIENT_BOOTSTRAP_JS
+from notemanager import config_editor_page
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +193,8 @@ class WebHandler(BaseHTTPRequestHandler):
 
         if path == "/" or path == "":
             self._serve_panel()
+        elif path == "/config":
+            self._serve_config_editor()
         elif path == "/api/events":
             self._handle_sse()
         elif path.startswith("/api/"):
@@ -320,11 +323,21 @@ class WebHandler(BaseHTTPRequestHandler):
         html = _render_panel(self.daemon_ref)
         self._send_html(html)
 
+    def _serve_config_editor(self):
+        """Serve the raw config.json editor page."""
+        self._send_html(_render_config_editor())
+
+
     def _handle_api_get(self, path):
         if path == "/api/status":
             resp = self.daemon_ref.get_status()
         elif path == "/api/list":
             resp = self.daemon_ref.list_directories()
+        elif path == "/api/config_file":
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query or "", keep_blank_values=True)
+            source = (params.get("source") or [""])[0]
+            resp = self.daemon_ref.get_config_file(source)
         else:
             self._send_error(404, "Unknown API endpoint")
             return
@@ -371,6 +384,20 @@ class WebHandler(BaseHTTPRequestHandler):
             resp = self.daemon_ref.touch_web_client(str(data.get("client_id", "")))
         elif path == "/api/open_editor":
             resp = self.daemon_ref.open_editor(data)
+        elif path == "/api/config_file":
+            resp = self.daemon_ref.save_config_text(
+                data.get("text", ""),
+                data.get("base_sha256") or None,
+                bool(data.get("force")),
+            )
+            if resp.get("conflict"):
+                status = 409
+            elif not resp.get("ok"):
+                status = 400
+            else:
+                status = 200
+            self._send_json(resp, status=status)
+            return
         elif path == "/api/save_source":
             try:
                 pj = int(data.get("project", -1))
@@ -508,8 +535,8 @@ class WebHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html.encode("utf-8"))
 
-    def _send_json(self, data):
-        self.send_response(200)
+    def _send_json(self, data, status: int = 200):
+        self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.end_headers()
         self.wfile.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
@@ -759,6 +786,47 @@ def start_web_server(daemon_ref, port: int) -> HTTPServer:
     return server
 
 
+def _render_config_editor() -> str:
+    """Render the structured config editor page."""
+    return config_editor_page.render()
+
+
+def _pending_config_banner(daemon_ref) -> str:
+    """Persistent notice that config.json differs from the running instance."""
+    labels_map = {
+        "port": "TCP 端口",
+        "web_port": "Web 端口",
+        "transport": "传输方式",
+        "socket_path": "Socket 路径",
+        "directories": "监控目录",
+        "default_project": "默认工程",
+        "editor": "外部编辑器",
+    }
+    try:
+        pending = daemon_ref.get_pending_config_changes()
+    except Exception:
+        return ""
+    if pending.get("error"):
+        return (
+            '<div class="pending-config error">配置文件无法解析：'
+            f"{html_escape(str(pending['error']))}；"
+            '请到 <a href="/config">配置文件编辑器</a> 修复后再重启。</div>'
+        )
+    fields = pending.get("fields") or []
+    if not fields:
+        return ""
+    labels = [labels_map.get(f, f) for f in fields]
+    return (
+        '<div class="pending-config">'
+        "配置文件与当前运行实例不一致：<strong>"
+        + html_escape("、".join(labels))
+        + "</strong>。运行实例尚未重启，这些修改不会生效。"
+        "执行 <code>nmr start --restart</code> 后生效，"
+        '<a href="/config">查看/修改配置</a>。'
+        "</div>"
+    )
+
+
 def _render_panel(daemon_ref) -> str:
     """Render the control panel HTML."""
     with daemon_ref._lock:
@@ -811,6 +879,7 @@ def _render_panel(daemon_ref) -> str:
 </tr>
 """
 
+    pending_html = _pending_config_banner(daemon_ref)
     return f"""\
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -828,6 +897,14 @@ body {{
 }}
 .container {{ max-width: 960px; margin: 0 auto; padding: 20px; }}
 h1 {{ margin-bottom: 20px; font-size: 24px; }}
+.config-link {{ margin-left: 12px; font-size: 13px; font-weight: 500; color: #0066cc;
+                text-decoration: none; vertical-align: middle; }}
+.config-link:hover {{ text-decoration: underline; }}
+.pending-config {{ background: #fff4e5; border: 1px solid #ffcc80; color: #6d4c00;
+                  border-radius: 6px; padding: 10px 12px; font-size: 13px; margin-bottom: 16px; }}
+.pending-config.error {{ background: #fbe9e9; border-color: #e0a0a0; color: #8f1d1d; }}
+.pending-config code {{ background: #fff3cd; padding: 1px 4px; border-radius: 3px; }}
+.pending-config a {{ color: #0066cc; }}
 .card {{
     background: white;
     border-radius: 8px;
@@ -885,7 +962,8 @@ td a:hover {{ text-decoration: underline; }}
 </head>
 <body>
 <div class="container">
-<h1>NoteManager</h1>
+<h1>NoteManager <a class="config-link" href="/config">配置文件</a></h1>
+{pending_html}
 <div class="card">
 <h2>添加目录</h2>
 <div class="add-form">
@@ -1108,6 +1186,9 @@ evtSource.onerror = function() {{
 
 document.getElementById('dir-input').addEventListener('keydown', function(e) {{
     if (e.key === 'Enter') addProject();
+}});
+window.addEventListener('pageshow', function(e) {{
+    if (e.persisted) window.location.reload();
 }});
 </script>
 </body>

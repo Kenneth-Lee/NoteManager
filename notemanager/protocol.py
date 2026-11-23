@@ -35,7 +35,9 @@ def send_command(cmd: dict, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     body = json.dumps(cmd, ensure_ascii=False).encode("utf-8")
     header = struct.pack(">I", len(body))
 
-    if use_unix_socket():
+    # socket_path == "" means the running daemon explicitly uses TCP;
+    # None means "use the default Unix socket" on POSIX.
+    if use_unix_socket() and socket_path != "":
         target = socket_path or str(DEFAULT_UNIX_SOCKET)
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:

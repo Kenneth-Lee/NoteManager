@@ -9,3 +9,4 @@
 * [AI写的设计文档](设计文档.md)
 * [解释搜索文本的逻辑](搜索策略说明.md)
 * [AI写的网页内置的源代码编辑器](web-source-editor.md)
+* [配置文件编辑器设计](config-file-editor.md)

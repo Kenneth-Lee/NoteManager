@@ -143,7 +143,7 @@ nmr list                    # 列出所有监控中的目录
 nmr remove <目录>           # 停止监控并删除生成的文件
 nmr default [工程]          # 设置/查看默认工程
 nmr main [页面id]           # 查看/设置主页面（view/search 的默认目标）
-nmr start --restart         # 重启 daemon，默认沿用当前端口
+nmr start --restart         # 重启 daemon；端口按 config.json / CLI 参数解析
 nmr stop                    # 停止 daemon
 ```
 
@@ -240,12 +240,43 @@ nmr main d4e5f6
 说明：
 
 - 配置中的命令直接以 argv 方式执行，不经过 shell；
-- 修改 `config.json` 后下一次点击即生效，无需重启 daemon；
+- 修改 `config.json` 中的 `editor` 后需要**重启 daemon** 才生效（配置在 daemon 启动时读取）；
 - gvim 需要图形会话环境（`DISPLAY` / `WAYLAND_DISPLAY`），建议从桌面终端启动 daemon；
 - 如果网页编辑器中有未保存修改，会先确认“外部编辑器打开的是磁盘版本”；
 - 托管页的源文件保存后由 watcher 重建并刷新页面；临时页由现有的 `/temp/check` 轮询刷新。
 
 > 升级后已有工程页需要执行一次 `nmr rebuild` 才会复制新的 `nm-external-editor.js` 并显示按钮；临时页会自动刷新。
+
+### 配置文件编辑器
+
+控制台标题旁的「**配置文件**」链接（或直接访问 `/config`）可以打开配置文件编辑器。
+页面按类型分为工程、网络、外部编辑器几个区域，用具体输入项修改
+`~/.NoteManager/config.json`：
+
+- 工程：监控目录列表、默认工程
+- 网络：TCP 端口、Web 端口、传输方式、Socket 路径
+- 外部编辑器：默认 gvim/MacVim，或自定义命令
+- 高级：原始 JSON（用于修复或编辑表单未覆盖的字段）
+
+```bash
+# 修改保存后，重启 daemon 生效
+nmr start --restart
+```
+
+- 保存只写文件，不会热加载，也不会自动重启；
+- 只要配置文件与当前运行实例不一致，配置页面和控制台会持续提示，
+  重新打开页面/从浏览器后退返回也不会消失，直到执行 `nmr start --restart`；
+- `nmr status` 也会显示“配置: 有未重启修改”；
+- 重启时显式传入的 `--port` / `--web-port` 会覆盖文件值，且不写回文件；
+- 保存前会校验 JSON 和已知字段类型；端口、目录、编辑器命令等只做警告；
+- 保存时自动保留上一版 `config.json.bak`，页面可以「加载上一版」；
+- 表单保存会保留配置文件中表单未覆盖的未知字段；
+- 配置文件中的 `port`、`web_port`、`transport`、`socket_path` 现在都会在
+  daemon 启动时读取，因此改端口后必须重启；
+- 旧配置没有 `web_port` 时，启动使用当前运行值/内置默认值。
+
+> 注意：旧版本遗留的 `config.json` 可能包含与实际运行不一致的 `port`，
+> 现在这些值会真正参与启动。升级后建议先核对一次配置。
 
 ### Web 控制面板
 
