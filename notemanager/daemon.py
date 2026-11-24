@@ -3028,8 +3028,25 @@ class NoteManagerDaemon:
 
     def run_foreground(self) -> None:
         """Run daemon in foreground (for debugging)."""
-        self._setup_logging(stream=sys.stdout)
+        stream = sys.stdout
+        if stream is None:
+            # pythonw.exe has no stdio; log to the normal daemon log instead.
+            try:
+                HOME_NM_DIR.mkdir(parents=True, exist_ok=True)
+                stream = open(HOME_NM_DIR / "daemon.log", "a", encoding="utf-8")
+            except OSError:
+                stream = sys.stderr
+        self._setup_logging(stream=stream)
         self.run()
+
+    @staticmethod
+    def _windows_pythonw_executable() -> str:
+        """Prefer pythonw.exe so the detached daemon has no console window."""
+        exe = Path(sys.executable)
+        pythonw = exe.with_name("pythonw.exe")
+        if pythonw.is_file():
+            return str(pythonw)
+        return str(exe)
 
     def run_background(self) -> bool:
         """Run daemon in background (POSIX fork or Windows detached process).
@@ -3109,7 +3126,7 @@ class NoteManagerDaemon:
         HOME_NM_DIR.mkdir(parents=True, exist_ok=True)
         log_file = HOME_NM_DIR / "daemon.log"
         child_cmd = [
-            sys.executable,
+            self._windows_pythonw_executable(),
             "-c",
             (
                 "from notemanager.daemon import NoteManagerDaemon; "
@@ -3124,14 +3141,27 @@ class NoteManagerDaemon:
 
         log_fp = open(log_file, "a", encoding="utf-8")
         try:
-            proc = subprocess.Popen(
-                child_cmd,
-                stdin=subprocess.DEVNULL,
-                stdout=log_fp,
-                stderr=log_fp,
-                creationflags=creationflags,
-                close_fds=True,
-            )
+            breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+            try:
+                proc = subprocess.Popen(
+                    child_cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_fp,
+                    stderr=log_fp,
+                    creationflags=creationflags | breakaway,
+                    close_fds=True,
+                )
+            except OSError:
+                # Some Windows job objects forbid breakaway; still detach the
+                # console and hide the child window.
+                proc = subprocess.Popen(
+                    child_cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_fp,
+                    stderr=log_fp,
+                    creationflags=creationflags,
+                    close_fds=True,
+                )
         finally:
             log_fp.close()
 
