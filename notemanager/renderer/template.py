@@ -57,7 +57,8 @@ def wrap_html(body: str, title: str, html_rel_path: str,
               heading_lines: dict[str, int] | None = None,
               extra_css_files: list[str] | None = None,
               extra_js_files: list[str] | None = None,
-              home_href: str | None = None) -> str:
+              home_href: str | None = None,
+              project_id: str = "") -> str:
     """Wrap an HTML body fragment in a full HTML5 page.
 
     Args:
@@ -382,7 +383,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 .nm-file::before {{ content: "\\1F4C4 "; }}
 </style>
 </head>
-<body>
+<body data-nm-project="{_escape(project_id)}" data-nm-page-path="{_escape(str(html_rel_path))}">
 <div class="nm-sidebar">
 <div class="nm-sidebar-home"><a href="{_escape(home_href)}">Home</a></div>
 <div class="nm-sidebar-search">
@@ -417,6 +418,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <button class="nm-tab" data-tab="warnings">诊断</button>
 </div>
 <div class="nm-tabs-right">
+<span id="nm-reading-controls" class="nm-reading-controls"></span>
 <button class="nm-split-btn" id="nm-open-external" type="button" title="在外部编辑器中打开当前源文件（默认 gvim）" style="display:none">外部编辑</button>
 <button class="nm-split-btn" id="nm-split-btn" type="button" title="左右分屏，同时查看渲染与源文件">分屏</button>
 <button class="nm-split-btn" id="nm-sync-btn" type="button" title="分屏时双向同步滚动（点击开/关）">同步</button>
@@ -447,6 +449,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <script src="{prefix}_static/notemanager.js?v={asset_version}"></script>
 <script src="{prefix}_static/nm-external-editor.js?v={asset_version}"></script>
 <script src="{prefix}_static/nm-relations.js?v={asset_version}"></script>
+<script src="{prefix}_static/nm-reading.js?v={asset_version}"></script>
 <script src="{prefix}_static/katex.min.js"></script>
 <script src="{prefix}_static/katex-auto-render.min.js"></script>
 <script src="{prefix}_static/mermaid.min.js"></script>

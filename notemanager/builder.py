@@ -3,6 +3,7 @@
 Provides both full-build and incremental single-file update capabilities.
 """
 
+import hashlib
 import json
 import logging
 import datetime
@@ -25,6 +26,7 @@ from notemanager.scanner import is_ignored_path
 from notemanager.web_client_js import CLIENT_BOOTSTRAP_JS
 from notemanager import overview as overview_mod
 from notemanager import relations as relations_mod
+from notemanager import activity as activity_mod
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +172,7 @@ def full_build(
 
     # Build backlinks / related documents for the per-page panel.
     _build_relations_safe(html_dir, documents)
+    _build_activity_safe(project_root, html_dir, documents)
 
     # Copy static assets
     p("  写入 _static（notemanager.js / css 等）…")
@@ -305,6 +308,7 @@ def update_file(
     )
 
     _build_relations_safe(html_dir, documents)
+    _build_activity_safe(project_root, html_dir, documents)
 
     # Update landing page
     overview_data = _build_overview_safe(project_root, html_dir, documents)
@@ -377,6 +381,7 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
     )
 
     _build_relations_safe(html_dir, documents)
+    _build_activity_safe(project_root, html_dir, documents)
 
     overview_data = _build_overview_safe(project_root, html_dir, documents)
     _generate_landing_page(html_dir, documents, ui_plugin, overview_data)
@@ -424,6 +429,7 @@ def _write_html(html_dir, fi, rendered, ref_labels, ui_plugin: UiPluginBundle):
         heading_lines=rendered.get("heading_lines"),
         extra_css_files=ui_plugin.css_files,
         extra_js_files=ui_plugin.js_files,
+        project_id=_project_id(html_dir.parent.parent),
     )
     html_path.write_text(full_html, encoding="utf-8")
 
@@ -714,6 +720,7 @@ _RUNTIME_STATIC_TOP_LEVEL = {
     "nm-external-editor.js",
     "nm-overview.js",
     "nm-relations.js",
+    "nm-reading.js",
     "preformatted.css",
     "katex.min.css",
     "katex.min.js",
@@ -765,6 +772,18 @@ def _copy_project_assets(project_root, html_dir):
             shutil.copy2(path, dest)
 
 
+def _project_id(project_root) -> str:
+    return hashlib.sha1(str(Path(project_root).resolve()).encode("utf-8")).hexdigest()[:12]
+
+
+def _build_activity_safe(project_root, html_dir, documents) -> dict | None:
+    try:
+        return activity_mod.build_and_write(Path(project_root), html_dir, documents)
+    except Exception:
+        logger.exception("生成文档活动列表失败")
+        return None
+
+
 def _build_relations_safe(html_dir, documents) -> dict | None:
     try:
         return relations_mod.build_and_write(html_dir, documents)
@@ -802,11 +821,16 @@ def _ensure_overview_assets(html_dir) -> None:
         relations_js = (static_dir / "nm-relations.js").read_text(encoding="utf-8")
     except OSError:
         relations_js = ""
+    try:
+        reading_js = (static_dir / "nm-reading.js").read_text(encoding="utf-8")
+    except OSError:
+        reading_js = ""
     if (
         ".nm-overview" not in css
         or "nmRevealSidebarDir" not in js
         or "Radial directory graph" not in overview_js
         or "backlinks / related documents" not in relations_js
+        or "reading state" not in reading_js
     ):
         _copy_static_assets(static_dir)
 
@@ -853,6 +877,7 @@ def _generate_landing_page(html_dir, documents, ui_plugin=None, overview_data=No
         toc=tree_html,
         extra_css_files=ui_plugin.css_files,
         extra_js_files=list(ui_plugin.js_files) + ["nm-overview.js"],
+        project_id=_project_id(html_dir.parent.parent),
     )
     (html_dir / "index.html").write_text(full_html, encoding="utf-8")
 
@@ -1036,6 +1061,35 @@ img { max-width: 100%; }
 .nm-related-col a:hover { text-decoration: underline; }
 .nm-related-snippet { font-size: 11px; color: #999; margin-top: 2px; line-height: 1.45; }
 .nm-related-empty { font-size: 12px; color: #aaa; margin: 4px 0; }
+
+/* Reading state and "since last visit" */
+.nm-reading-controls { display: flex; align-items: center; gap: 6px; }
+.nm-reading-btn { padding: 3px 8px; border: 1px solid #bbdefb; border-radius: 4px;
+                  background: #fff; color: #1565c0; cursor: pointer; font-size: 12px; }
+.nm-reading-btn:hover { background: #e3f2fd; }
+.nm-reading-btn.active { background: #e3f2fd; border-color: #64b5f6; }
+.nm-reading-home { margin: 4px 0 24px; }
+.nm-reading-panel { background: #fff; border: 1px solid #e5e5e5; border-radius: 8px;
+                    padding: 12px 14px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.nm-reading-heading { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+                      margin-bottom: 8px; }
+.nm-reading-heading h2 { font-size: 16px; margin: 0; }
+.nm-reading-stats { font-size: 11px; color: #888; }
+.nm-reading-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.nm-reading-card { min-width: 0; border-left: 2px solid #e3f2fd; padding-left: 9px; }
+.nm-reading-card h3 { font-size: 12px; color: #607d8b; margin: 0 0 5px; }
+.nm-reading-card ul { list-style: none; padding: 0; margin: 0; }
+.nm-reading-card li { font-size: 12px; margin: 5px 0; overflow-wrap: anywhere; }
+.nm-reading-card a { color: #0066cc; text-decoration: none; }
+.nm-reading-card a:hover { text-decoration: underline; }
+.nm-reading-date { color: #aaa; font-size: 10px; margin-left: 5px; white-space: nowrap; }
+.nm-reading-empty { color: #aaa; font-size: 12px; margin: 4px 0; }
+@media (max-width: 900px) {
+    .nm-reading-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+    .nm-reading-grid { grid-template-columns: 1fr; }
+}
 @media (max-width: 800px) {
     .nm-related-grid { grid-template-columns: 1fr; }
 }

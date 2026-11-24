@@ -907,6 +907,8 @@ def render_landing_overview(overview: dict | None) -> str:
         f'{stats.get("index_terms", 0)} 个索引词 · '
         f'{stats.get("links", 0)} 条内部链接',
         "</div>",
+        '<section id="nm-reading-home" class="nm-reading-home" '
+        'data-nm-activity-src="_index/activity.json"></section>',
     ]
     directory_html = render_directory_overview(overview)
     if directory_html:

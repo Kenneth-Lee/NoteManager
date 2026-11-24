@@ -12,3 +12,4 @@
 * [配置文件编辑器设计](config-file-editor.md)
 * [项目主页概览 / 径向目录关系图设计](project-overview.md)
 * [文档关系 / 反向链接设计](document-relations.md)
+* [我的阅读 / 自上次访问设计](reading-state.md)
