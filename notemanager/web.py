@@ -455,6 +455,23 @@ class WebHandler(BaseHTTPRequestHandler):
                 str(data.get("source_rel_path", "")),
                 bool(data.get("delete_assets")),
             )
+        elif path == "/api/orphan_assets":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            resp = self.daemon_ref.list_orphan_assets(pj)
+        elif path == "/api/trash_orphans":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            paths = data.get("paths")
+            if not isinstance(paths, list):
+                paths = []
+            resp = self.daemon_ref.trash_orphan_assets(pj, paths)
         elif path == "/api/trash_list":
             try:
                 pj = int(data.get("project", -1))

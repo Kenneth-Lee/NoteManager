@@ -9,6 +9,7 @@
     var createOverlay = null;
     var deleteOverlay = null;
     var trashOverlay = null;
+    var assetsOverlay = null;
 
     function encodeRel(path) {
         return String(path || '').replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
@@ -378,6 +379,154 @@
         });
     }
 
+    function ensureAssetsDialog() {
+        if (assetsOverlay) return;
+        assetsOverlay = makeOverlay('assets');
+        assetsOverlay.innerHTML = '<div class="nm-note-dialog nm-assets-dialog" role="dialog" aria-label="资源清理">' +
+            '<div class="nm-note-head"><h2>资源清理</h2>' +
+            '<button type="button" class="nm-note-close" aria-label="关闭">×</button></div>' +
+            '<div class="nm-assets-summary" id="nm-assets-summary"></div>' +
+            '<div class="nm-assets-toolbar"><label class="nm-assets-all"><input type="checkbox" id="nm-assets-all"> 全选未引用图片</label>' +
+            '<button type="button" class="nm-note-danger" id="nm-assets-trash" disabled>移到回收站</button></div>' +
+            '<div class="nm-assets-list" id="nm-assets-list">正在加载…</div>' +
+            '<div class="nm-assets-missing" id="nm-assets-missing"></div>' +
+            '<div class="nm-note-error" id="nm-assets-error" hidden></div>' +
+            '<div class="nm-note-actions"><button type="button" class="nm-note-cancel">关闭</button></div>' +
+            '</div>';
+        assetsOverlay.querySelector('.nm-note-close').addEventListener('click', function () {
+            closeOverlay(assetsOverlay);
+        });
+        assetsOverlay.querySelector('.nm-note-cancel').addEventListener('click', function () {
+            closeOverlay(assetsOverlay);
+        });
+        assetsOverlay.querySelector('#nm-assets-all').addEventListener('change', function () {
+            var checked = this.checked;
+            assetsOverlay.querySelectorAll('.nm-asset-check').forEach(function (cb) {
+                cb.checked = checked;
+            });
+            updateAssetTrashButton();
+        });
+        assetsOverlay.querySelector('#nm-assets-trash').addEventListener('click', trashSelectedAssets);
+        assetsOverlay.addEventListener('change', function (event) {
+            if (event.target && event.target.classList.contains('nm-asset-check')) {
+                updateAssetTrashButton();
+            }
+        });
+    }
+
+    function updateAssetTrashButton() {
+        if (!assetsOverlay) return;
+        var n = assetsOverlay.querySelectorAll('.nm-asset-check:checked').length;
+        var btn = assetsOverlay.querySelector('#nm-assets-trash');
+        btn.disabled = n === 0;
+        btn.textContent = n ? '移到回收站（' + n + '）' : '移到回收站';
+    }
+
+    function renderAssets(data) {
+        var list = assetsOverlay.querySelector('#nm-assets-list');
+        var summary = assetsOverlay.querySelector('#nm-assets-summary');
+        var missingBox = assetsOverlay.querySelector('#nm-assets-missing');
+        var err = assetsOverlay.querySelector('#nm-assets-error');
+        var items = (data && data.items) || [];
+        var missing = (data && data.missing) || [];
+        errorText(err, '');
+        summary.textContent = '未引用图片 ' + items.length + ' 张 · 缺失引用 ' + missing.length + ' 条';
+        list.textContent = '';
+        missingBox.textContent = '';
+        if (!items.length) {
+            addTextLine(list, '没有未引用图片。', 'nm-assets-empty');
+        }
+        items.forEach(function (item) {
+            var row = document.createElement('label');
+            row.className = 'nm-asset-item';
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.className = 'nm-asset-check';
+            cb.value = item.path;
+            var img = document.createElement('img');
+            img.loading = 'lazy';
+            img.alt = '';
+            img.src = base + encodeRel(item.path);
+            img.addEventListener('error', function () { img.style.display = 'none'; });
+            var main = document.createElement('div');
+            main.className = 'nm-asset-main';
+            addTextLine(main, item.path, 'nm-asset-path');
+            addTextLine(main, formatSize(item.size), 'nm-asset-size');
+            row.appendChild(cb);
+            row.appendChild(img);
+            row.appendChild(main);
+            list.appendChild(row);
+        });
+        if (missing.length) {
+            addTextLine(missingBox, '缺失引用：', 'nm-assets-missing-title');
+            missing.slice(0, 8).forEach(function (p) {
+                addTextLine(missingBox, '· ' + p, 'nm-asset-missing');
+            });
+        }
+        assetsOverlay.querySelector('#nm-assets-all').checked = false;
+        updateAssetTrashButton();
+    }
+
+    function loadAssets() {
+        var list = assetsOverlay.querySelector('#nm-assets-list');
+        var err = assetsOverlay.querySelector('#nm-assets-error');
+        list.textContent = '正在加载…';
+        errorText(err, '');
+        fetch('/api/orphan_assets', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json; charset=utf-8'},
+            body: JSON.stringify({project: project})
+        }).then(function (r) {
+            return r.json().then(function (d) {
+                if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+                return d;
+            });
+        }).then(renderAssets).catch(function (e) {
+            list.textContent = '无法加载资源。';
+            errorText(err, e && e.message ? e.message : '加载失败');
+        });
+    }
+
+    function openAssets() {
+        ensureAssetsDialog();
+        assetsOverlay.hidden = false;
+        document.body.classList.add('nm-note-open');
+        loadAssets();
+    }
+
+    function trashSelectedAssets() {
+        if (!assetsOverlay) return;
+        var paths = [];
+        assetsOverlay.querySelectorAll('.nm-asset-check:checked').forEach(function (cb) {
+            paths.push(cb.value);
+        });
+        if (!paths.length) return;
+        var btn = assetsOverlay.querySelector('#nm-assets-trash');
+        var err = assetsOverlay.querySelector('#nm-assets-error');
+        btn.disabled = true;
+        fetch('/api/trash_orphans', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json; charset=utf-8'},
+            body: JSON.stringify({project: project, paths: paths})
+        }).then(function (r) {
+            return r.json().then(function (d) {
+                if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+                return d;
+            });
+        }).then(function (d) {
+            errorText(err, '');
+            loadAssets();
+        }).catch(function (e) {
+            btn.disabled = false;
+            errorText(err, e && e.message ? e.message : '清理失败');
+        });
+    }
+
+    var assetsBtn = document.getElementById('nm-assets-open');
+    if (assetsBtn) {
+        assetsBtn.addEventListener('click', openAssets);
+    }
+
     var trashBtn = document.getElementById('nm-trash-open');
     if (trashBtn) {
         trashBtn.addEventListener('click', openTrash);
@@ -430,6 +579,9 @@
         } else if (trashOverlay && !trashOverlay.hidden) {
             event.preventDefault();
             closeOverlay(trashOverlay);
+        } else if (assetsOverlay && !assetsOverlay.hidden) {
+            event.preventDefault();
+            closeOverlay(assetsOverlay);
         }
     });
 })();

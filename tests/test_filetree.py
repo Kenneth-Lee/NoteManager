@@ -25,6 +25,7 @@ def test_landing_tree_has_create_and_delete_actions(tmp_path):
     assert 'id="nm-new-root"' in landing
     assert "nm-filetree.js" in landing
     assert 'id="nm-trash-open"' in landing
+    assert 'id="nm-assets-open"' in landing
     doc = (root / ".NoteManager" / "html" / "sub" / "one.html").read_text(encoding="utf-8")
     assert 'id="nm-trash-open"' in doc
     assert 'id="nm-delete-current"' in doc
@@ -151,3 +152,42 @@ def test_asset_index_reports_orphans_and_missing(tmp_path):
     assert "missing.png" in data["missing"]
     assert data["assets"]["missing.png"]["exists"] is False
     assert data["assets"]["orphan.png"]["exists"] is True
+
+
+def test_orphan_asset_cleanup_and_restore(tmp_path):
+    import json
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "note.md").write_text("# Note\n\nhello\n", encoding="utf-8")
+    (root / "orphan.png").write_bytes(b"orphan")
+    builder.full_build(root)
+    daemon = _bare_daemon(root)
+
+    listed = daemon.list_orphan_assets(0)
+    assert listed["ok"] is True
+    assert [x["path"] for x in listed["items"]] == ["orphan.png"]
+
+    trashed = daemon.trash_orphan_assets(0, ["orphan.png"])
+    assert trashed["ok"] is True
+    assert not (root / "orphan.png").exists()
+    data = json.loads(
+        (root / ".NoteManager" / "html" / "_index" / "assets.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "orphan.png" not in data["orphans"]
+    assert "orphan.png" not in data["assets"]
+
+    trash_items = daemon.list_trash(0)["items"]
+    asset_batch = [x for x in trash_items if x["kind"] == "assets"][0]
+    assert asset_batch["asset_count"] == 1
+
+    restored = daemon.restore_trash(0, asset_batch["trash_id"])
+    assert restored["ok"] is True
+    assert (root / "orphan.png").is_file()
+    data = json.loads(
+        (root / ".NoteManager" / "html" / "_index" / "assets.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "orphan.png" in data["orphans"]

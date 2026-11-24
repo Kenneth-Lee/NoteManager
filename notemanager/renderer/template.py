@@ -428,7 +428,8 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <div class="nm-sidebar">
 <div class="nm-sidebar-home"><a href="{_escape(home_href)}">Home</a>
 <button type="button" id="nm-new-root" class="nm-new-note-btn" title="在项目根目录新建笔记">＋ 新建</button>
-<button type="button" id="nm-trash-open" class="nm-trash-btn" title="回收站">回收站</button></div>
+<button type="button" id="nm-trash-open" class="nm-trash-btn" title="回收站">回收站</button>
+<button type="button" id="nm-assets-open" class="nm-trash-btn" title="清理未引用图片">资源</button></div>
 <div class="nm-sidebar-search">
 <input type="text" id="nm-search" placeholder="搜索...">
 <button class="nm-search-help" onclick="nmToggleHelp()" title="搜索语法帮助">?</button>

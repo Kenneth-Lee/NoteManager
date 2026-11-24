@@ -858,6 +858,7 @@ def _ensure_overview_assets(html_dir) -> None:
         or "create_note_in_dir" not in filetree_js
         or "trash_restore" not in filetree_js
         or "open_url" not in filetree_js
+        or "trash_orphans" not in filetree_js
     ):
         _copy_static_assets(static_dir)
 
@@ -1234,6 +1235,28 @@ body.nm-note-open { overflow: hidden; }
                     border-radius: 4px; padding: 3px 9px; font-size: 11px; cursor: pointer; }
 .nm-trash-restore:hover { background: #c8e6c9; }
 .nm-trash-restore:disabled { opacity: .55; cursor: default; }
+.nm-assets-dialog { width: min(620px, calc(100vw - 32px)); }
+.nm-assets-summary { font-size: 12px; color: #607d8b; margin-top: 8px; }
+.nm-assets-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+                      margin: 9px 0; flex-wrap: wrap; }
+.nm-assets-all { font-size: 12px; color: #455a64; cursor: pointer; }
+.nm-assets-all input { vertical-align: middle; margin: 0 4px 0 0; }
+#nm-assets-trash { padding: 4px 9px; border-radius: 4px; font-size: 11px; }
+.nm-assets-list { max-height: 300px; overflow-y: auto; border: 1px solid #eceff1; border-radius: 5px; }
+.nm-assets-empty { padding: 16px 12px; color: #999; font-size: 12px; text-align: center; }
+.nm-asset-item { display: flex; align-items: center; gap: 9px; padding: 7px 9px;
+                 border-bottom: 1px solid #f2f2f2; cursor: pointer; }
+.nm-asset-item:last-child { border-bottom: 0; }
+.nm-asset-item:hover { background: #fafafa; }
+.nm-asset-item input { flex: 0 0 auto; }
+.nm-asset-item img { width: 38px; height: 38px; object-fit: cover; border-radius: 3px;
+                     border: 1px solid #eee; background: #fafafa; flex: 0 0 auto; }
+.nm-asset-main { min-width: 0; flex: 1; }
+.nm-asset-path { font-size: 11px; color: #455a64; font-family: monospace; overflow-wrap: anywhere; }
+.nm-asset-size { font-size: 10px; color: #aaa; margin-top: 1px; }
+.nm-assets-missing { margin-top: 8px; }
+.nm-assets-missing-title { font-size: 11px; color: #b71c1c; margin-bottom: 2px; }
+.nm-asset-missing { font-size: 10px; color: #c62828; font-family: monospace; overflow-wrap: anywhere; }
 @media (max-width: 600px) {
     .nm-note-overlay { padding-top: 7vh; }
 }
