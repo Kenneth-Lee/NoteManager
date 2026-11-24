@@ -431,7 +431,7 @@
     if (delBtn) {
       delBtn.addEventListener('click', function () {
         var msg =
-          '确定删除当前笔记吗？将永久删除磁盘上的源文件及已生成的 HTML，此操作不可撤销。';
+          '确定删除当前笔记吗？源文件将移到工程回收站（.NoteManager/trash），生成的 HTML 会从站点移除。';
         if (window.__nmDirty) {
           msg = '当前有未保存的修改（删除后不会保存到磁盘）。\n\n' + msg;
         }

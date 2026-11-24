@@ -722,6 +722,7 @@ _RUNTIME_STATIC_TOP_LEVEL = {
     "nm-relations.js",
     "nm-reading.js",
     "nm-command.js",
+    "nm-filetree.js",
     "preformatted.css",
     "katex.min.css",
     "katex.min.js",
@@ -830,6 +831,10 @@ def _ensure_overview_assets(html_dir) -> None:
         command_js = (static_dir / "nm-command.js").read_text(encoding="utf-8")
     except OSError:
         command_js = ""
+    try:
+        filetree_js = (static_dir / "nm-filetree.js").read_text(encoding="utf-8")
+    except OSError:
+        filetree_js = ""
     if (
         ".nm-overview" not in css
         or "nmRevealSidebarDir" not in js
@@ -838,6 +843,7 @@ def _ensure_overview_assets(html_dir) -> None:
         or "reading state" not in reading_js
         or "command palette" not in command_js
         or "nmOpenShortcutsHelp" not in command_js
+        or "create_note_in_dir" not in filetree_js
     ):
         _copy_static_assets(static_dir)
 
@@ -904,18 +910,39 @@ def _render_tree(node, depth, parent_path=""):
             # Directory node: collapsed by default.  Opening every
             # first-level directory made the sidebar hard to scan.
             parts.append(
-                f'<li class="nm-dir"><details id="{html_escape(dir_id, quote=True)}">'
+                f'<li class="nm-dir" data-nm-dir="{html_escape(child_path, quote=True)}">'
+                f'<details id="{html_escape(dir_id, quote=True)}">'
             )
-            parts.append(f'<summary>{html_escape(name)}</summary>')
+            parts.append(
+                f'<summary><span class="nm-dir-label">{html_escape(name)}</span>'
+                f'<button type="button" class="nm-tree-add" '
+                f'data-nm-add-dir="{html_escape(child_path, quote=True)}" '
+                f'title="在此目录新建笔记" aria-label="在 {html_escape(name, quote=True)} 新建笔记">+</button>'
+                f'</summary>'
+            )
             parts.append(_render_tree(value, depth + 1, child_path))
             parts.append('</details></li>')
         else:
             # File node
             path = value["path"]
             title = value["title"]
+            source = value.get("source_path") or ""
+            source_attr = (
+                f' data-nm-source="{html_escape(str(source), quote=True)}"'
+                if source else ""
+            )
+            delete_btn = ""
+            if source:
+                delete_btn = (
+                    f'<button type="button" class="nm-file-del" '
+                    f'data-nm-delete-source="{html_escape(str(source), quote=True)}" '
+                    f'data-nm-delete-title="{html_escape(title, quote=True)}" '
+                    f'title="删除这篇笔记（移到回收站）" aria-label="删除 {html_escape(title, quote=True)}">×</button>'
+                )
             parts.append(
-                f'<li class="nm-file"><a href="{html_escape(path, quote=True)}">'
-                f"{html_escape(title)}</a></li>"
+                f'<li class="nm-file"{source_attr} data-nm-html="{html_escape(path, quote=True)}">'
+                f'<a href="{html_escape(path, quote=True)}">{html_escape(title)}</a>'
+                f'{delete_btn}</li>'
             )
     parts.append('</ul>')
     return "\n".join(parts)
@@ -1139,6 +1166,45 @@ body.nm-cmd-open { overflow: hidden; }
                     background: #fafafa; color: #555; padding: 1px 5px; font-family: monospace;
                     font-size: 11px; white-space: nowrap; }
 .nm-help-note { color: #888; font-size: 11px; line-height: 1.6; margin: 10px 0 0; }
+body.nm-note-open { overflow: hidden; }
+.nm-note-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(20, 20, 30, .42);
+                   display: flex; align-items: flex-start; justify-content: center; padding-top: 14vh; }
+.nm-note-overlay[hidden] { display: none !important; }
+.nm-note-dialog { width: min(480px, calc(100vw - 32px)); background: #fff; border-radius: 10px;
+                  box-shadow: 0 18px 60px rgba(0,0,0,.28); padding: 16px 18px; box-sizing: border-box; }
+.nm-note-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.nm-note-head h2 { font-size: 16px; margin: 0; }
+.nm-note-close { border: 0; background: transparent; color: #999; font-size: 20px; line-height: 1;
+                 cursor: pointer; padding: 0 2px; }
+.nm-note-close:hover { color: #333; }
+.nm-note-field { margin-top: 12px; }
+.nm-note-field label { display: block; color: #607d8b; font-size: 11px; margin-bottom: 4px; }
+.nm-note-dir { font-family: monospace; font-size: 12px; color: #455a64; background: #f5f7f8;
+               border: 1px solid #e0e5e8; border-radius: 4px; padding: 6px 8px; overflow-wrap: anywhere; }
+.nm-note-field input, .nm-note-field select { width: 100%; box-sizing: border-box; padding: 7px 9px;
+               border: 1px solid #cfd8dc; border-radius: 4px; font-size: 13px; outline: none; background: #fff; }
+.nm-note-field input:focus, .nm-note-field select:focus { border-color: #1565c0; }
+.nm-note-error { color: #c62828; background: #ffebee; border-radius: 4px; padding: 5px 8px;
+                 font-size: 12px; margin-top: 10px; }
+.nm-note-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.nm-note-actions button { border-radius: 4px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+.nm-note-cancel { border: 1px solid #cfd8dc; background: #fff; color: #555; }
+.nm-note-primary { border: 1px solid #1565c0; background: #1565c0; color: #fff; }
+.nm-note-primary:disabled { opacity: .55; cursor: default; }
+.nm-note-danger { border: 1px solid #c62828; background: #c62828; color: #fff; }
+.nm-note-danger:disabled { opacity: .55; cursor: default; }
+.nm-note-file { font-size: 13px; color: #263238; margin-top: 8px; overflow-wrap: anywhere; }
+.nm-note-impact { font-size: 12px; color: #555; background: #f7f9fa; border: 1px solid #eceff1;
+                  border-radius: 5px; padding: 8px 10px; margin-top: 10px; line-height: 1.6; }
+.nm-note-impact-main { margin-top: 3px; color: #37474f; }
+.nm-note-impact-list { color: #78909c; font-size: 11px; padding-left: 8px; margin-top: 2px;
+                       overflow-wrap: anywhere; }
+.nm-note-warning { font-size: 11px; color: #8d6e63; background: #fff8e1; border-radius: 4px;
+                   padding: 6px 8px; margin-top: 10px; line-height: 1.55; }
+.nm-note-warning code { background: #fff3cd; padding: 0 3px; border-radius: 2px; }
+@media (max-width: 600px) {
+    .nm-note-overlay { padding-top: 7vh; }
+}
 @media (max-width: 600px) {
     .nm-cmd-overlay { padding-top: 6vh; }
     .nm-cmd-dialog { max-height: 80vh; }

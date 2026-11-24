@@ -89,6 +89,14 @@ def wrap_html(body: str, title: str, html_rel_path: str,
     extra_js_files = extra_js_files or []
 
     source_path_display = _escape(source_path) if source_path else ""
+    delete_current_button = ""
+    if source_editable and source_path:
+        delete_current_button = (
+            f'<button type="button" class="nm-delete-current-btn" id="nm-delete-current" '
+            f'data-nm-delete-source="{_escape(source_path)}" '
+            f'data-nm-delete-title="{_escape(str(title))}" '
+            f'title="删除当前笔记（移到回收站）">删除</button>'
+        )
     heading_map_json = (
         json.dumps(heading_lines or {}, ensure_ascii=False).replace("<", "\\u003c")
     )
@@ -213,9 +221,13 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .nm-sidebar {{ position: fixed; top: 0; left: 0; width: 280px; height: 100vh;
                background: #f8f9fa; border-right: 1px solid #e0e0e0; overflow-y: auto;
                z-index: 50; display: flex; flex-direction: column; }}
-.nm-sidebar-home {{ padding: 12px 16px; border-bottom: 1px solid #e0e0e0; font-size: 15px; font-weight: 600; }}
+.nm-sidebar-home {{ padding: 12px 16px; border-bottom: 1px solid #e0e0e0; font-size: 15px; font-weight: 600;
+                     display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
 .nm-sidebar-home a {{ text-decoration: none; color: #333; }}
 .nm-sidebar-home a:hover {{ color: #0066cc; }}
+.nm-new-note-btn {{ border: 1px solid #bbdefb; background: #f5f9ff; color: #1565c0; border-radius: 4px;
+                    font-size: 11px; padding: 2px 6px; cursor: pointer; font-weight: 400; white-space: nowrap; }}
+.nm-new-note-btn:hover {{ background: #e3f2fd; }}
 .nm-sidebar-search {{ padding: 8px 12px; border-bottom: 1px solid #e0e0e0; position: relative; }}
 .nm-sidebar-search input {{ width: calc(100% - 30px); padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px;
                             font-size: 13px; box-sizing: border-box; }}
@@ -284,6 +296,9 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .nm-split-btn.active {{ background: #1565c0; color: #fff; border-color: #1565c0; font-weight: 600; }}
 @media (max-width: 1000px) {{ .nm-split-btn {{ display: none; }} }}
 body:not(.nm-split) #nm-sync-btn {{ display: none; }}
+.nm-delete-current-btn {{ font-size: 12px; color: #b71c1c; border: 1px solid #ef9a9a;
+                         background: #ffebee; border-radius: 4px; padding: 4px 9px; cursor: pointer; }}
+.nm-delete-current-btn:hover {{ background: #ffcdd2; color: #8e0000; }}
 .nm-console-btn {{ text-decoration: none; font-size: 12px; color: #1565c0; border: 1px solid #bbdefb;
                   background: #e3f2fd; border-radius: 4px; padding: 4px 10px; }}
 .nm-console-btn:hover {{ background: #bbdefb; color: #0d47a1; }}
@@ -383,17 +398,33 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 .nm-tree {{ list-style: none; padding-left: 0; }}
 .nm-tree .nm-tree {{ padding-left: 20px; }}
 .nm-tree li {{ margin: 2px 0; }}
-.nm-dir > details > summary {{ cursor: pointer; font-weight: 500; padding: 2px 0; list-style: none; }}
+.nm-dir > details > summary {{ cursor: pointer; font-weight: 500; padding: 2px 0; list-style: none;
+                               display: flex; align-items: center; gap: 3px; }}
 .nm-dir > details > summary::before {{ content: "\\1F4C1 "; }}
 .nm-dir > details[open] > summary::before {{ content: "\\1F4C2 "; }}
-.nm-file a {{ text-decoration: none; color: #0066cc; }}
+.nm-dir-label {{ flex: 1; min-width: 0; overflow-wrap: anywhere; }}
+.nm-tree-add {{ border: 0; background: transparent; color: #1565c0; cursor: pointer; font-size: 15px;
+                line-height: 1; padding: 0 3px; opacity: 0; }}
+.nm-dir > details > summary:hover .nm-tree-add,
+.nm-dir > details > summary:focus-within .nm-tree-add {{ opacity: 1; }}
+.nm-tree-add:hover {{ color: #0d47a1; }}
+.nm-file {{ display: flex; align-items: center; gap: 3px; }}
+.nm-file a {{ text-decoration: none; color: #0066cc; flex: 1; min-width: 0; overflow-wrap: anywhere; }}
 .nm-file a:hover {{ text-decoration: underline; }}
-.nm-file::before {{ content: "\\1F4C4 "; }}
+.nm-file::before {{ content: "\\1F4C4 "; flex: 0 0 auto; }}
+.nm-file-del {{ border: 0; background: transparent; color: #b71c1c; cursor: pointer; font-size: 15px;
+                line-height: 1; padding: 0 3px; opacity: 0; }}
+.nm-file:hover .nm-file-del, .nm-file:focus-within .nm-file-del {{ opacity: 1; }}
+.nm-file-del:hover {{ background: #ffebee; border-radius: 3px; }}
+@media (hover: none) {{
+    .nm-tree-add, .nm-file-del {{ opacity: 1; }}
+}}
 </style>
 </head>
-<body data-nm-project="{_escape(project_id)}" data-nm-page-path="{_escape(str(html_rel_path))}">
+<body data-nm-project="{_escape(project_id)}" data-nm-page-path="{_escape(str(html_rel_path))}" data-nm-source-path="{_escape(source_path)}">
 <div class="nm-sidebar">
-<div class="nm-sidebar-home"><a href="{_escape(home_href)}">Home</a></div>
+<div class="nm-sidebar-home"><a href="{_escape(home_href)}">Home</a>
+<button type="button" id="nm-new-root" class="nm-new-note-btn" title="在项目根目录新建笔记">＋ 新建</button></div>
 <div class="nm-sidebar-search">
 <input type="text" id="nm-search" placeholder="搜索...">
 <button class="nm-search-help" onclick="nmToggleHelp()" title="搜索语法帮助">?</button>
@@ -440,6 +471,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 </div>
 <div class="nm-tabs-right">
 <span id="nm-reading-controls" class="nm-reading-controls"></span>
+{delete_current_button}
 <button class="nm-split-btn" id="nm-open-external" type="button" title="在外部编辑器中打开当前源文件（默认 gvim）" style="display:none">外部编辑</button>
 <button class="nm-split-btn" id="nm-split-btn" type="button" title="左右分屏，同时查看渲染与源文件">分屏</button>
 <button class="nm-split-btn" id="nm-sync-btn" type="button" title="分屏时双向同步滚动（点击开/关）">同步</button>
@@ -472,6 +504,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <script src="{prefix}_static/nm-relations.js?v={asset_version}"></script>
 <script src="{prefix}_static/nm-reading.js?v={asset_version}"></script>
 <script src="{prefix}_static/nm-command.js?v={asset_version}"></script>
+<script src="{prefix}_static/nm-filetree.js?v={asset_version}"></script>
 <script src="{prefix}_static/katex.min.js"></script>
 <script src="{prefix}_static/katex-auto-render.min.js"></script>
 <script src="{prefix}_static/mermaid.min.js"></script>

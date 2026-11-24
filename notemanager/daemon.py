@@ -17,7 +17,8 @@ import threading
 import datetime
 import hashlib
 import time
-from pathlib import Path
+import shutil
+from pathlib import Path, PurePosixPath
 from urllib.parse import quote, urlencode
 
 from notemanager.protocol import (
@@ -1947,6 +1948,54 @@ class NoteManagerDaemon:
         root, rel = self._validated_source_rel(Path(dirs[project_idx]), source_rel_posix)
         if rel is None:
             return {"ok": False, "error": "非法源文件路径"}
+        return self._create_note_in_parent(
+            project_idx, rel.parent.as_posix(), filename, default_ext
+        )
+
+    def create_note_in_dir(
+        self,
+        project_idx: int,
+        dir_rel_posix: str,
+        filename: str,
+        default_ext: str,
+    ) -> dict:
+        """在指定目录下新建 .md / .rst 笔记并增量构建。"""
+        return self._create_note_in_parent(
+            project_idx, dir_rel_posix, filename, default_ext
+        )
+
+    def _create_note_in_parent(
+        self,
+        project_idx: int,
+        parent_rel_posix: str,
+        filename: str,
+        default_ext: str,
+    ) -> dict:
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root = Path(dirs[project_idx]).resolve()
+        root_r = root.resolve()
+
+        raw_parent = str(parent_rel_posix or "").strip().replace("\\", "/")
+        if raw_parent in ("", "."):
+            parent = Path(".")
+        else:
+            pp = PurePosixPath(raw_parent)
+            if pp.is_absolute() or any(part in ("", "..") for part in pp.parts):
+                return {"ok": False, "error": "非法目录路径"}
+            if ".NoteManager" in pp.parts:
+                return {"ok": False, "error": "拒绝在 .NoteManager 内创建笔记"}
+            parent = Path(*pp.parts)
+        try:
+            parent_abs = (root / parent).resolve()
+            parent_abs.relative_to(root_r)
+        except (OSError, ValueError):
+            return {"ok": False, "error": "拒绝目录路径"}
+        if not parent_abs.is_dir():
+            return {"ok": False, "error": "目标目录不存在"}
+
         ext = (default_ext or "").lower()
         if ext not in (".md", ".rst"):
             ext = ".md"
@@ -1957,6 +2006,8 @@ class NoteManagerDaemon:
             return {"ok": False, "error": "无效文件名"}
         if any(c in name for c in '<>:"|?*\\\x00') or "/" in name or "\\" in name:
             return {"ok": False, "error": "文件名含有非法字符或路径分隔符"}
+        if len(name) > 160:
+            return {"ok": False, "error": "文件名过长"}
         bn = Path(name).name
         if bn != name:
             return {"ok": False, "error": "仅允许单个文件名，不要包含路径"}
@@ -1970,22 +2021,16 @@ class NoteManagerDaemon:
         else:
             out_ext = ext
             out_name = name + out_ext
-        parent = rel.parent
+
         new_rel = (parent / out_name).as_posix()
         try:
             new_abs = (root / Path(new_rel)).resolve()
-        except OSError as e:
-            return {"ok": False, "error": str(e)}
-        root_r = root.resolve()
-        if not str(new_abs).startswith(str(root_r)):
-            return {"ok": False, "error": "拒绝路径"}
-        try:
             new_abs.relative_to(root_r)
-        except ValueError:
+        except (OSError, ValueError):
             return {"ok": False, "error": "拒绝路径"}
         if new_abs.exists():
             return {"ok": False, "error": "文件已存在"}
-        new_abs.parent.mkdir(parents=True, exist_ok=True)
+
         stem = Path(out_name).stem.replace("_", " ").replace("-", " ").strip() or "Untitled"
         today = datetime.date.today().isoformat()
         if out_ext == ".rst":
@@ -2006,6 +2051,7 @@ class NoteManagerDaemon:
             )
         try:
             suppress_path(new_abs)
+            new_abs.parent.mkdir(parents=True, exist_ok=True)
             new_abs.write_text(initial, encoding="utf-8", newline="\n")
         except OSError as e:
             return {"ok": False, "error": str(e)}
@@ -2030,8 +2076,8 @@ class NoteManagerDaemon:
         self._notify_change("build_complete", {"directory": str(root_r)})
         return {"ok": True, "source_rel_path": new_rel, "html_rel_path": html_rel}
 
-    def delete_managed_source(self, project_idx: int, source_rel_posix: str) -> dict:
-        """删除当前监控工程内的源文件并更新索引与 HTML。"""
+    def note_delete_info(self, project_idx: int, source_rel_posix: str) -> dict:
+        """Return impact data before moving a note to trash."""
         with self._lock:
             dirs = list(self._observers.keys())
         if not (0 <= project_idx < len(dirs)):
@@ -2040,25 +2086,111 @@ class NoteManagerDaemon:
         if rel is None:
             return {"ok": False, "error": "非法源文件路径"}
         abs_src = (root / rel).resolve()
+        try:
+            abs_src.relative_to(root.resolve())
+        except ValueError:
+            return {"ok": False, "error": "拒绝路径"}
+        if not abs_src.is_file():
+            return {"ok": False, "error": "文件不存在"}
+
+        html_rel = rel.with_suffix(".html").as_posix()
+        title = rel.stem
+        backlinks = []
+        relations_file = root / ".NoteManager" / "html" / "_index" / "relations.json"
+        if relations_file.is_file():
+            try:
+                rel_data = json.loads(relations_file.read_text(encoding="utf-8"))
+                doc = (rel_data.get("docs") or {}).get(html_rel) or {}
+                backlinks = doc.get("backlinks") or []
+                if doc.get("title"):
+                    title = str(doc["title"])
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                backlinks = []
+
+        images = []
+        try:
+            text = abs_src.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        image_patterns = [
+            re.compile(r"!\[[^\]]*\]\(\s*<?([^)\s>]+)"),
+            re.compile(r"^\s*\.\.\s+(?:image|figure)::\s*(\S+)", re.MULTILINE),
+        ]
+        seen = set()
+        for pattern in image_patterns:
+            for match in pattern.finditer(text):
+                value = (match.group(1) or "").strip().strip('"\'')
+                if not value or value.startswith(("http://", "https://", "data:")):
+                    continue
+                if value not in seen:
+                    seen.add(value)
+                    images.append(value)
+
+        return {
+            "ok": True,
+            "source_rel_path": rel.as_posix(),
+            "html_rel_path": html_rel,
+            "title": title,
+            "backlink_count": len(backlinks),
+            "backlinks": backlinks[:20],
+            "image_count": len(images),
+            "images": images[:20],
+        }
+
+    def _trash_note(self, root: Path, abs_src: Path, rel: Path) -> Path:
+        base = root / ".NoteManager" / "trash" / datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        dest = base / rel
+        n = 1
+        while dest.exists():
+            base = root / ".NoteManager" / "trash" / (
+                datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{n}"
+            )
+            dest = base / rel
+            n += 1
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        suppress_path(abs_src)
+        shutil.move(str(abs_src), str(dest))
+        return dest
+
+    def delete_managed_source(self, project_idx: int, source_rel_posix: str) -> dict:
+        """把当前监控工程内的源文件移到工程回收站并更新索引与 HTML。"""
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root, rel = self._validated_source_rel(Path(dirs[project_idx]), source_rel_posix)
+        if rel is None:
+            return {"ok": False, "error": "非法源文件路径"}
         root_r = root.resolve()
-        if not str(abs_src).startswith(str(root_r)):
+        abs_src = (root / rel).resolve()
+        try:
+            abs_src.relative_to(root_r)
+        except ValueError:
             return {"ok": False, "error": "拒绝路径"}
         if not abs_src.is_file():
             return {"ok": False, "error": "文件不存在"}
         try:
-            suppress_path(abs_src)
-            abs_src.unlink()
+            trashed = self._trash_note(root_r, abs_src, rel)
         except OSError as e:
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": f"移动到回收站失败: {e}"}
         try:
             from notemanager.builder import remove_file
 
             remove_file(root, abs_src)
         except Exception as e:
             logger.exception("删除笔记后更新索引失败")
+            try:
+                suppress_path(trashed)
+                shutil.move(str(trashed), str(abs_src))
+            except OSError:
+                pass
             return {"ok": False, "error": f"更新索引失败: {e}"}
         self._notify_change("build_complete", {"directory": str(root_r)})
-        return {"ok": True, "redirect_html": "index.html"}
+        return {
+            "ok": True,
+            "redirect_html": "index.html",
+            "trash_rel": trashed.relative_to(root_r).as_posix(),
+        }
 
     def save_paste_image(
         self,

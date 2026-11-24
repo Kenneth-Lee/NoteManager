@@ -422,6 +422,28 @@ class WebHandler(BaseHTTPRequestHandler):
                 str(data.get("filename", "")),
                 str(data.get("source_ext", ".md")),
             )
+        elif path == "/api/create_note_in_dir":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            resp = self.daemon_ref.create_note_in_dir(
+                pj,
+                str(data.get("dir_rel_path", "")),
+                str(data.get("filename", "")),
+                str(data.get("source_ext", ".md")),
+            )
+        elif path == "/api/note_delete_info":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            resp = self.daemon_ref.note_delete_info(
+                pj,
+                str(data.get("source_rel_path", "")),
+            )
         elif path == "/api/delete_note":
             try:
                 pj = int(data.get("project", -1))
