@@ -162,7 +162,7 @@ Markdown 也有标准的标题锚点（例如 `#section`），但没有与 reST
 
 - Markdown/reST 中，空行才表示新段落；
 - 段落内部的换行会被合并；
-- 代码块、`<pre>`、`<code>`、表格单元格不参与这个合并；
+- 代码块、`<pre>`、`<code>` 不参与这个合并；表格中的换行建议手动控制；
 - 需要强制换行时，使用 Markdown 行尾两个空格 + 换行，或 `<br>`；
 - reST 可以使用 line block（行块）或原始 HTML `<br>`。
 
@@ -221,12 +221,12 @@ $$
 
 ### Markdown
 
-```markdown
+````markdown
 ```mermaid
 graph TD
     A[开始] --> B[结束]
 ```
-```
+````
 
 ### reST
 
