@@ -40,18 +40,22 @@ NoteManager的用户界面是这样构思的：首先，我们对每个用户，
 
 ### 方式一：正式安装（推荐）
 
-如果你已经把这个项目发布到 PyPI（或私有索引）：
-
 ```bash
-pip install notemanager
+pip install NoteManager
 ```
 
-### 方式二：本地开发安装（editable）
+如果你用uv，就是这样：
+```bash
+uv tool install NoteManager
+```
 
-在源码目录下：
+### 方式二：源代码安装
+
+如果你下载的是源代码，而且打算调试，就在源代码目录中用类似这样的命令：
 
 ```bash
 pip install -e .
+uv tool install -e .
 ```
 
 依赖：Python >= 3.10，自动安装 `docutils`、`Markdown`、`pygments`、`watchdog`。
@@ -78,19 +82,9 @@ python -m build
 pip install dist/notemanager-*-py3-none-any.whl
 ```
 
-若需上传到 PyPI（需 [PyPI](https://pypi.org/) 账号与 API token）：
-
-```bash
-pip install twine
-twine check dist/*
-twine upload dist/*
-```
-
-上传前通常会先清理旧产物：`rm -rf dist/ build/ *.egg-info`，再重新执行 `python -m build`。
-
 ## 使用
 
-### 启动
+### 启动nmrd
 
 ```bash
 notemanager start
@@ -104,6 +98,11 @@ nmr start -r
 ```
 
 Daemon 启动后自动开启 Web 控制面板，默认地址：http://localhost:19833
+
+如果你使用其他命令行命令，而nmrd没有启动，也不会影响你直接运行那些命令，它们会
+自动nmrd后台的。除非你要立即使用webui，否则不需要主动去启动nmrd的。比如你写了
+一个临时的md文件，你直接nmr view xxx.md就可以了。它会自动启动nmrd，然后打开浏
+览器渲染这个文件的。
 
 ### 添加监控目录
 
@@ -145,9 +144,10 @@ nmr list                    # 列出所有监控中的目录
 nmr remove <目录>           # 停止监控并删除生成的文件
 nmr default [工程]          # 设置/查看默认工程
 nmr main [页面id]           # 查看/设置主页面（view/search 的默认目标）
-nmr start --restart         # 重启 daemon；端口按 config.json / CLI 参数解析
-nmr start -r                # 同上，--restart 的短参数
+nmr start --restart/-r      # 重启 daemon；端口按 config.json / CLI 参数解析
 nmr stop                    # 停止 daemon
+nmr view <文件>             # 临时渲染一个文件
+nmr check <文件>            # 检查一个文件有没有语法错误
 ```
 
 ### 导出手机用 .html.zip（export）
@@ -176,7 +176,7 @@ nmr search <关键词> [-p 工程]
 - 同时在命令行输出所有匹配结果对应的源文件绝对路径，便于复制后自行 `cd`
 
 ```bash
-nmr searche <关键词> [-p 工程]
+nmr search <关键词> [-p 工程]
 ```
 
 - 交互式选择搜索结果
@@ -406,6 +406,19 @@ P1 已增加图片引用索引、独占图片清理和回收站恢复；详见�
 - **导入资源**：选择本地文件或填写 URL，资源会复制到当前目录的 `_static/`。
 
 导入本地文件/URL 的详细规则见 `docs/asset-import.md`。
+
+### 文档语法
+
+NoteManager 支持 reST、Markdown 和纯文本。除标准语法外，还支持：
+
+- reST `:dtag:` / Markdown `#tag` 文档标签；
+- reST `.. index::` / `:index:` 索引词；
+- reST label / `:ref:` / `:doc:` 交叉引用；
+- 中文段落内软换行自动合并；
+- KaTeX 数学公式、Mermaid 图表、代码高亮；
+- 目录级 `_static/` 图片约定。
+
+完整写法见 [reST / Markdown 扩展语法与书写约定](https://github.com/Kenneth-Lee/NoteManager/blob/master/docs/rst-md-syntax.md)。
 
 ### 扫描格式与忽略规则
 
