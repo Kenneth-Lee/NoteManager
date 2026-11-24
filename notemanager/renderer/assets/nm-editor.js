@@ -28,25 +28,29 @@
 
   function ensureNoteToolbarButtons() {
     var tb = document.querySelector('.nm-source-toolbar');
-    if (!tb || document.getElementById('nm-source-new')) return;
+    if (!tb) return;
     var save = document.getElementById('nm-source-save');
     if (!save) return;
-    var nb = document.createElement('button');
-    nb.type = 'button';
-    nb.id = 'nm-source-new';
-    nb.className = 'nm-source-secondary';
-    nb.title = '在与当前笔记相同的目录下新建文件';
-    nb.textContent = '新建笔记';
-    nb.style.cssText = NM_NEW_STYLE;
-    var db = document.createElement('button');
-    db.type = 'button';
-    db.id = 'nm-source-delete';
-    db.className = 'nm-source-secondary nm-source-delete';
-    db.title = '删除磁盘上的当前源文件';
-    db.textContent = '删除当前笔记';
-    db.style.cssText = NM_DEL_STYLE;
-    save.insertAdjacentElement('afterend', nb);
-    nb.insertAdjacentElement('afterend', db);
+    var after = save;
+    function add(id, title, text, style) {
+      if (document.getElementById(id)) {
+        after = document.getElementById(id);
+        return;
+      }
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.id = id;
+      btn.className = 'nm-source-secondary';
+      btn.title = title;
+      btn.textContent = text;
+      btn.style.cssText = style || NM_NEW_STYLE;
+      after.insertAdjacentElement('afterend', btn);
+      after = btn;
+    }
+    add('nm-source-new', '在与当前笔记相同的目录下新建文件', '新建笔记', NM_NEW_STYLE);
+    add('nm-source-paste-image', '把剪贴板中的图片粘贴到当前笔记目录的 _static', '粘贴图片', NM_NEW_STYLE);
+    add('nm-source-import', '把本地文件或 URL 导入当前笔记目录的 _static', '导入资源', NM_NEW_STYLE);
+    add('nm-source-delete', '删除磁盘上的当前源文件', '删除当前笔记', NM_DEL_STYLE);
   }
 
   function projectFromPath() {
@@ -267,7 +271,8 @@
       statusEl.style.color = isErr ? '#f88' : '#98c379';
     }
 
-    function saveSource() {
+    function saveSource(options) {
+      options = options || {};
       setStatus('保存中…');
       fetch('/api/save_source', {
         method: 'POST',
@@ -290,6 +295,8 @@
           if (d.ok) {
             window.__nmInitialSource = cm.getValue();
             window.__nmDirty = false;
+            if (options.quit && window.nmExitSplit) window.nmExitSplit();
+            switchToRenderTab();
             setStatus('已保存，正在刷新…');
             window.location.reload();
           } else {
@@ -305,6 +312,203 @@
       saveBtn.addEventListener('click', function () {
         saveSource();
       });
+    }
+
+    var importOverlay = null;
+
+    function insertAssetResult(d) {
+      var line = ext === '.rst' ? d.insert_rst : d.insert_markdown;
+      if (!line) {
+        setStatus('服务端没有返回插入片段', true);
+        return false;
+      }
+      cm.replaceSelection(line + '\n');
+      recomputeDirty();
+      setStatus('已插入资源引用，请保存并刷新渲染');
+      return true;
+    }
+
+    function uploadPasteFile(file) {
+      var fd = new FormData();
+      fd.append('project', String(project));
+      fd.append('source_rel_path', cfg.source_rel);
+      fd.append('file', file, file.name || 'paste.png');
+      setStatus('上传图片…');
+      fetch('/api/paste_image', { method: 'POST', body: fd })
+        .then(function (r) {
+          return r.json().then(function (d) {
+            if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+            return d;
+          });
+        })
+        .then(function (d) {
+          if (insertAssetResult(d)) setStatus('图片已插入，请保存并刷新渲染');
+        })
+        .catch(function (err) {
+          setStatus(err && err.message ? err.message : '上传图片失败', true);
+        });
+    }
+
+    function pasteImageFromClipboard() {
+      if (!navigator.clipboard || typeof navigator.clipboard.read !== 'function') {
+        setStatus('浏览器不支持从剪贴板读取，请在编辑区按 Ctrl+V', true);
+        return;
+      }
+      setStatus('读取剪贴板…');
+      navigator.clipboard.read().then(function (items) {
+        for (var i = 0; i < items.length; i++) {
+          var types = items[i].types || [];
+          for (var j = 0; j < types.length; j++) {
+            if (types[j].indexOf('image/') !== 0) continue;
+            return items[i].getType(types[j]).then(function (blob) {
+              var f = new File([blob], 'paste' + (blob.type === 'image/jpeg' ? '.jpg' : '.png'), {
+                type: blob.type,
+              });
+              uploadPasteFile(f);
+            });
+          }
+        }
+        setStatus('剪贴板里没有图片', true);
+      }).catch(function (err) {
+        setStatus('无法读取剪贴板，请在编辑区按 Ctrl+V 或使用「导入资源」', true);
+      });
+    }
+
+    function ensureImportDialog() {
+      if (importOverlay) return;
+      importOverlay = document.createElement('div');
+      importOverlay.className = 'nm-note-overlay';
+      importOverlay.hidden = true;
+      importOverlay.innerHTML = '<div class="nm-note-dialog" role="dialog" aria-label="导入资源">' +
+        '<div class="nm-note-head"><h2>导入资源</h2>' +
+        '<button type="button" class="nm-note-close" aria-label="关闭">×</button></div>' +
+        '<p class="nm-import-hint">资源会保存到当前笔记目录的 <code>_static/</code>，并插入引用。</p>' +
+        '<div class="nm-note-field"><label>本地文件</label>' +
+        '<input type="file" id="nm-import-file"></div>' +
+        '<div class="nm-note-field"><label for="nm-import-url">或资源 URL</label>' +
+        '<input type="url" id="nm-import-url" placeholder="https://example.com/image.png" autocomplete="off"></div>' +
+        '<div class="nm-note-error" id="nm-import-error" hidden></div>' +
+        '<div class="nm-note-actions"><button type="button" class="nm-note-cancel">取消</button>' +
+        '<button type="button" class="nm-note-primary" id="nm-import-url-btn">导入 URL</button></div>' +
+        '</div>';
+      document.body.appendChild(importOverlay);
+      importOverlay.addEventListener('mousedown', function (event) {
+        if (event.target === importOverlay) closeImportDialog();
+      });
+      importOverlay.querySelector('.nm-note-close').addEventListener('click', closeImportDialog);
+      importOverlay.querySelector('.nm-note-cancel').addEventListener('click', closeImportDialog);
+      importOverlay.querySelector('#nm-import-file').addEventListener('change', function () {
+        if (this.files && this.files[0]) uploadImportFile(this.files[0]);
+      });
+      importOverlay.querySelector('#nm-import-url-btn').addEventListener('click', importFromUrl);
+      importOverlay.querySelector('#nm-import-url').addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          importFromUrl();
+        }
+      });
+    }
+
+    function setImportError(text) {
+      var err = importOverlay && importOverlay.querySelector('#nm-import-error');
+      if (!err) return;
+      err.textContent = text || '';
+      err.hidden = !text;
+    }
+
+    function closeImportDialog() {
+      if (!importOverlay) return;
+      importOverlay.hidden = true;
+      document.body.classList.remove('nm-note-open');
+    }
+
+    function openImportDialog() {
+      ensureImportDialog();
+      importOverlay.hidden = false;
+      document.body.classList.add('nm-note-open');
+      setImportError('');
+      var file = importOverlay.querySelector('#nm-import-file');
+      if (file) file.value = '';
+      var url = importOverlay.querySelector('#nm-import-url');
+      if (url) url.value = '';
+      setTimeout(function () { if (url) url.focus(); }, 0);
+    }
+
+    function finishImport(d) {
+      if (!d.ok) {
+        setImportError(d.error || '导入失败');
+        return;
+      }
+      if (!insertAssetResult(d)) {
+        setImportError('服务端没有返回插入片段');
+        return;
+      }
+      closeImportDialog();
+    }
+
+    function uploadImportFile(file) {
+      if (!importOverlay) return;
+      setImportError('');
+      var fd = new FormData();
+      fd.append('project', String(project));
+      fd.append('source_rel_path', cfg.source_rel);
+      fd.append('file', file, file.name || 'resource');
+      setStatus('导入资源…');
+      fetch('/api/import_asset', { method: 'POST', body: fd })
+        .then(function (r) {
+          return r.json().then(function (d) {
+            if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+            return d;
+          });
+        })
+        .then(finishImport)
+        .catch(function (err) {
+          setImportError(err && err.message ? err.message : '导入失败');
+        });
+    }
+
+    function importFromUrl() {
+      var urlInput = importOverlay && importOverlay.querySelector('#nm-import-url');
+      if (!urlInput) return;
+      var url = String(urlInput.value || '').trim();
+      if (!url) {
+        setImportError('请输入资源 URL');
+        urlInput.focus();
+        return;
+      }
+      setImportError('');
+      var btn = importOverlay.querySelector('#nm-import-url-btn');
+      btn.disabled = true;
+      setStatus('下载资源…');
+      fetch('/api/import_url', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+        body: JSON.stringify({
+          project: project,
+          source_rel_path: cfg.source_rel,
+          url: url,
+        }),
+      })
+        .then(function (r) {
+          return r.json().then(function (d) {
+            if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+            return d;
+          });
+        })
+        .then(finishImport)
+        .catch(function (err) {
+          setImportError(err && err.message ? err.message : '导入 URL 失败');
+        })
+        .finally(function () { btn.disabled = false; });
+    }
+
+    var pasteImageBtn = document.getElementById('nm-source-paste-image');
+    if (pasteImageBtn) {
+      pasteImageBtn.addEventListener('click', pasteImageFromClipboard);
+    }
+    var importBtn = document.getElementById('nm-source-import');
+    if (importBtn) {
+      importBtn.addEventListener('click', openImportDialog);
     }
 
     function switchToRenderTab() {
@@ -330,6 +534,7 @@
           return;
         }
       }
+      if (window.nmExitSplit) window.nmExitSplit();
       switchToRenderTab();
     }
 
@@ -341,7 +546,10 @@
         quitToRender();
       });
       CodeMirror.Vim.defineEx('wq', 'wq', function () {
-        saveSource();
+        saveSource({quit: true});
+      });
+      CodeMirror.Vim.defineEx('x', 'x', function () {
+        saveSource({quit: true});
       });
     }
 
@@ -487,34 +695,7 @@
         e.preventDefault();
         var f = it.getAsFile();
         if (!f) continue;
-        var fd = new FormData();
-        fd.append('project', String(project));
-        fd.append('source_rel_path', cfg.source_rel);
-        fd.append('file', f, f.name || 'paste.png');
-        setStatus('上传截图…');
-        fetch('/api/paste_image', { method: 'POST', body: fd })
-          .then(function (r) {
-            if (!r.ok) {
-              return r.text().then(function (t) {
-                throw new Error(t || 'HTTP ' + r.status);
-              });
-            }
-            return r.json();
-          })
-          .then(function (d) {
-            if (!d.ok) {
-              setStatus(d.error || '上传失败', true);
-              return;
-            }
-            var line = ext === '.rst' ? d.insert_rst : d.insert_markdown;
-            if (!line) return;
-            editor.replaceSelection(line + '\n');
-            recomputeDirty();
-            setStatus('已插入图片引用，请点击「保存并刷新渲染」');
-          })
-          .catch(function (err) {
-            setStatus(err && err.message ? err.message : '上传失败', true);
-          });
+        uploadPasteFile(f);
         return;
       }
     });

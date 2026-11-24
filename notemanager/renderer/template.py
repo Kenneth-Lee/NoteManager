@@ -112,6 +112,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
         for name in extra_js_files
     )
 
+    source_panel_attrs = ""
     if source_editable and source_path:
         highlighted_source = ""
         cm_head = (
@@ -132,6 +133,8 @@ def wrap_html(body: str, title: str, html_rel_path: str,
             '<div class="nm-source-toolbar">'
             '<button type="button" class="nm-source-save" id="nm-source-save">保存并刷新渲染</button>'
             '<button type="button" class="nm-source-secondary" id="nm-source-new" title="在与当前笔记相同的目录下新建文件">新建笔记</button>'
+            '<button type="button" class="nm-source-secondary" id="nm-source-paste-image" title="把剪贴板中的图片粘贴到当前笔记目录的 _static">粘贴图片</button>'
+            '<button type="button" class="nm-source-secondary" id="nm-source-import" title="把本地文件或 URL 导入当前笔记目录的 _static">导入资源</button>'
             '<button type="button" class="nm-source-secondary nm-source-delete" id="nm-source-delete" title="删除磁盘上的当前源文件">删除当前笔记</button>'
             '<label class="nm-source-vim-wrap" title="启用 CodeMirror 内置 Vim 子集（默认关闭；偏好会保存在本机）">'
             '<input type="checkbox" id="nm-source-vim" autocomplete="off"> Vim 键位</label>'
@@ -158,8 +161,11 @@ def wrap_html(body: str, title: str, html_rel_path: str,
         highlighted_source = highlighted_source.replace("{", "{{").replace("}", "}}")
         source_panel_inner = (
             f'<div class="nm-source-path">{source_path_display}</div>\n'
+            '<div class="nm-source-readonly-note">'
+            '只读视图；如需编辑，请使用「外部编辑」。</div>'
             f"<pre><code>{highlighted_source}</code></pre>"
         )
+        source_panel_attrs = ' tabindex="0"'
     warnings_text = "\\n".join(warnings) if warnings else "无诊断信息"
 
     temp_monitor_script = ""
@@ -447,6 +453,8 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <h4 style="margin-top:10px;">快捷键</h4>
 <ul>
 <li><code>Ctrl/⌘ K</code> — 打开/关闭命令面板</li>
+<li><code>Ctrl/⌘+Alt+S</code> — 切换分屏</li>
+<li><code>Ctrl/⌘+Alt+E</code> — 用外部编辑器打开当前源文件</li>
 <li><code>↑</code> / <code>↓</code> — 在命令面板中选择</li>
 <li><code>Enter</code> — 打开选中项</li>
 <li><code>Esc</code> — 关闭命令面板/帮助</li>
@@ -477,7 +485,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <div class="nm-tabs-right">
 <span id="nm-reading-controls" class="nm-reading-controls"></span>
 {delete_current_button}
-<button class="nm-split-btn" id="nm-open-external" type="button" title="在外部编辑器中打开当前源文件（默认 gvim）" style="display:none">外部编辑</button>
+<button class="nm-split-btn" id="nm-open-external" type="button" title="在外部编辑器中打开当前源文件（默认 gvim；Ctrl/⌘+Alt+E）" style="display:none">外部编辑</button>
 <button class="nm-split-btn" id="nm-split-btn" type="button" title="左右分屏，同时查看渲染与源文件">分屏</button>
 <button class="nm-split-btn" id="nm-sync-btn" type="button" title="分屏时双向同步滚动（点击开/关）">同步</button>
 <a class="nm-console-btn" href="/" title="返回控制台">控制台</a>
@@ -491,7 +499,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
      data-nm-related-path="{_escape(str(html_rel_path))}"
      data-nm-related-prefix="{prefix}"></div>
 </div>
-<div id="nm-panel-source" class="nm-tab-panel nm-source-panel">
+<div id="nm-panel-source" class="nm-tab-panel nm-source-panel"{source_panel_attrs}>
 {source_panel_inner}
 </div>
 <div id="nm-panel-warnings" class="nm-tab-panel nm-warnings-panel">

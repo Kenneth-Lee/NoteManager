@@ -226,6 +226,9 @@ class WebHandler(BaseHTTPRequestHandler):
         if path == "/api/paste_image" and "multipart/form-data" in ctype.lower():
             self._handle_paste_image_post(ctype)
             return
+        if path == "/api/import_asset" and "multipart/form-data" in ctype.lower():
+            self._handle_import_asset_post(ctype)
+            return
         self._handle_api_post(path)
 
     def _origin_allowed(self) -> bool:
@@ -455,6 +458,17 @@ class WebHandler(BaseHTTPRequestHandler):
                 str(data.get("source_rel_path", "")),
                 bool(data.get("delete_assets")),
             )
+        elif path == "/api/import_url":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            resp = self.daemon_ref.import_asset_from_url(
+                pj,
+                str(data.get("source_rel_path", "")),
+                str(data.get("url", "")),
+            )
         elif path == "/api/orphan_assets":
             try:
                 pj = int(data.get("project", -1))
@@ -543,6 +557,31 @@ class WebHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": "无效文件数据"})
             return
         resp = self.daemon_ref.save_paste_image(project, rel, raw, ct)
+        self._send_json(resp)
+
+    def _handle_import_asset_post(self, content_type: str):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length > 0 else b""
+            fields = _parse_multipart_form(content_type, body)
+        except (ValueError, OSError) as e:
+            self._send_json({"ok": False, "error": str(e)})
+            return
+        try:
+            project = int(fields.get("project", -1))
+        except (TypeError, ValueError):
+            self._send_json({"ok": False, "error": "无效工程编号"})
+            return
+        rel = str(fields.get("source_rel_path", ""))
+        file_entry = fields.get("file")
+        if not isinstance(file_entry, tuple) or len(file_entry) != 3:
+            self._send_json({"ok": False, "error": "缺少文件字段"})
+            return
+        raw, filename, ct = file_entry
+        if not isinstance(raw, bytes):
+            self._send_json({"ok": False, "error": "无效文件数据"})
+            return
+        resp = self.daemon_ref.save_imported_asset(project, rel, filename, raw, ct)
         self._send_json(resp)
 
     def _serve_project_file(self, path):

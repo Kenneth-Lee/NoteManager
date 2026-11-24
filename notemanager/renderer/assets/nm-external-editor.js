@@ -35,6 +35,17 @@
     if (!target) return;
     btn.style.display = "";
 
+    var NM_EXTERNAL_HOTKEY = 'Ctrl/\u2318+Alt+E';
+    document.addEventListener("keydown", function (event) {
+      if (event.repeat) return;
+      if (!(event.ctrlKey || event.metaKey) || !event.altKey) return;
+      if (String(event.key || "").toLowerCase() !== "e") return;
+      if (btn.style.display === "none" || btn.disabled) return;
+      event.preventDefault();
+      event.stopPropagation();
+      btn.click();
+    }, true);
+
     btn.addEventListener("click", function () {
       if (btn.disabled) return;
       if (target.kind === "managed" && window.__nmDirty) {

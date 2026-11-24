@@ -17,3 +17,4 @@
 * [目录级新建 / 删除笔记](note-lifecycle.md)
 * [图片资源索引 / 独占图片清理 / 回收站恢复](asset-cleanup.md)
 * [粘贴图片到目录级 _static](paste-image-static.md)
+* [粘贴图片 / 导入资源](asset-import.md)

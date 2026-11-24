@@ -18,8 +18,10 @@ import datetime
 import hashlib
 import time
 import shutil
+import mimetypes
 from pathlib import Path, PurePosixPath
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode, urlparse
+from urllib.request import Request, urlopen
 
 from notemanager.protocol import (
     DEFAULT_HOST, DEFAULT_PORT, DEFAULT_UNIX_SOCKET, recv_command, send_response,
@@ -80,6 +82,13 @@ def _temp_renderer_signature() -> str:
     return _temp_renderer_fingerprint()
 
 _PASTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+_IMPORT_ASSET_MAX_BYTES = 32 * 1024 * 1024
+_IMPORT_BLOCKED_EXTS = frozenset({
+    ".html", ".htm", ".xhtml", ".js", ".mjs", ".svg",
+})
+_IMPORT_IMAGE_EXTS = frozenset({
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico",
+})
 _PASTE_IMAGE_TYPES: dict[str, str] = {
     "image/png": ".png",
     "image/jpeg": ".jpg",
@@ -2591,6 +2600,130 @@ class NoteManagerDaemon:
             return {"ok": False, "error": f"恢复后重建失败: {e}"}
         self._notify_change("build_complete", {"directory": str(root)})
         return {"ok": True, "source_rel_path": source_rel}
+
+    def _asset_filename(self, root_static: Path, filename: str) -> str:
+        original = unquote(str(filename or "")).strip().replace("\\", "/")
+        original = Path(original).name
+        ext = Path(original).suffix.lower()
+        if ext in _IMPORT_BLOCKED_EXTS:
+            raise ValueError(f"不允许导入该类型文件: {ext}")
+        safe_ext = ext if re.fullmatch(r"\.[A-Za-z0-9]{1,10}", ext or "") else ""
+        stem = re.sub(
+            r"[^0-9A-Za-z_.\-\u4e00-\u9fff]+", "-", Path(original).stem
+        ).strip("-_. ") or "resource"
+        stem = stem[:80]
+        candidate = stem + safe_ext
+        if (root_static / candidate).exists():
+            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            candidate = f"{stem}-{stamp}-{secrets.token_hex(3)}{safe_ext}"
+        return candidate
+
+    def save_imported_asset(
+        self,
+        project_idx: int,
+        source_rel_posix: str,
+        filename: str,
+        data: bytes,
+        content_type: str = "",
+    ) -> dict:
+        """Import a local file into the note directory's _static/ and return insert syntax."""
+        if len(data) > _IMPORT_ASSET_MAX_BYTES:
+            return {"ok": False, "error": "资源过大"}
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root, rel = self._validated_source_rel(Path(dirs[project_idx]), source_rel_posix)
+        if rel is None:
+            return {"ok": False, "error": "非法源文件路径"}
+        root_r = root.resolve()
+        dest_dir = (root / rel.parent / "_static").resolve()
+        try:
+            dest_dir.relative_to(root_r)
+        except ValueError:
+            return {"ok": False, "error": "非法保存目录"}
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            name = self._asset_filename(dest_dir, filename)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        if not Path(name).suffix and content_type:
+            guessed = mimetypes.guess_extension(content_type.split(";")[0].strip())
+            if guessed:
+                name += guessed
+        if Path(name).suffix.lower() in _IMPORT_BLOCKED_EXTS:
+            return {"ok": False, "error": f"不允许导入该类型文件: {Path(name).suffix.lower()}"}
+        if (dest_dir / name).exists():
+            stem = Path(name).stem
+            suffix = Path(name).suffix
+            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            name = f"{stem}-{stamp}-{secrets.token_hex(3)}{suffix}"
+        out = (dest_dir / name).resolve()
+        try:
+            out.relative_to(root_r)
+        except ValueError:
+            return {"ok": False, "error": "拒绝路径"}
+        try:
+            out.write_bytes(data)
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+        src_dir = (root / rel.parent).resolve()
+        rel_insert = Path(os.path.relpath(out, src_dir)).as_posix()
+        is_image = out.suffix.lower() in _IMPORT_IMAGE_EXTS
+        if is_image:
+            insert_markdown = f"![]({rel_insert})"
+            insert_rst = f".. image:: {rel_insert}"
+        else:
+            insert_markdown = f"[{name}]({rel_insert})"
+            insert_rst = f"`{name} <{rel_insert}>`_"
+        html_dir = root / ".NoteManager" / "html"
+        if html_dir.is_dir():
+            try:
+                from notemanager.builder import _copy_project_assets
+
+                _copy_project_assets(root, html_dir)
+            except Exception as ex:
+                logger.warning("导入资源后同步 html 资源目录失败: %s", ex)
+        return {
+            "ok": True,
+            "saved_rel_path": rel_insert,
+            "filename": name,
+            "insert_markdown": insert_markdown,
+            "insert_rst": insert_rst,
+        }
+
+    def import_asset_from_url(
+        self,
+        project_idx: int,
+        source_rel_posix: str,
+        url: str,
+    ) -> dict:
+        parsed = urlparse(str(url or "").strip())
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return {"ok": False, "error": "只支持 http/https URL"}
+        try:
+            req = Request(
+                url,
+                headers={"User-Agent": "NoteManager/import"},
+            )
+            with urlopen(req, timeout=20) as resp:
+                data = resp.read(_IMPORT_ASSET_MAX_BYTES + 1)
+                ctype = resp.headers.get("Content-Type", "")
+                disposition = resp.headers.get("Content-Disposition", "")
+                if len(data) > _IMPORT_ASSET_MAX_BYTES:
+                    return {"ok": False, "error": "资源过大"}
+        except Exception as e:
+            return {"ok": False, "error": f"下载失败: {e}"}
+        filename = ""
+        if disposition:
+            match = re.search(r"filename\*?=(?:UTF-8''|\")?([^\";]+)", disposition, re.I)
+            if match:
+                filename = unquote(match.group(1).strip())
+        if not filename:
+            filename = Path(unquote(parsed.path)).name or "resource"
+        return self.save_imported_asset(
+            project_idx, source_rel_posix, filename, data, ctype
+        )
 
     def save_paste_image(
         self,

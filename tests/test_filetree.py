@@ -37,6 +37,17 @@ def test_landing_tree_has_create_and_delete_actions(tmp_path):
     assert 'id="nm-delete-current"' in doc
     assert 'data-nm-delete-source="sub/one.md"' in doc
     assert 'data-nm-source-path="sub/one.md"' in doc
+    assert 'id="nm-source-paste-image"' in doc
+    assert 'id="nm-source-import"' in doc
+    static_dir = root / ".NoteManager" / "html" / "_static"
+    assert "nmExitSplit" in (static_dir / "notemanager.js").read_text(encoding="utf-8")
+    notemanager_js = (static_dir / "notemanager.js").read_text(encoding="utf-8")
+    assert "NM_SPLIT_HOTKEY" in notemanager_js
+    assert "NM_FOCUS_EDITOR_ON_SPLIT" in notemanager_js
+    assert "NM_EXTERNAL_HOTKEY" in (static_dir / "nm-external-editor.js").read_text(
+        encoding="utf-8"
+    )
+    assert "Ctrl/⌘+Alt+S" in (static_dir / "nm-command.js").read_text(encoding="utf-8")
 
 
 def test_create_note_in_dir_and_delete_to_trash(tmp_path):
@@ -216,3 +227,28 @@ def test_paste_image_goes_to_directory_static(tmp_path):
     static_files = list((root / "sub" / "_static").glob("nm-paste-my-note-*.png"))
     assert len(static_files) == 1
     assert (root / ".NoteManager" / "html" / "sub" / "_static" / static_files[0].name).is_file()
+
+
+def test_import_local_asset_goes_to_static(tmp_path):
+    root = tmp_path / "proj"
+    (root / "sub").mkdir(parents=True)
+    source = root / "sub" / "note.md"
+    source.write_text("# Note\n\n", encoding="utf-8")
+    builder.full_build(root)
+    daemon = _bare_daemon(root)
+
+    result = daemon.save_imported_asset(
+        0, "sub/note.md", "report.pdf", b"%PDF-fake", "application/pdf"
+    )
+    assert result["ok"] is True
+    assert result["filename"] == "report.pdf"
+    assert result["saved_rel_path"] == "_static/report.pdf"
+    assert result["insert_markdown"] == "[report.pdf](_static/report.pdf)"
+    assert result["insert_rst"] == "`report.pdf <_static/report.pdf>`_"
+    assert (root / "sub" / "_static" / "report.pdf").is_file()
+    assert (root / ".NoteManager" / "html" / "sub" / "_static" / "report.pdf").is_file()
+
+    blocked = daemon.save_imported_asset(
+        0, "sub/note.md", "attack.html", b"<script>", "text/html"
+    )
+    assert blocked["ok"] is False

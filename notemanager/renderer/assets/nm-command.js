@@ -289,6 +289,8 @@
             '<div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>在命令面板中选择</dd></div>' +
             '<div><dt><kbd>Enter</kbd></dt><dd>打开选中的文档或执行命令</dd></div>' +
             '<div><dt><kbd>Esc</kbd></dt><dd>关闭命令面板或本帮助</dd></div>' +
+            '<div><dt><kbd>Ctrl/⌘+Alt+S</kbd></dt><dd>切换分屏（文档页）</dd></div>' +
+            '<div><dt><kbd>Ctrl/⌘+Alt+E</kbd></dt><dd>用外部编辑器打开当前源文件</dd></div>' +
             '</dl>' +
             '<p class="nm-help-note">命令面板可以搜索文档、打开页面、保存搜索视图。' +
             '搜索框右侧的 <b>?</b> 可以查看搜索语法。</p>' +

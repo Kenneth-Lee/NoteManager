@@ -851,6 +851,10 @@ def _ensure_overview_assets(html_dir) -> None:
         editor_js = (static_dir / "nm-editor.js").read_text(encoding="utf-8")
     except OSError:
         editor_js = ""
+    try:
+        external_js = (static_dir / "nm-external-editor.js").read_text(encoding="utf-8")
+    except OSError:
+        external_js = ""
     if (
         ".nm-overview" not in css
         or "nmRevealSidebarDir" not in js
@@ -865,6 +869,14 @@ def _ensure_overview_assets(html_dir) -> None:
         or "trash_orphans" not in filetree_js
         or "__nmSuppressBuildReload" not in filetree_js
         or "__nmSuppressBuildReload" not in editor_js
+        or "import_asset" not in editor_js
+        or "__nmSuppressBuildReload" not in js
+        or "nmExitSplit" not in js
+        or "NM_SPLIT_HOTKEY" not in js
+        or "NM_FOCUS_EDITOR_ON_SPLIT" not in js
+        or "NM_FOCUS_READONLY_ON_SPLIT" not in js
+        or "NM_EXTERNAL_HOTKEY" not in external_js
+        or "Ctrl/⌘+Alt+S" not in command_js
     ):
         _copy_static_assets(static_dir)
 
@@ -1215,6 +1227,9 @@ body.nm-note-open { overflow: hidden; }
 .nm-note-danger { border: 1px solid #c62828; background: #c62828; color: #fff; }
 .nm-note-danger:disabled { opacity: .55; cursor: default; }
 .nm-note-file { font-size: 13px; color: #263238; margin-top: 8px; overflow-wrap: anywhere; }
+.nm-import-hint { color: #78909c; font-size: 11px; line-height: 1.55; margin: 8px 0 0; }
+.nm-import-hint code { background: #eceff1; padding: 0 3px; border-radius: 2px; }
+#nm-import-file { padding: 4px 0; border: 0; background: transparent; font-size: 12px; }
 .nm-note-impact { font-size: 12px; color: #555; background: #f7f9fa; border: 1px solid #eceff1;
                   border-radius: 5px; padding: 8px 10px; margin-top: 10px; line-height: 1.6; }
 .nm-note-impact-main { margin-top: 3px; color: #37474f; }
@@ -1783,7 +1798,30 @@ window.nmRevealSidebarDir = function(id) {
                 hookCM();
             }
             layoutChanged();
+            if (on) {
+                setTimeout(function () {
+                    if (window.__nmCM && typeof window.__nmCM.focus === 'function') {
+                        window.__nmCM.focus();
+                    } else if (sourcePanel && typeof sourcePanel.focus === 'function') {
+                        sourcePanel.focus();
+                    }
+                }, 30);
+            }
         }
+        window.nmSetSplit = setSplit;
+        window.nmExitSplit = function () { setSplit(false); };
+        var NM_SPLIT_HOTKEY = 'Ctrl/⌘+Alt+S';
+        var NM_FOCUS_EDITOR_ON_SPLIT = true;
+        var NM_FOCUS_READONLY_ON_SPLIT = true;
+        document.addEventListener('keydown', function (event) {
+            if (event.repeat) return;
+            if (!(event.ctrlKey || event.metaKey) || !event.altKey) return;
+            if (String(event.key || '').toLowerCase() !== 's') return;
+            if (!splitBtn) return;
+            event.preventDefault();
+            event.stopPropagation();
+            setSplit(!body.classList.contains('nm-split'));
+        }, true);
         if (splitBtn) {
             splitBtn.addEventListener('click', function () {
                 setSplit(!body.classList.contains('nm-split'));

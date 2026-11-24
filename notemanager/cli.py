@@ -1013,7 +1013,7 @@ def main():
                          help="TCP 端口（默认 19832；--restart 时默认沿用当前 daemon）")
     start_p.add_argument("--web-port", type=int, default=0,
                          help="Web UI 端口（默认 19833；--restart 时默认沿用当前 daemon）")
-    start_p.add_argument("--restart", action="store_true",
+    start_p.add_argument("--restart", "-r", action="store_true",
                          help="先停止当前 daemon，再用相同端口启动新实例")
     subparsers.add_parser("stop", help="停止后台 daemon")
     status_p = subparsers.add_parser("status", help="查看 daemon、项目与 Web 页面状态")
