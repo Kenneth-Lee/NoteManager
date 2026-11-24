@@ -15,6 +15,7 @@
 
     var views = loadViews();
     var overlay = null;
+    var helpOverlay = null;
     var input = null;
     var list = null;
     var selected = 0;
@@ -192,6 +193,7 @@
             out.push({kind: 'action', title: '回到项目首页', detail: 'Home', action: 'home'});
             out.push({kind: 'action', title: '返回控制台', detail: '/', action: 'console'});
             out.push({kind: 'action', title: '复制当前页面链接', detail: location.href, action: 'copy'});
+            out.push({kind: 'help', title: '快捷键帮助', detail: 'Ctrl/⌘ K · ↑/↓ · Enter · Esc'});
             return out;
         }
         searchDocs(q).forEach(function (doc) {
@@ -262,6 +264,8 @@
             openSearch(item.view.query);
         } else if (item.kind === 'save') {
             saveView(item.query);
+        } else if (item.kind === 'help') {
+            openHelp();
         } else if (item.kind === 'action') {
             if (item.action === 'home') window.location.href = prefix + 'index.html';
             else if (item.action === 'console') window.location.href = '/';
@@ -270,6 +274,44 @@
                 closePalette();
             }
         }
+    }
+
+    function ensureHelp() {
+        if (helpOverlay) return;
+        helpOverlay = document.createElement('div');
+        helpOverlay.className = 'nm-help-overlay';
+        helpOverlay.hidden = true;
+        helpOverlay.innerHTML = '<div class="nm-help-dialog" role="dialog" aria-label="快捷键帮助">' +
+            '<div class="nm-help-head"><h2>键盘快捷键</h2>' +
+            '<button type="button" class="nm-help-close" aria-label="关闭">×</button></div>' +
+            '<dl class="nm-help-list">' +
+            '<div><dt><kbd>Ctrl/⌘ K</kbd></dt><dd>打开/关闭命令面板</dd></div>' +
+            '<div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>在命令面板中选择</dd></div>' +
+            '<div><dt><kbd>Enter</kbd></dt><dd>打开选中的文档或执行命令</dd></div>' +
+            '<div><dt><kbd>Esc</kbd></dt><dd>关闭命令面板或本帮助</dd></div>' +
+            '</dl>' +
+            '<p class="nm-help-note">命令面板可以搜索文档、打开页面、保存搜索视图。' +
+            '搜索框右侧的 <b>?</b> 可以查看搜索语法。</p>' +
+            '</div>';
+        document.body.appendChild(helpOverlay);
+        helpOverlay.addEventListener('mousedown', function (event) {
+            if (event.target === helpOverlay) closeHelp();
+        });
+        var closeBtn = helpOverlay.querySelector('.nm-help-close');
+        closeBtn.addEventListener('click', closeHelp);
+    }
+
+    function openHelp() {
+        ensureHelp();
+        closePalette();
+        helpOverlay.hidden = false;
+        document.body.classList.add('nm-cmd-open');
+    }
+
+    function closeHelp() {
+        if (!helpOverlay) return;
+        helpOverlay.hidden = true;
+        if (!overlay || overlay.hidden) document.body.classList.remove('nm-cmd-open');
     }
 
     function ensurePalette() {
@@ -329,6 +371,7 @@
 
     function openPalette() {
         ensurePalette();
+        closeHelp();
         overlay.hidden = false;
         document.body.classList.add('nm-cmd-open');
         input.value = '';
@@ -340,7 +383,7 @@
     function closePalette() {
         if (!overlay) return;
         overlay.hidden = true;
-        document.body.classList.remove('nm-cmd-open');
+        if (!helpOverlay || helpOverlay.hidden) document.body.classList.remove('nm-cmd-open');
     }
 
     document.addEventListener('keydown', function (event) {
@@ -351,6 +394,25 @@
             else openPalette();
         }
     });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && helpOverlay && !helpOverlay.hidden) {
+            event.preventDefault();
+            closeHelp();
+        }
+    });
+
+    var commandHint = document.getElementById('nm-command-hint-btn');
+    if (commandHint) {
+        commandHint.addEventListener('click', openPalette);
+    }
+    var shortcutsHelpLink = document.getElementById('nm-shortcuts-help-link');
+    if (shortcutsHelpLink) {
+        shortcutsHelpLink.addEventListener('click', openHelp);
+    }
+
+    window.nmOpenCommandPalette = openPalette;
+    window.nmOpenShortcutsHelp = openHelp;
 
     renderHomeViews();
 })();

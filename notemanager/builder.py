@@ -837,6 +837,7 @@ def _ensure_overview_assets(html_dir) -> None:
         or "backlinks / related documents" not in relations_js
         or "reading state" not in reading_js
         or "command palette" not in command_js
+        or "nmOpenShortcutsHelp" not in command_js
     ):
         _copy_static_assets(static_dir)
 
@@ -1120,6 +1121,24 @@ body.nm-cmd-open { overflow: hidden; }
 .nm-cmd-detail { font-size: 11px; color: #999; margin-top: 1px; overflow-wrap: anywhere; }
 .nm-cmd-empty { padding: 18px 16px; color: #999; font-size: 13px; }
 .nm-cmd-hint { border-top: 1px solid #eee; padding: 7px 16px; color: #aaa; font-size: 11px; }
+.nm-help-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(20, 20, 30, .42);
+                   display: flex; align-items: flex-start; justify-content: center; padding-top: 16vh; }
+.nm-help-overlay[hidden] { display: none !important; }
+.nm-help-dialog { width: min(460px, calc(100vw - 32px)); background: #fff; border-radius: 10px;
+                  box-shadow: 0 18px 60px rgba(0,0,0,.28); padding: 14px 18px 16px; box-sizing: border-box; }
+.nm-help-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.nm-help-head h2 { font-size: 16px; margin: 0; }
+.nm-help-close { border: 0; background: transparent; color: #999; font-size: 20px; line-height: 1;
+                 cursor: pointer; padding: 0 2px; }
+.nm-help-close:hover { color: #333; }
+.nm-help-list { margin: 12px 0 10px; }
+.nm-help-list > div { display: flex; align-items: baseline; gap: 12px; margin: 7px 0; }
+.nm-help-list dt { flex: 0 0 92px; text-align: right; }
+.nm-help-list dd { margin: 0; color: #555; font-size: 12px; }
+.nm-help-list kbd { border: 1px solid #ccc; border-bottom-width: 2px; border-radius: 3px;
+                    background: #fafafa; color: #555; padding: 1px 5px; font-family: monospace;
+                    font-size: 11px; white-space: nowrap; }
+.nm-help-note { color: #888; font-size: 11px; line-height: 1.6; margin: 10px 0 0; }
 @media (max-width: 600px) {
     .nm-cmd-overlay { padding-top: 6vh; }
     .nm-cmd-dialog { max-height: 80vh; }

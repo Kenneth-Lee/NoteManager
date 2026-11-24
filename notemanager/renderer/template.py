@@ -232,6 +232,14 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .nm-search-help-popup code {{ background: #f0f0f0; padding: 1px 4px; border-radius: 2px; font-size: 11px; }}
 .nm-search-help-popup ul {{ margin: 4px 0; padding-left: 16px; }}
 .nm-search-help-popup li {{ margin: 2px 0; }}
+.nm-search-shortcut-hint {{ display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+    margin-top: 6px; padding: 4px 6px; background: #f5f9ff; border: 1px solid #e1ecf8;
+    border-radius: 4px; color: #607d8b; font-size: 11px; }}
+.nm-search-shortcut-hint kbd {{ border: 1px solid #c5d9ed; border-bottom-width: 2px; border-radius: 3px;
+    background: #fff; color: #455a64; padding: 1px 4px; font-family: monospace; font-size: 10px; }}
+.nm-shortcut-link {{ border: 0; background: none; color: #1565c0; cursor: pointer; padding: 0;
+    font-size: 11px; text-decoration: none; }}
+.nm-shortcut-link:hover {{ color: #0d47a1; text-decoration: underline; }}
 .nm-sidebar-switch {{ padding: 8px 12px; border-bottom: 1px solid #e0e0e0; display: flex; gap: 8px; }}
 .nm-sidebar-switch-btn {{ flex: 1; padding: 6px 8px; border: 1px solid #bbdefb; border-radius: 4px;
     background: #fff; color: #1565c0; cursor: pointer; font-size: 12px; }}
@@ -400,6 +408,19 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <li><code>grep:正则</code> — 在当前工程内全局扫描源码（按 Enter 触发，结果逐步更新）</li>
 </ul>
 <div style="margin-top:6px;color:#888;">支持正则；可写多条件（空格分隔，AND），如 <code>dtag:数学 grep:\"pi.*=\"</code>；值含空格请用引号。带映射条件键入即查；含 <code>grep:</code> 时按 Enter 执行并渐进返回结果。</div>
+<h4 style="margin-top:10px;">快捷键</h4>
+<ul>
+<li><code>Ctrl/⌘ K</code> — 打开/关闭命令面板</li>
+<li><code>↑</code> / <code>↓</code> — 在命令面板中选择</li>
+<li><code>Enter</code> — 打开选中项</li>
+<li><code>Esc</code> — 关闭命令面板/帮助</li>
+</ul>
+</div>
+<div class="nm-search-shortcut-hint">
+<kbd>Ctrl/⌘ K</kbd>
+<button type="button" id="nm-command-hint-btn" class="nm-shortcut-link">命令面板</button>
+<span>·</span>
+<button type="button" id="nm-shortcuts-help-link" class="nm-shortcut-link">快捷键说明</button>
 </div>
 </div>
 <div class="nm-sidebar-switch">
