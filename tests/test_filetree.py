@@ -26,6 +26,12 @@ def test_landing_tree_has_create_and_delete_actions(tmp_path):
     assert "nm-filetree.js" in landing
     assert 'id="nm-trash-open"' in landing
     assert 'id="nm-assets-open"' in landing
+    assert "window.__nmSuppressBuildReload" in (
+        root / ".NoteManager" / "html" / "_static" / "notemanager.js"
+    ).read_text(encoding="utf-8")
+    assert "window.__nmSuppressBuildReload" in (
+        root / ".NoteManager" / "html" / "_static" / "nm-filetree.js"
+    ).read_text(encoding="utf-8")
     doc = (root / ".NoteManager" / "html" / "sub" / "one.html").read_text(encoding="utf-8")
     assert 'id="nm-trash-open"' in doc
     assert 'id="nm-delete-current"' in doc
@@ -191,3 +197,22 @@ def test_orphan_asset_cleanup_and_restore(tmp_path):
         )
     )
     assert "orphan.png" in data["orphans"]
+
+
+def test_paste_image_goes_to_directory_static(tmp_path):
+    root = tmp_path / "proj"
+    (root / "sub").mkdir(parents=True)
+    source = root / "sub" / "my note.md"
+    source.write_text("# My Note\n\n", encoding="utf-8")
+    builder.full_build(root)
+    daemon = _bare_daemon(root)
+
+    result = daemon.save_paste_image(
+        0, "sub/my note.md", b"fake-png", "image/png"
+    )
+    assert result["ok"] is True
+    assert result["insert_markdown"].startswith("![](_static/nm-paste-my-note-")
+    assert result["insert_rst"].startswith(".. image:: _static/nm-paste-my-note-")
+    static_files = list((root / "sub" / "_static").glob("nm-paste-my-note-*.png"))
+    assert len(static_files) == 1
+    assert (root / ".NoteManager" / "html" / "sub" / "_static" / static_files[0].name).is_file()

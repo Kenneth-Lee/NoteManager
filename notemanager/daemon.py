@@ -2599,7 +2599,7 @@ class NoteManagerDaemon:
         data: bytes,
         raw_content_type: str,
     ) -> dict:
-        """把粘贴的图片存到源文件同目录，返回插入片段。"""
+        """把粘贴的图片存到源文件目录的 _static，返回插入片段。"""
         ct = raw_content_type.split(";")[0].strip().lower()
         ext = _PASTE_IMAGE_TYPES.get(ct)
         if ext is None:
@@ -2613,15 +2613,26 @@ class NoteManagerDaemon:
         root, rel = self._validated_source_rel(Path(dirs[project_idx]), source_rel_posix)
         if rel is None:
             return {"ok": False, "error": "非法源文件路径"}
-        dest_dir = (root / rel.parent).resolve()
         root_r = root.resolve()
-        if not str(dest_dir).startswith(str(root_r)):
+        # Keep images next to the note inside its directory-level _static/.
+        dest_dir = (root / rel.parent / "_static").resolve()
+        try:
+            dest_dir.relative_to(root_r)
+        except ValueError:
             return {"ok": False, "error": "非法保存目录"}
+        if dest_dir.exists() and not dest_dir.is_dir():
+            return {"ok": False, "error": "_static 不是目录"}
         dest_dir.mkdir(parents=True, exist_ok=True)
+        safe_stem = re.sub(
+            r"[^0-9A-Za-z_.\-\u4e00-\u9fff]+", "-", rel.stem
+        ).strip("-_. ") or "note"
+        safe_stem = safe_stem[:60]
         stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        fn = f"nm-paste-{stamp}-{secrets.token_hex(4)}{ext}"
+        fn = f"nm-paste-{safe_stem}-{stamp}-{secrets.token_hex(4)}{ext}"
         out = (dest_dir / fn).resolve()
-        if not str(out).startswith(str(root_r)):
+        try:
+            out.relative_to(root_r)
+        except ValueError:
             return {"ok": False, "error": "拒绝路径"}
         try:
             out.write_bytes(data)

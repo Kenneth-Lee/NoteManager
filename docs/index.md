@@ -16,3 +16,4 @@
 * [命令面板与保存的搜索视图](command-palette.md)
 * [目录级新建 / 删除笔记](note-lifecycle.md)
 * [图片资源索引 / 独占图片清理 / 回收站恢复](asset-cleanup.md)
+* [粘贴图片到目录级 _static](paste-image-static.md)

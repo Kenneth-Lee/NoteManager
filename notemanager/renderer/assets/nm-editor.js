@@ -396,6 +396,7 @@
           return;
         }
         setStatus('创建中…');
+        window.__nmSuppressBuildReload = true;
         fetch('/api/create_note', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -423,12 +424,14 @@
               String(d.source_rel_path || '').replace(/\.(md|rst|txt)$/i, '.html');
             var target = d.open_url || (hr ? '/p/' + project + '/' + encodeHtmlRel(hr) : '');
             if (!target) {
+              window.__nmSuppressBuildReload = false;
               setStatus('创建成功，但没有返回可打开的地址', true);
               return;
             }
             window.location.assign(target);
           })
           .catch(function (err) {
+            window.__nmSuppressBuildReload = false;
             setStatus(err && err.message ? err.message : '网络错误', true);
           });
       });
@@ -443,6 +446,7 @@
         }
         if (!window.confirm(msg)) return;
         setStatus('删除中…');
+        window.__nmSuppressBuildReload = true;
         fetch('/api/delete_note', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -468,6 +472,7 @@
             window.location.href = '/p/' + project + '/' + encodeHtmlRel(red);
           })
           .catch(function (err) {
+            window.__nmSuppressBuildReload = false;
             setStatus(err && err.message ? err.message : '网络错误', true);
           });
       });

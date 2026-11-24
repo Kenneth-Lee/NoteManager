@@ -86,6 +86,7 @@
         }
         btn.disabled = true;
         errorText(err, '');
+        window.__nmSuppressBuildReload = true;
         fetch('/api/create_note_in_dir', {
             method: 'POST',
             headers: {'Content-Type': 'application/json; charset=utf-8'},
@@ -105,6 +106,7 @@
                 String(data.source_rel_path || '').replace(/\.(md|rst|txt)$/i, '.html');
             var target = data.open_url || (rel ? base + encodeRel(rel) : '');
             if (!target) {
+                window.__nmSuppressBuildReload = false;
                 btn.disabled = false;
                 errorText(err, '创建成功，但服务端没有返回可打开的地址');
                 return;
@@ -112,6 +114,7 @@
             btn.textContent = '已创建，正在打开…';
             window.location.assign(target);
         }).catch(function (e) {
+            window.__nmSuppressBuildReload = false;
             btn.disabled = false;
             errorText(err, e && e.message ? e.message : '创建失败');
         });
@@ -172,6 +175,7 @@
         var err = deleteOverlay.querySelector('#nm-note-delete-error');
         btn.disabled = true;
         errorText(err, '');
+        window.__nmSuppressBuildReload = true;
         fetch('/api/delete_note', {
             method: 'POST',
             headers: {'Content-Type': 'application/json; charset=utf-8'},
@@ -195,6 +199,7 @@
                 ? base + 'index.html#nm-dir=' + encodeURIComponent(dir)
                 : base;
         }).catch(function (e) {
+            window.__nmSuppressBuildReload = false;
             btn.disabled = false;
             errorText(err, e && e.message ? e.message : '删除失败');
         });

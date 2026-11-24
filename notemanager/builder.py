@@ -847,6 +847,10 @@ def _ensure_overview_assets(html_dir) -> None:
         filetree_js = (static_dir / "nm-filetree.js").read_text(encoding="utf-8")
     except OSError:
         filetree_js = ""
+    try:
+        editor_js = (static_dir / "nm-editor.js").read_text(encoding="utf-8")
+    except OSError:
+        editor_js = ""
     if (
         ".nm-overview" not in css
         or "nmRevealSidebarDir" not in js
@@ -859,6 +863,8 @@ def _ensure_overview_assets(html_dir) -> None:
         or "trash_restore" not in filetree_js
         or "open_url" not in filetree_js
         or "trash_orphans" not in filetree_js
+        or "__nmSuppressBuildReload" not in filetree_js
+        or "__nmSuppressBuildReload" not in editor_js
     ):
         _copy_static_assets(static_dir)
 
@@ -1711,6 +1717,9 @@ window.nmRevealSidebarDir = function(id) {
             window.location.href = data.url;
         });
         evtSource.addEventListener('build_complete', function(e) {
+            // A page that is creating/deleting a note is about to navigate to a
+            // different URL; don't let this event reload the current page first.
+            if (window.__nmSuppressBuildReload) return;
             var data;
             try { data = JSON.parse(e.data); } catch (err) { return; }
             if (data.project === undefined || data.project === null) return;
