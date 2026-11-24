@@ -316,7 +316,42 @@ def get_daemon_web_port() -> int | None:
 
 
 def _pid_exists(pid: int) -> bool:
-    """Check if a process with given PID exists."""
+    """Check if a process with given PID exists.
+
+    On Windows, ``os.kill(pid, 0)`` is not a harmless existence probe: Python
+    documents that any signal other than CTRL_C_EVENT/CTRL_BREAK_EVENT causes
+    unconditional process termination. The parent startup check used it and
+    killed the freshly-started daemon right after it wrote daemon.json.
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+            )
+            if not handle:
+                # ERROR_ACCESS_DENIED means the process exists but is protected.
+                return ctypes.get_last_error() == 5
+            try:
+                code = wintypes.DWORD()
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return False
+                return code.value == STILL_ACTIVE
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return False
     try:
         os.kill(pid, 0)
         return True

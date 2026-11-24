@@ -56,6 +56,12 @@
   生成 `topics.html`；侧边栏目录默认折叠；
   完全构建时生成、离线可用，增量更新/删除文件后自动刷新
 
+### 修复
+
+- 修复 Windows 上 `nmr start` 启动成功后立刻退出：Windows 的
+  `os.kill(pid, 0)` 不是安全的进程存在性探测，可能终止目标进程；
+  改为使用 Win32 `OpenProcess` / `GetExitCodeProcess` 检查
+
 ## v0.2.0（2026-11-13）
 
 ### 渲染界面优化
