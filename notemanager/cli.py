@@ -12,6 +12,7 @@ import time
 import webbrowser
 from pathlib import Path
 
+from notemanager import __version__
 from notemanager.daemon import (
     is_daemon_running,
     NoteManagerDaemon,
@@ -272,6 +273,7 @@ def _print_web_clients_hint(clients, directories=None) -> None:
 def cmd_status(args):
     pid = is_daemon_running()
     if not pid:
+        print(f"NoteManager 版本: {__version__}")
         print("Daemon 未运行")
         return
     port = _get_daemon_port()
@@ -289,6 +291,10 @@ def cmd_status(args):
         if getattr(args, "json", False):
             print(json.dumps(data, ensure_ascii=False, indent=2))
             return
+        daemon_version = data.get("version") or "未知"
+        print(f"NoteManager 版本: {daemon_version}")
+        if daemon_version != __version__:
+            print(f"  CLI 版本: {__version__}（与 Daemon 不一致，建议重启 Daemon）")
         print(f"Daemon PID: {data['pid']}")
         if data.get("transport") == "unix":
             print(f"监听方式: unix ({data.get('socket_path')})")
@@ -1005,6 +1011,12 @@ def main():
     parser = argparse.ArgumentParser(
         prog="notemanager",
         description="本地笔记管理工具",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"NoteManager {__version__}",
+        help="显示 NoteManager 版本并退出",
     )
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
 

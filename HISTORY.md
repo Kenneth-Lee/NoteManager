@@ -1,5 +1,10 @@
 # 版本历史
 
+## 未发布
+
+- 新增 `nmr --version`；
+- `nmr status` 显示当前 NoteManager/Daemon 版本，版本不一致时提示重启 Daemon
+
 ## v0.3.2（2026-11-24）
 
 ### 修复

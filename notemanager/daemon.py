@@ -23,6 +23,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
+from notemanager import __version__ as NOTEMANAGER_VERSION
 from notemanager.protocol import (
     DEFAULT_HOST, DEFAULT_PORT, DEFAULT_UNIX_SOCKET, recv_command, send_response,
     send_command,
@@ -1500,6 +1501,7 @@ class NoteManagerDaemon:
         return {
             "ok": True,
             "data": {
+                "version": NOTEMANAGER_VERSION,
                 "pid": os.getpid(),
                 "port": self.port,
                 "transport": self.transport,

@@ -145,6 +145,7 @@ nmr remove <目录>           # 停止监控并删除生成的文件
 nmr default [工程]          # 设置/查看默认工程
 nmr main [页面id]           # 查看/设置主页面（view/search 的默认目标）
 nmr start --restart/-r      # 重启 daemon；端口按 config.json / CLI 参数解析
+nmr --version               # 显示 NoteManager 版本
 nmr stop                    # 停止 daemon
 nmr view <文件>             # 临时渲染一个文件
 nmr check <文件>            # 检查一个文件有没有语法错误
