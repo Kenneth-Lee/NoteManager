@@ -453,6 +453,24 @@ class WebHandler(BaseHTTPRequestHandler):
             resp = self.daemon_ref.delete_managed_source(
                 pj,
                 str(data.get("source_rel_path", "")),
+                bool(data.get("delete_assets")),
+            )
+        elif path == "/api/trash_list":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            resp = self.daemon_ref.list_trash(pj)
+        elif path == "/api/trash_restore":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            resp = self.daemon_ref.restore_trash(
+                pj,
+                str(data.get("trash_id", "")),
             )
         elif path == "/api/grep_start":
             try:

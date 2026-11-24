@@ -2073,8 +2073,43 @@ class NoteManagerDaemon:
             logger.exception("新建笔记后重建失败")
             return {"ok": False, "error": f"重建失败: {e}"}
         html_rel = Path(new_rel).with_suffix(".html").as_posix()
+        open_url = "/p/%d/%s" % (
+            project_idx,
+            "/".join(quote(part, safe="") for part in Path(html_rel).parts),
+        )
         self._notify_change("build_complete", {"directory": str(root_r)})
-        return {"ok": True, "source_rel_path": new_rel, "html_rel_path": html_rel}
+        return {
+            "ok": True,
+            "source_rel_path": new_rel,
+            "html_rel_path": html_rel,
+            "open_url": open_url,
+        }
+
+    def _read_asset_index(self, root: Path) -> dict:
+        path = root / ".NoteManager" / "html" / "_index" / "assets.json"
+        if not path.is_file():
+            return {"assets": {}}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {"assets": {}}
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return {"assets": {}}
+
+    def _asset_usage(self, root: Path, source_rel: str) -> tuple[list[str], list[str]]:
+        """Return (all referenced local images, exclusively referenced images)."""
+        data = self._read_asset_index(root)
+        all_refs = []
+        exclusive = []
+        for rel, entry in (data.get("assets") or {}).items():
+            refs = entry.get("referenced_by") or []
+            if not any(r.get("source_path") == source_rel for r in refs):
+                continue
+            if not entry.get("exists"):
+                continue
+            all_refs.append(rel)
+            if len(refs) == 1 and refs[0].get("source_path") == source_rel:
+                exclusive.append(rel)
+        return sorted(all_refs), sorted(exclusive)
 
     def note_delete_info(self, project_idx: int, source_rel_posix: str) -> dict:
         """Return impact data before moving a note to trash."""
@@ -2085,9 +2120,10 @@ class NoteManagerDaemon:
         root, rel = self._validated_source_rel(Path(dirs[project_idx]), source_rel_posix)
         if rel is None:
             return {"ok": False, "error": "非法源文件路径"}
+        root_r = root.resolve()
         abs_src = (root / rel).resolve()
         try:
-            abs_src.relative_to(root.resolve())
+            abs_src.relative_to(root_r)
         except ValueError:
             return {"ok": False, "error": "拒绝路径"}
         if not abs_src.is_file():
@@ -2107,52 +2143,59 @@ class NoteManagerDaemon:
             except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 backlinks = []
 
-        images = []
-        try:
-            text = abs_src.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = ""
-        image_patterns = [
-            re.compile(r"!\[[^\]]*\]\(\s*<?([^)\s>]+)"),
-            re.compile(r"^\s*\.\.\s+(?:image|figure)::\s*(\S+)", re.MULTILINE),
-        ]
-        seen = set()
-        for pattern in image_patterns:
-            for match in pattern.finditer(text):
-                value = (match.group(1) or "").strip().strip('"\'')
-                if not value or value.startswith(("http://", "https://", "data:")):
-                    continue
-                if value not in seen:
-                    seen.add(value)
-                    images.append(value)
+        source_rel = rel.as_posix()
+        images, exclusive = self._asset_usage(root_r, source_rel)
 
         return {
             "ok": True,
-            "source_rel_path": rel.as_posix(),
+            "source_rel_path": source_rel,
             "html_rel_path": html_rel,
             "title": title,
             "backlink_count": len(backlinks),
             "backlinks": backlinks[:20],
             "image_count": len(images),
             "images": images[:20],
+            "exclusive_image_count": len(exclusive),
+            "exclusive_images": exclusive[:20],
+            "shared_image_count": max(0, len(images) - len(exclusive)),
         }
 
-    def _trash_note(self, root: Path, abs_src: Path, rel: Path) -> Path:
-        base = root / ".NoteManager" / "trash" / datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        dest = base / rel
-        n = 1
-        while dest.exists():
-            base = root / ".NoteManager" / "trash" / (
-                datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{n}"
-            )
-            dest = base / rel
-            n += 1
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        suppress_path(abs_src)
-        shutil.move(str(abs_src), str(dest))
-        return dest
+    def _trash_root(self, root: Path) -> Path:
+        return root / ".NoteManager" / "trash"
 
-    def delete_managed_source(self, project_idx: int, source_rel_posix: str) -> dict:
+    def _new_trash_batch(self, root: Path) -> Path:
+        trash = self._trash_root(root)
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        batch = trash / stamp
+        n = 1
+        while batch.exists():
+            batch = trash / f"{stamp}-{n}"
+            n += 1
+        batch.mkdir(parents=True)
+        return batch
+
+    def _restore_batch(self, root: Path, batch: Path, meta: dict) -> None:
+        source_rel = meta.get("source_rel") or ""
+        if source_rel:
+            src = batch / "source" / source_rel
+            dst = root / source_rel
+            if src.is_file():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(dst))
+        for asset in meta.get("assets") or []:
+            src = batch / "assets" / asset
+            dst = root / asset
+            if src.is_file():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(dst))
+        shutil.rmtree(batch, ignore_errors=True)
+
+    def delete_managed_source(
+        self,
+        project_idx: int,
+        source_rel_posix: str,
+        delete_assets: bool = False,
+    ) -> dict:
         """把当前监控工程内的源文件移到工程回收站并更新索引与 HTML。"""
         with self._lock:
             dirs = list(self._observers.keys())
@@ -2169,28 +2212,217 @@ class NoteManagerDaemon:
             return {"ok": False, "error": "拒绝路径"}
         if not abs_src.is_file():
             return {"ok": False, "error": "文件不存在"}
+
+        source_rel = rel.as_posix()
+        all_refs, exclusive = self._asset_usage(root_r, source_rel)
+        assets_to_move = exclusive if delete_assets else []
+        batch = None
+        meta = {
+            "version": 1,
+            "kind": "note",
+            "source_rel": source_rel,
+            "html_rel": rel.with_suffix(".html").as_posix(),
+            "assets": assets_to_move,
+            "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        }
         try:
-            trashed = self._trash_note(root_r, abs_src, rel)
+            batch = self._new_trash_batch(root_r)
+            src_dest = batch / "source" / rel
+            src_dest.parent.mkdir(parents=True, exist_ok=True)
+            suppress_path(abs_src)
+            shutil.move(str(abs_src), str(src_dest))
+            moved_assets = []
+            for asset in assets_to_move:
+                asset_abs = (root_r / asset).resolve()
+                try:
+                    asset_abs.relative_to(root_r)
+                except ValueError:
+                    continue
+                if not asset_abs.is_file():
+                    continue
+                asset_dest = batch / "assets" / asset
+                asset_dest.parent.mkdir(parents=True, exist_ok=True)
+                suppress_path(asset_abs)
+                shutil.move(str(asset_abs), str(asset_dest))
+                moved_assets.append(asset)
+            meta["assets"] = moved_assets
+            (batch / "meta.json").write_text(
+                json.dumps(meta, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         except OSError as e:
+            if batch is not None:
+                try:
+                    self._restore_batch(root_r, batch, meta)
+                except OSError:
+                    pass
             return {"ok": False, "error": f"移动到回收站失败: {e}"}
+
         try:
             from notemanager.builder import remove_file
 
             remove_file(root, abs_src)
         except Exception as e:
             logger.exception("删除笔记后更新索引失败")
-            try:
-                suppress_path(trashed)
-                shutil.move(str(trashed), str(abs_src))
-            except OSError:
-                pass
+            if batch is not None:
+                try:
+                    self._restore_batch(root_r, batch, meta)
+                except OSError:
+                    pass
             return {"ok": False, "error": f"更新索引失败: {e}"}
+        html_dir = root_r / ".NoteManager" / "html"
+        for asset in meta.get("assets") or []:
+            try:
+                generated = (html_dir / asset).resolve()
+                generated.relative_to(html_dir.resolve())
+                if generated.is_file():
+                    generated.unlink()
+            except (OSError, ValueError):
+                pass
         self._notify_change("build_complete", {"directory": str(root_r)})
         return {
             "ok": True,
             "redirect_html": "index.html",
-            "trash_rel": trashed.relative_to(root_r).as_posix(),
+            "trash_rel": batch.relative_to(root_r).as_posix(),
+            "trash_id": batch.name,
+            "assets_deleted": meta["assets"],
         }
+
+    def list_trash(self, project_idx: int) -> dict:
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root = Path(dirs[project_idx]).resolve()
+        trash = self._trash_root(root)
+        if not trash.is_dir():
+            return {"ok": True, "items": []}
+        items = []
+        for batch in sorted(trash.iterdir(), reverse=True):
+            if not batch.is_dir():
+                continue
+            meta_file = batch / "meta.json"
+            meta = None
+            if meta_file.is_file():
+                try:
+                    meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    meta = None
+            if meta and meta.get("source_rel"):
+                source_rel = str(meta["source_rel"])
+                assets = list(meta.get("assets") or [])
+                title = Path(source_rel).stem
+                source = batch / "source" / source_rel
+            else:
+                # Compatibility with the original trash layout:
+                # .NoteManager/trash/<timestamp>/<source_rel>
+                candidates = [
+                    p for p in batch.rglob("*")
+                    if p.is_file() and p.suffix.lower() in (".md", ".rst", ".txt")
+                ]
+                if not candidates:
+                    continue
+                source = candidates[0]
+                source_rel = source.relative_to(batch).as_posix()
+                assets = []
+                title = source.stem
+                meta = {"kind": "legacy", "source_rel": source_rel, "assets": []}
+            try:
+                size = sum(p.stat().st_size for p in batch.rglob("*") if p.is_file())
+            except OSError:
+                size = 0
+            items.append({
+                "trash_id": batch.name,
+                "source_rel_path": source_rel,
+                "title": title,
+                "asset_count": len(assets),
+                "assets": assets,
+                "created_at": (meta or {}).get("created_at", ""),
+                "legacy": not (batch / "meta.json").is_file(),
+                "size": size,
+            })
+        items.sort(key=lambda x: (x["trash_id"], x["source_rel_path"]), reverse=True)
+        return {"ok": True, "items": items}
+
+    def restore_trash(self, project_idx: int, trash_id: str) -> dict:
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root = Path(dirs[project_idx]).resolve()
+        trash = self._trash_root(root)
+        raw = str(trash_id or "").strip()
+        if not raw or "/" in raw or "\\" in raw or raw in (".", ".."):
+            return {"ok": False, "error": "非法回收站编号"}
+        batch = (trash / raw).resolve()
+        try:
+            batch.relative_to(trash.resolve())
+        except ValueError:
+            return {"ok": False, "error": "拒绝路径"}
+        if not batch.is_dir():
+            return {"ok": False, "error": "回收站条目不存在"}
+
+        meta = None
+        meta_file = batch / "meta.json"
+        if meta_file.is_file():
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                meta = None
+        if meta and meta.get("source_rel"):
+            source_rel = str(meta["source_rel"])
+            assets = list(meta.get("assets") or [])
+            src = batch / "source" / source_rel
+        else:
+            candidates = [
+                p for p in batch.rglob("*")
+                if p.is_file() and p.suffix.lower() in (".md", ".rst", ".txt")
+            ]
+            if not candidates:
+                return {"ok": False, "error": "回收站条目没有源文件"}
+            src = candidates[0]
+            source_rel = src.relative_to(batch).as_posix()
+            assets = []
+            meta = {"kind": "legacy", "source_rel": source_rel, "assets": []}
+
+        dst = (root / source_rel).resolve()
+        try:
+            dst.relative_to(root)
+        except ValueError:
+            return {"ok": False, "error": "拒绝恢复路径"}
+        if dst.exists():
+            return {"ok": False, "error": "目标文件已存在，未覆盖"}
+        for asset in assets:
+            target = (root / asset).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError:
+                return {"ok": False, "error": "拒绝资源路径"}
+            if target.exists():
+                return {"ok": False, "error": f"图片已存在，未覆盖: {asset}"}
+        if not src.is_file():
+            return {"ok": False, "error": "回收站中的源文件不存在"}
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dst))
+            for asset in assets:
+                asset_src = batch / "assets" / asset
+                if asset_src.is_file():
+                    target = root / asset
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(asset_src), str(target))
+            shutil.rmtree(batch, ignore_errors=True)
+        except OSError as e:
+            return {"ok": False, "error": f"恢复失败: {e}"}
+        try:
+            from notemanager.builder import update_file
+
+            update_file(root, dst, refresh_static_assets=False, refresh_project_assets=True)
+        except Exception as e:
+            logger.exception("恢复笔记后重建失败")
+            return {"ok": False, "error": f"恢复后重建失败: {e}"}
+        self._notify_change("build_complete", {"directory": str(root)})
+        return {"ok": True, "source_rel_path": source_rel}
 
     def save_paste_image(
         self,

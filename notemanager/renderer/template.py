@@ -228,6 +228,9 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .nm-new-note-btn {{ border: 1px solid #bbdefb; background: #f5f9ff; color: #1565c0; border-radius: 4px;
                     font-size: 11px; padding: 2px 6px; cursor: pointer; font-weight: 400; white-space: nowrap; }}
 .nm-new-note-btn:hover {{ background: #e3f2fd; }}
+.nm-trash-btn {{ border: 1px solid #e0e0e0; background: #fafafa; color: #777; border-radius: 4px;
+                 font-size: 10px; padding: 2px 5px; cursor: pointer; font-weight: 400; white-space: nowrap; }}
+.nm-trash-btn:hover {{ background: #f0f0f0; color: #333; }}
 .nm-sidebar-search {{ padding: 8px 12px; border-bottom: 1px solid #e0e0e0; position: relative; }}
 .nm-sidebar-search input {{ width: calc(100% - 30px); padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px;
                             font-size: 13px; box-sizing: border-box; }}
@@ -424,7 +427,8 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <body data-nm-project="{_escape(project_id)}" data-nm-page-path="{_escape(str(html_rel_path))}" data-nm-source-path="{_escape(source_path)}">
 <div class="nm-sidebar">
 <div class="nm-sidebar-home"><a href="{_escape(home_href)}">Home</a>
-<button type="button" id="nm-new-root" class="nm-new-note-btn" title="在项目根目录新建笔记">＋ 新建</button></div>
+<button type="button" id="nm-new-root" class="nm-new-note-btn" title="在项目根目录新建笔记">＋ 新建</button>
+<button type="button" id="nm-trash-open" class="nm-trash-btn" title="回收站">回收站</button></div>
 <div class="nm-sidebar-search">
 <input type="text" id="nm-search" placeholder="搜索...">
 <button class="nm-search-help" onclick="nmToggleHelp()" title="搜索语法帮助">?</button>

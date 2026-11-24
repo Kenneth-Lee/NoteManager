@@ -27,6 +27,7 @@ from notemanager.web_client_js import CLIENT_BOOTSTRAP_JS
 from notemanager import overview as overview_mod
 from notemanager import relations as relations_mod
 from notemanager import activity as activity_mod
+from notemanager import assets as assets_mod
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +174,7 @@ def full_build(
     # Build backlinks / related documents for the per-page panel.
     _build_relations_safe(html_dir, documents)
     _build_activity_safe(project_root, html_dir, documents)
+    _build_assets_safe(project_root, html_dir, documents)
 
     # Copy static assets
     p("  写入 _static（notemanager.js / css 等）…")
@@ -309,6 +311,7 @@ def update_file(
 
     _build_relations_safe(html_dir, documents)
     _build_activity_safe(project_root, html_dir, documents)
+    _build_assets_safe(project_root, html_dir, documents)
 
     # Update landing page
     overview_data = _build_overview_safe(project_root, html_dir, documents)
@@ -382,6 +385,7 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
 
     _build_relations_safe(html_dir, documents)
     _build_activity_safe(project_root, html_dir, documents)
+    _build_assets_safe(project_root, html_dir, documents)
 
     overview_data = _build_overview_safe(project_root, html_dir, documents)
     _generate_landing_page(html_dir, documents, ui_plugin, overview_data)
@@ -786,6 +790,14 @@ def _build_activity_safe(project_root, html_dir, documents) -> dict | None:
         return None
 
 
+def _build_assets_safe(project_root, html_dir, documents) -> dict | None:
+    try:
+        return assets_mod.build_and_write(Path(project_root), html_dir, documents)
+    except Exception:
+        logger.exception("生成图片资源索引失败")
+        return None
+
+
 def _build_relations_safe(html_dir, documents) -> dict | None:
     try:
         return relations_mod.build_and_write(html_dir, documents)
@@ -844,6 +856,8 @@ def _ensure_overview_assets(html_dir) -> None:
         or "command palette" not in command_js
         or "nmOpenShortcutsHelp" not in command_js
         or "create_note_in_dir" not in filetree_js
+        or "trash_restore" not in filetree_js
+        or "open_url" not in filetree_js
     ):
         _copy_static_assets(static_dir)
 
@@ -1202,6 +1216,24 @@ body.nm-note-open { overflow: hidden; }
 .nm-note-warning { font-size: 11px; color: #8d6e63; background: #fff8e1; border-radius: 4px;
                    padding: 6px 8px; margin-top: 10px; line-height: 1.55; }
 .nm-note-warning code { background: #fff3cd; padding: 0 3px; border-radius: 2px; }
+.nm-note-asset-choice { display: block; font-size: 12px; color: #37474f; background: #f5f9ff;
+                        border: 1px solid #e1ecf8; border-radius: 4px; padding: 6px 8px;
+                        margin-top: 9px; cursor: pointer; }
+.nm-note-asset-choice input { vertical-align: middle; margin: 0 4px 0 0; }
+.nm-trash-list { margin-top: 10px; max-height: 330px; overflow-y: auto; border: 1px solid #eceff1;
+                 border-radius: 5px; }
+.nm-trash-empty { padding: 18px 12px; color: #999; font-size: 12px; text-align: center; }
+.nm-trash-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+                 border-bottom: 1px solid #f0f0f0; }
+.nm-trash-item:last-child { border-bottom: 0; }
+.nm-trash-main { min-width: 0; flex: 1; }
+.nm-trash-title { font-size: 13px; color: #263238; overflow-wrap: anywhere; }
+.nm-trash-path { font-size: 10px; color: #90a4ae; font-family: monospace; overflow-wrap: anywhere; }
+.nm-trash-meta { font-size: 10px; color: #aaa; margin-top: 2px; }
+.nm-trash-restore { border: 1px solid #a5d6a7; background: #e8f5e9; color: #2e7d32;
+                    border-radius: 4px; padding: 3px 9px; font-size: 11px; cursor: pointer; }
+.nm-trash-restore:hover { background: #c8e6c9; }
+.nm-trash-restore:disabled { opacity: .55; cursor: default; }
 @media (max-width: 600px) {
     .nm-note-overlay { padding-top: 7vh; }
 }

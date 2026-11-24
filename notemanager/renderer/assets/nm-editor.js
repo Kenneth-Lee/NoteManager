@@ -419,8 +419,14 @@
               setStatus(d.error || '创建失败', true);
               return;
             }
-            var hr = d.html_rel_path || '';
-            window.location.href = '/p/' + project + '/' + encodeHtmlRel(hr);
+            var hr = d.html_rel_path ||
+              String(d.source_rel_path || '').replace(/\.(md|rst|txt)$/i, '.html');
+            var target = d.open_url || (hr ? '/p/' + project + '/' + encodeHtmlRel(hr) : '');
+            if (!target) {
+              setStatus('创建成功，但没有返回可打开的地址', true);
+              return;
+            }
+            window.location.assign(target);
           })
           .catch(function (err) {
             setStatus(err && err.message ? err.message : '网络错误', true);
