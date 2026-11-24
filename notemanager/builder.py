@@ -721,6 +721,7 @@ _RUNTIME_STATIC_TOP_LEVEL = {
     "nm-overview.js",
     "nm-relations.js",
     "nm-reading.js",
+    "nm-command.js",
     "preformatted.css",
     "katex.min.css",
     "katex.min.js",
@@ -825,12 +826,17 @@ def _ensure_overview_assets(html_dir) -> None:
         reading_js = (static_dir / "nm-reading.js").read_text(encoding="utf-8")
     except OSError:
         reading_js = ""
+    try:
+        command_js = (static_dir / "nm-command.js").read_text(encoding="utf-8")
+    except OSError:
+        command_js = ""
     if (
         ".nm-overview" not in css
         or "nmRevealSidebarDir" not in js
         or "Radial directory graph" not in overview_js
         or "backlinks / related documents" not in relations_js
         or "reading state" not in reading_js
+        or "command palette" not in command_js
     ):
         _copy_static_assets(static_dir)
 
@@ -1084,6 +1090,40 @@ img { max-width: 100%; }
 .nm-reading-card a:hover { text-decoration: underline; }
 .nm-reading-date { color: #aaa; font-size: 10px; margin-left: 5px; white-space: nowrap; }
 .nm-reading-empty { color: #aaa; font-size: 12px; margin: 4px 0; }
+
+/* Saved search views + command palette */
+.nm-saved-views { margin: 10px 0 22px; }
+.nm-saved-views-heading { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.nm-saved-views-heading h2 { font-size: 15px; margin: 0; }
+.nm-saved-views-hint { font-size: 11px; color: #999; }
+.nm-saved-views-empty { font-size: 12px; color: #aaa; margin: 5px 0 0; }
+.nm-saved-view-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.nm-saved-view { display: inline-flex; align-items: center; border: 1px solid #d6c6e8;
+                 border-radius: 12px; background: #fff; overflow: hidden; }
+.nm-saved-view a { color: #6a1b9a; text-decoration: none; font-size: 12px; padding: 3px 4px 3px 9px; }
+.nm-saved-view a:hover { text-decoration: underline; }
+.nm-saved-view-del { border: 0; background: transparent; color: #b39ddb; cursor: pointer;
+                     font-size: 13px; line-height: 1; padding: 2px 7px 3px 3px; }
+.nm-saved-view-del:hover { color: #8e24aa; }
+body.nm-cmd-open { overflow: hidden; }
+.nm-cmd-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(20, 20, 30, .42);
+                  display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
+.nm-cmd-overlay[hidden] { display: none !important; }
+.nm-cmd-dialog { width: min(620px, calc(100vw - 32px)); max-height: 70vh; background: #fff;
+                 border-radius: 10px; box-shadow: 0 18px 60px rgba(0,0,0,.28); overflow: hidden; }
+#nm-cmd-input { width: 100%; border: 0; border-bottom: 1px solid #eee; padding: 14px 16px;
+                font-size: 15px; outline: none; box-sizing: border-box; }
+.nm-cmd-list { max-height: 52vh; overflow-y: auto; padding: 4px 0; }
+.nm-cmd-item { padding: 8px 16px; cursor: pointer; border-left: 3px solid transparent; }
+.nm-cmd-item.selected { background: #f3e5f5; border-left-color: #8e24aa; }
+.nm-cmd-title { font-size: 13px; color: #263238; overflow-wrap: anywhere; }
+.nm-cmd-detail { font-size: 11px; color: #999; margin-top: 1px; overflow-wrap: anywhere; }
+.nm-cmd-empty { padding: 18px 16px; color: #999; font-size: 13px; }
+.nm-cmd-hint { border-top: 1px solid #eee; padding: 7px 16px; color: #aaa; font-size: 11px; }
+@media (max-width: 600px) {
+    .nm-cmd-overlay { padding-top: 6vh; }
+    .nm-cmd-dialog { max-height: 80vh; }
+}
 @media (max-width: 900px) {
     .nm-reading-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -1477,6 +1517,16 @@ window.nmRevealSidebarDir = function(id) {
         sidebarViewResultsBtn.addEventListener('click', function() { setSidebarView('results'); });
     }
     setSidebarView('toc');
+    window.nmRunSearch = function(query) {
+        if (!searchInput) return false;
+        var q = String(query || '').trim();
+        if (!q) return false;
+        searchInput.value = q;
+        loadIndex().then(function() {
+            showSearchResults(q, false);
+        }).catch(showIndexLoadError);
+        return true;
+    };
     document.querySelectorAll('.nm-dtag-badge').forEach(function(badge) {
         badge.addEventListener('click', function() {
             var tag = this.getAttribute('data-dtag');

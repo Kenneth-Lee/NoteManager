@@ -909,6 +909,7 @@ def render_landing_overview(overview: dict | None) -> str:
         "</div>",
         '<section id="nm-reading-home" class="nm-reading-home" '
         'data-nm-activity-src="_index/activity.json"></section>',
+        '<section id="nm-saved-views" class="nm-saved-views"></section>',
     ]
     directory_html = render_directory_overview(overview)
     if directory_html:

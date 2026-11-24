@@ -450,6 +450,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <script src="{prefix}_static/nm-external-editor.js?v={asset_version}"></script>
 <script src="{prefix}_static/nm-relations.js?v={asset_version}"></script>
 <script src="{prefix}_static/nm-reading.js?v={asset_version}"></script>
+<script src="{prefix}_static/nm-command.js?v={asset_version}"></script>
 <script src="{prefix}_static/katex.min.js"></script>
 <script src="{prefix}_static/katex-auto-render.min.js"></script>
 <script src="{prefix}_static/mermaid.min.js"></script>
