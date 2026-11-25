@@ -722,6 +722,7 @@ _RUNTIME_STATIC_TOP_LEVEL = {
     "notemanager.js",
     "nm-editor.js",
     "nm-external-editor.js",
+    "nm-annotations.js",
     "nm-overview.js",
     "nm-relations.js",
     "nm-reading.js",
@@ -855,6 +856,10 @@ def _ensure_overview_assets(html_dir) -> None:
         external_js = (static_dir / "nm-external-editor.js").read_text(encoding="utf-8")
     except OSError:
         external_js = ""
+    try:
+        annotations_js = (static_dir / "nm-annotations.js").read_text(encoding="utf-8")
+    except OSError:
+        annotations_js = ""
     if (
         ".nm-overview" not in css
         or "nmRevealSidebarDir" not in js
@@ -876,6 +881,7 @@ def _ensure_overview_assets(html_dir) -> None:
         or "NM_FOCUS_EDITOR_ON_SPLIT" not in js
         or "NM_FOCUS_READONLY_ON_SPLIT" not in js
         or "NM_EXTERNAL_HOTKEY" not in external_js
+        or "nm-annotate-overlay" not in annotations_js
         or "Ctrl/⌘+Alt+S" not in command_js
     ):
         _copy_static_assets(static_dir)
@@ -1200,6 +1206,44 @@ body.nm-cmd-open { overflow: hidden; }
                     font-size: 11px; white-space: nowrap; }
 .nm-help-note { color: #888; font-size: 11px; line-height: 1.6; margin: 10px 0 0; }
 body.nm-note-open { overflow: hidden; }
+.nm-annotated-media { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
+.nm-annotated-media > img { display: block; max-width: 100%; height: auto; }
+.nm-annotation-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
+                       overflow: visible; }
+.nm-annotate-btn { position: absolute; right: 8px; bottom: 8px; z-index: 2; opacity: 0;
+                   border: 1px solid #bbdefb; background: rgba(255,255,255,.92); color: #1565c0;
+                   border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
+.nm-annotated-media:hover .nm-annotate-btn, .nm-annotate-btn:focus { opacity: 1; }
+@media (hover: none) { .nm-annotate-btn { opacity: 1; } }
+.nm-annotate-overlay { position: fixed; inset: 0; z-index: 1100; background: rgba(20,20,30,.5);
+                       display: flex; align-items: center; justify-content: center; padding: 16px;
+                       box-sizing: border-box; }
+.nm-annotate-dialog { background: #fff; border-radius: 8px; box-shadow: 0 18px 60px rgba(0,0,0,.35);
+                      width: min(1100px, 96vw); max-height: 94vh; padding: 10px 12px; box-sizing: border-box;
+                      display: flex; flex-direction: column; gap: 8px; }
+.nm-annotate-head { display: flex; align-items: center; gap: 10px; }
+.nm-annotate-head h2 { font-size: 16px; margin: 0; }
+.nm-annotate-status { color: #c62828; font-size: 12px; flex: 1; }
+.nm-annotate-close { border: 0; background: transparent; color: #999; font-size: 20px; cursor: pointer; }
+.nm-annotate-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.nm-annotate-tool, .nm-annotate-action { border: 1px solid #cfd8dc; background: #fff; color: #455a64;
+                  border-radius: 4px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
+.nm-annotate-tool.active { background: #e3f2fd; border-color: #64b5f6; color: #1565c0; }
+.nm-annotate-action:hover, .nm-annotate-tool:hover { background: #f5f5f5; }
+.nm-annotate-color { width: 28px; height: 24px; padding: 0; border: 1px solid #cfd8dc; background: #fff; }
+.nm-annotate-width { border: 1px solid #cfd8dc; border-radius: 4px; padding: 2px 4px; font-size: 12px; }
+.nm-annotate-stage { position: relative; min-height: 120px; overflow: auto; background: #f5f5f5;
+                     text-align: center; }
+.nm-annotate-canvas { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
+.nm-annotate-image { display: block; max-width: 100%; max-height: 68vh; user-select: none;
+                     -webkit-user-drag: none; }
+.nm-annotate-svg { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none;
+                   cursor: crosshair; overflow: visible; }
+.nm-annotate-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.nm-annotate-save { border: 1px solid #1565c0; background: #1565c0; color: #fff; border-radius: 4px;
+                    padding: 5px 12px; cursor: pointer; }
+.nm-annotate-cancel { border: 1px solid #cfd8dc; background: #fff; border-radius: 4px; padding: 5px 12px;
+                      cursor: pointer; }
 .nm-note-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(20, 20, 30, .42);
                    display: flex; align-items: flex-start; justify-content: center; padding-top: 14vh; }
 .nm-note-overlay[hidden] { display: none !important; }

@@ -458,6 +458,17 @@ class WebHandler(BaseHTTPRequestHandler):
                 str(data.get("source_rel_path", "")),
                 bool(data.get("delete_assets")),
             )
+        elif path == "/api/save_annotation":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            resp = self.daemon_ref.save_annotation(
+                pj,
+                str(data.get("image_rel_path", "")),
+                str(data.get("svg", "")),
+            )
         elif path == "/api/import_url":
             try:
                 pj = int(data.get("project", -1))

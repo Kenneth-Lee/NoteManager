@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 新增图片标注：图片上的圈、框、箭头、下划线和文字以同名 `.ann.svg`
+  矢量层保存，渲染时叠加到原图，不修改原图；提供基础 SVG 标注编辑器
 - 新增 `nmr --version`；
 - `nmr status` 显示当前 NoteManager/Daemon 版本，版本不一致时提示重启 Daemon
 

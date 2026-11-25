@@ -2655,6 +2655,56 @@ class NoteManagerDaemon:
             candidate = f"{stem}-{stamp}-{secrets.token_hex(3)}{safe_ext}"
         return candidate
 
+    def save_annotation(self, project_idx: int, image_rel_posix: str, svg_text: str) -> dict:
+        """Save a transparent SVG annotation layer next to an image."""
+        text = str(svg_text or "")
+        if len(text.encode("utf-8")) > 2 * 1024 * 1024:
+            return {"ok": False, "error": "标注文件过大"}
+        if not text.strip().startswith("<svg") or "</svg>" not in text:
+            return {"ok": False, "error": "不是有效的 SVG"}
+        lowered = text.lower()
+        for bad in ("<script", "<foreignobject", "<iframe", "<object", "<embed",
+                    "javascript:", " onload=", " onclick=", " onmouseover="):
+            if bad in lowered:
+                return {"ok": False, "error": "SVG 包含不允许的内容"}
+
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root = Path(dirs[project_idx]).resolve()
+        rel = Path(str(image_rel_posix or "").replace("\\", "/"))
+        if rel.is_absolute() or any(part == ".." for part in rel.parts):
+            return {"ok": False, "error": "非法图片路径"}
+        if rel.suffix.lower() not in _IMPORT_IMAGE_EXTS:
+            return {"ok": False, "error": "只支持图片文件"}
+        image_abs = (root / rel).resolve()
+        try:
+            image_abs.relative_to(root)
+        except ValueError:
+            return {"ok": False, "error": "拒绝路径"}
+        if not image_abs.is_file():
+            return {"ok": False, "error": "图片不存在"}
+        sidecar = image_abs.with_name(image_abs.name + ".ann.svg")
+        try:
+            suppress_path(sidecar)
+            sidecar.write_text(text, encoding="utf-8")
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+        html_dir = root / ".NoteManager" / "html"
+        if html_dir.is_dir():
+            try:
+                from notemanager.builder import _copy_project_assets
+
+                _copy_project_assets(root, html_dir)
+            except Exception as ex:
+                logger.warning("保存标注后同步 html 资源目录失败: %s", ex)
+        return {
+            "ok": True,
+            "annotation_rel_path": sidecar.relative_to(root).as_posix(),
+            "image_rel_path": rel.as_posix(),
+        }
+
     def save_imported_asset(
         self,
         project_idx: int,

@@ -408,6 +408,14 @@ P1 已增加图片引用索引、独占图片清理和回收站恢复；详见�
 
 导入本地文件/URL 的详细规则见 `docs/asset-import.md`。
 
+### 图片标注
+
+图片右下角可打开「标注」，在图片上添加圈、框、箭头、下划线和文字。
+标注保存为同名 `.ann.svg`，不修改原始图片；Markdown/reST 仍只引用原图，
+NoteManager 渲染时自动叠加 SVG 标注层。
+
+详见 [图片标注](docs/image-annotations.md)。
+
 ### 文档语法
 
 NoteManager 支持 reST、Markdown 和纯文本。除标准语法外，还支持：
@@ -419,7 +427,7 @@ NoteManager 支持 reST、Markdown 和纯文本。除标准语法外，还支持
 - KaTeX 数学公式、Mermaid 图表、代码高亮；
 - 目录级 `_static/` 图片约定。
 
-完整写法见 [reST / Markdown 扩展语法与书写约定](https://github.com/Kenneth-Lee/NoteManager/blob/master/docs/rst-md-syntax.md)。
+完整写法见 [reST / Markdown 扩展语法与书写约定](https://github.com/Kenneth-Lee/NoteManager/blob/master/docs/%E7%AC%94%E8%AE%B0%E6%A0%BC%E5%BC%8F%E8%AF%B4%E6%98%8E.md)。
 
 ### 扫描格式与忽略规则
 
