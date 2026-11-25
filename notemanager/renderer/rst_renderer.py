@@ -393,7 +393,10 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
     settings = {
         "input_encoding": "utf-8",
         "output_encoding": "utf-8",
-        "report_level": 5,
+        # Collect docutils warnings/errors (unknown directives, malformed
+        # markup, missing targets) into the diagnostics panel.  System-message
+        # HTML is still stripped from the rendered body below.
+        "report_level": 2,
         "halt_level": 6,
         "file_insertion_enabled": False,
         "raw_enabled": True,

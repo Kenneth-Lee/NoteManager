@@ -4,6 +4,8 @@ Extracts label definitions from RST files and resolves :ref: and :doc:
 links in rendered HTML.
 """
 
+import json
+from html import escape as html_escape
 import re
 from pathlib import Path
 
@@ -13,7 +15,9 @@ from notemanager.scanner import FileInfo
 LABEL_PATTERN = re.compile(r"^\.\.\s+_`?([^`:\s]+)`?:\s*$", re.MULTILINE)
 
 
-def extract_labels(project_root: str | Path, files: list[FileInfo]) -> dict[str, str]:
+def extract_labels(
+    project_root: str | Path, files: list[FileInfo], *, with_candidates: bool = False
+):
     """Extract all label definitions from RST files.
 
     Args:
@@ -22,9 +26,11 @@ def extract_labels(project_root: str | Path, files: list[FileInfo]) -> dict[str,
 
     Returns:
         Dictionary mapping label names to their HTML file paths
-        (relative to .NoteManager/html/).
+        (relative to .NoteManager/html/), or
+        ``(labels, candidates)`` when ``with_candidates`` is true.
     """
     labels = {}
+    candidates: dict[str, list[str]] = {}
     for fi in files:
         if fi.ext != ".rst":
             continue
@@ -43,8 +49,12 @@ def extract_labels(project_root: str | Path, files: list[FileInfo]) -> dict[str,
                     f"(previously defined for {labels[label]})",
                     stacklevel=2,
                 )
-            labels[label] = html_rel
+            target = f"{html_rel}#{label}"
+            labels[label] = target
+            candidates.setdefault(label, []).append(target)
 
+    if with_candidates:
+        return labels, candidates
     return labels
 
 
@@ -52,6 +62,7 @@ def resolve_references(
     html: str,
     current_html_path: str,
     ref_labels: dict[str, str],
+    ref_candidates: dict[str, list[str]] | None = None,
 ) -> str:
     """Resolve :ref: and :doc: cross-references in rendered HTML.
 
@@ -63,7 +74,7 @@ def resolve_references(
     Returns:
         HTML with resolved cross-references.
     """
-    html = _resolve_ref_links(html, current_html_path, ref_labels)
+    html = _resolve_ref_links(html, current_html_path, ref_labels, ref_candidates)
     html = _resolve_doc_links(html, current_html_path)
     return html
 
@@ -72,18 +83,38 @@ def _resolve_ref_links(
     html: str,
     current_html_path: str,
     ref_labels: dict[str, str],
+    ref_candidates: dict[str, list[str]] | None = None,
 ) -> str:
     """Resolve #ref-label placeholders to actual href links."""
     def replace_ref(match):
         full_tag = match.group(0)
         label = match.group(1)
 
-        target = ref_labels.get(label)
+        choices = list((ref_candidates or {}).get(label) or [])
+        target = (choices[-1] if choices else ref_labels.get(label))
         if not target:
             # Label not found, remove the placeholder link, keep text
             return match.group(2)  # just the link text
 
-        rel_path = _relative_path(current_html_path, target)
+        def rel_target(value: str) -> str:
+            target_path, _, anchor = value.partition("#")
+            rel = _relative_path(current_html_path, target_path)
+            return rel + (("#" + anchor) if anchor else "")
+
+        rel_path = rel_target(target)
+        if len(choices) > 1:
+            payload = []
+            for choice in choices:
+                path, _, anchor = choice.partition("#")
+                payload.append({
+                    "path": rel_target(choice),
+                    "label": Path(path).with_suffix("").name,
+                })
+            attr = html_escape(json.dumps(payload, ensure_ascii=False), quote=True)
+            return full_tag.replace(
+                f'href="#ref-{label}"',
+                f'href="{rel_path}" data-nm-ref-candidates="{attr}"',
+            )
         return full_tag.replace(f'href="#ref-{label}"', f'href="{rel_path}"')
 
     # Match <a ... href="#ref-LABEL">TEXT</a>

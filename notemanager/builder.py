@@ -82,6 +82,23 @@ def _merge_dtag_lists(
     return out
 
 
+def _add_output_conflict_warnings(files, rendered: dict) -> None:
+    """Warn when two source formats would overwrite the same HTML path."""
+    groups: dict[str, list] = {}
+    for fi in files:
+        html_rel = str(fi.rel_path.with_suffix(".html"))
+        groups.setdefault(html_rel, []).append(fi.rel_path)
+    for html_rel, sources in groups.items():
+        if len(sources) < 2:
+            continue
+        names = ", ".join(str(x) for x in sources)
+        msg = f"输出路径冲突: {html_rel} 由多个源文件生成 ({names})，请重命名其中一个"
+        for source in sources:
+            item = rendered.get(source)
+            if item is not None:
+                item.setdefault("warnings", []).append(msg)
+
+
 def full_build(
     project_root: str | Path,
     *,
@@ -121,10 +138,13 @@ def full_build(
         rendered[fi.rel_path] = _render_file(fi)
     if n:
         p(f"  语法转换完成 ({n} 个文件)")
+    _add_output_conflict_warnings(files, rendered)
 
     # Extract labels
     p("  解析标签、交叉引用与 index 指令…")
-    ref_labels = extract_labels(project_root, files)
+    ref_labels, ref_candidates = extract_labels(
+        project_root, files, with_candidates=True
+    )
 
     # Extract .. index:: directives from RST sources
     rst_index_dirs = extract_rst_index_directives(files)
@@ -145,7 +165,9 @@ def full_build(
         if merged:
             all_dtags[key] = merged
         r_out = {**r, "dtags": merged}
-        doc = _write_html(html_dir, fi, r_out, ref_labels, ui_plugin)
+        doc = _write_html(
+            html_dir, fi, r_out, ref_labels, ui_plugin, ref_candidates
+        )
         documents.append(doc)
         k = j + 1
         if n and (k == n or k <= 2 or k - last_report >= step):
@@ -263,7 +285,9 @@ def update_file(
     rendered = _render_file(fi)
 
     # Re-extract all labels (this file may have changed labels)
-    ref_labels = extract_labels(project_root, files)
+    ref_labels, ref_candidates = extract_labels(
+        project_root, files, with_candidates=True
+    )
 
     # Re-extract .. index:: directives
     rst_index_dirs = extract_rst_index_directives(files)
@@ -276,7 +300,9 @@ def update_file(
     rendered = {**rendered, "dtags": merged}
 
     # Write this file's HTML
-    _write_html(html_dir, fi, rendered, ref_labels, ui_plugin)
+    _write_html(
+        html_dir, fi, rendered, ref_labels, ui_plugin, ref_candidates
+    )
 
     # Rebuild full index
     documents = []
@@ -351,7 +377,9 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
 
     # Re-scan and rebuild index
     files = scan_directory(project_root)
-    ref_labels = extract_labels(project_root, files)
+    ref_labels, ref_candidates = extract_labels(
+        project_root, files, with_candidates=True
+    )
     rst_index_dirs = extract_rst_index_directives(files)
     dtags_per_doc = extract_dtags_from_sources(files)
 
@@ -413,13 +441,16 @@ def _render_file(fi: FileInfo) -> dict:
     return result
 
 
-def _write_html(html_dir, fi, rendered, ref_labels, ui_plugin: UiPluginBundle):
+def _write_html(html_dir, fi, rendered, ref_labels, ui_plugin: UiPluginBundle,
+                ref_candidates=None):
     """Resolve references and write a single HTML file."""
     html_rel = fi.rel_path.with_suffix(".html")
     html_path = html_dir / html_rel
     html_path.parent.mkdir(parents=True, exist_ok=True)
 
-    body = resolve_references(rendered["body"], str(html_rel), ref_labels)
+    body = resolve_references(
+        rendered["body"], str(html_rel), ref_labels, ref_candidates
+    )
     full_html = wrap_html(
         body,
         rendered["title"],
@@ -724,6 +755,7 @@ _RUNTIME_STATIC_TOP_LEVEL = {
     "nm-editor.js",
     "nm-external-editor.js",
     "nm-annotations.js",
+    "nm-refs.js",
     "nm-overview.js",
     "nm-relations.js",
     "nm-reading.js",
@@ -861,6 +893,10 @@ def _ensure_overview_assets(html_dir) -> None:
         annotations_js = (static_dir / "nm-annotations.js").read_text(encoding="utf-8")
     except OSError:
         annotations_js = ""
+    try:
+        refs_js = (static_dir / "nm-refs.js").read_text(encoding="utf-8")
+    except OSError:
+        refs_js = ""
     if (
         ".nm-overview" not in css
         or "nmRevealSidebarDir" not in js
@@ -884,6 +920,7 @@ def _ensure_overview_assets(html_dir) -> None:
         or "NM_FOCUS_READONLY_ON_SPLIT" not in js
         or "NM_EXTERNAL_HOTKEY" not in external_js
         or "nm-annotate-overlay" not in annotations_js
+        or "nm-ref-choice-list" not in refs_js
         or "Ctrl/⌘+Alt+S" not in command_js
     ):
         _copy_static_assets(static_dir)
@@ -1111,6 +1148,9 @@ img { max-width: 100%; }
 .nm-overview-doc-list a:hover { text-decoration: underline; }
 .nm-overview-snippet { font-size: 11px; color: #888; margin-top: 2px; }
 .nm-more-link { font-size: 12px; color: #0066cc; text-decoration: none; display: inline-block; margin-top: 6px; }
+pre.nm-plaintext { white-space: pre-wrap; overflow-wrap: anywhere; background: #fafafa;
+                   border: 1px solid #eee; border-radius: 4px; padding: 12px 14px;
+                   font-family: inherit; line-height: 1.6; }
 .nm-overview-more { margin-top: 10px; font-size: 13px; }
 .nm-overview-more a { color: #0066cc; text-decoration: none; }
 .nm-overview-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 8px; }
@@ -1333,6 +1373,11 @@ body.nm-note-open { overflow: hidden; }
 .nm-reference-list { max-height: 330px; overflow-y: auto; border: 1px solid #eceff1; border-radius: 5px;
                      margin-top: 8px; }
 .nm-import-hint code { background: #eceff1; padding: 0 3px; border-radius: 2px; }
+.nm-ref-choice-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.nm-ref-choice-btn { text-align: left; border: 1px solid #cfd8dc; background: #fafafa; color: #37474f;
+                     border-radius: 4px; padding: 7px 9px; font-family: monospace; font-size: 12px;
+                     cursor: pointer; overflow-wrap: anywhere; }
+.nm-ref-choice-btn:hover { background: #e3f2fd; border-color: #90caf9; }
 #nm-import-file { padding: 4px 0; border: 0; background: transparent; font-size: 12px; }
 .nm-note-impact { font-size: 12px; color: #555; background: #f7f9fa; border: 1px solid #eceff1;
                   border-radius: 5px; padding: 8px 10px; margin-top: 10px; line-height: 1.6; }

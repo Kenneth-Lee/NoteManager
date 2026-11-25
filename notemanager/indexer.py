@@ -17,6 +17,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 from notemanager.index_body import extract_render_panel_inner_html
+from notemanager.renderer.frontmatter import extract_frontmatter
 
 # <section id="xxx">...<hN>title</hN>
 _SECTION_HEADING_RE = re.compile(
@@ -212,7 +213,7 @@ def build_index(
             entries.append({
                 "type": "label",
                 "title": label,
-                "path": f"{target_path}#{label}",
+                "path": target_path if "#" in target_path else f"{target_path}#{label}",
                 "text": label,
                 "snippet": f"标签锚点: {label}",
             })
@@ -413,8 +414,23 @@ def extract_dtags_from_sources(files) -> dict[str, list[str]]:
                     tag = tag.strip()
                     if tag and tag not in tags:
                         tags.append(tag)
-        elif fi.ext == ".md":
-            tags = extract_md_hashtags(content)
+        elif fi.ext in (".md", ".txt"):
+            body, fm_tags, _metadata, _warnings = extract_frontmatter(content)
+            tags = list(fm_tags)
+            if fi.ext == ".md":
+                for tag in extract_md_hashtags(body):
+                    if tag not in tags:
+                        tags.append(tag)
+            else:
+                for line in body.replace("\r\n", "\n").replace("\r", "\n").splitlines():
+                    if not line.startswith("nMr:"):
+                        continue
+                    comment = line[4:].strip()
+                    for match in re.finditer(r"#([^#\n]+)#", comment):
+                        for tag in match.group(1).split(","):
+                            tag = tag.strip()
+                            if tag and tag not in tags:
+                                tags.append(tag)
         if tags:
             result[str(fi.rel_path)] = tags
     return result

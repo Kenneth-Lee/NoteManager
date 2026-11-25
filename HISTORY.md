@@ -2,6 +2,17 @@
 
 ## 未发布
 
+- Markdown/TXT 支持简单 YAML 头：只使用 `tags` 列表，其他字段进入诊断；
+- TXT 正文改为原样 `<pre>`，仅剔除 `nMr:` 注释；注释中的 `#...#` 进入 dtag；
+- `:ref:` 链接现在跳到 label 锚点；同名 label 生成候选选择链接；
+- 同名的 md/rst 输出路径冲突会在诊断中提示；
+- 未知 RST directive 现在进入诊断；Markdown 跨文档 `#anchor` 链接修复；
+- 格式说明按当前实现修正 toctree、attr_list、ref/doc、TXT 和文字错误；
+- RST 渲染诊断现在收集 docutils 的错误/警告，包括未知 directive；
+- TXT 改为 `<pre>` 原样保留正文，仅剔除行首 `nMr:` 注释；注释中的
+  `#标签#` 进入 dtag 索引，注释写入诊断；
+- 修复 Markdown `a.md#section` 跨文档锚点链接未转换的问题；
+- 修正格式说明中 toctree、attr_list、ref/doc、链接、TXT 和文字错误；
 - 修复 `.nmrignore` 中含 `/` 的模式被错误地当成任意层级匹配，导致
   `sub/_static` 等嵌套图片被误忽略；
 - 源文件工具栏新增「引用资源」：按当前目录 `_static`、子目录、未引用、

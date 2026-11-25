@@ -8,6 +8,7 @@ import markdown
 from notemanager.indexer import extract_md_hashtags
 from notemanager.renderer.postproc import clean_paragraph_newlines
 from notemanager.renderer.preformatted import mark_diagram_code_blocks
+from notemanager.renderer.frontmatter import extract_frontmatter
 
 # Math spans ($$..$$, $..$, \(..\), \[..\], \begin{align}..) are rendered client-side
 # by KaTeX auto-render. Python-Markdown applies backslash escapes (\\ -> \, \{ -> {,
@@ -215,7 +216,8 @@ def render_md(content: str, source_path: str = "<string>") -> dict:
             },
         },
     )
-    body, math_store = _protect_math(content)
+    source, fm_tags, _metadata, fm_warnings = extract_frontmatter(content)
+    body, math_store = _protect_math(source)
     body = md.convert(body)
     body = _restore_math(body, math_store)
     body = _convert_links(body)
@@ -230,7 +232,11 @@ def render_md(content: str, source_path: str = "<string>") -> dict:
     # 行号扫描用原始 content（数学 stash 会把多行公式替换成单行 token，改变行数）
     heading_lines = _build_heading_line_map(content, getattr(md, "toc_tokens", None))
 
-    return {"body": body, "toc": toc_html, "warnings": [], "dtags": extract_md_hashtags(content),
+    dtags = list(fm_tags)
+    for tag in extract_md_hashtags(source):
+        if tag not in dtags:
+            dtags.append(tag)
+    return {"body": body, "toc": toc_html, "warnings": fm_warnings, "dtags": dtags,
             "heading_lines": heading_lines}
 
 
@@ -245,9 +251,11 @@ def _convert_links(html: str) -> str:
         # Fix bare www. URLs
         if path.startswith("www."):
             return f'{prefix}http://{path}{suffix}'
+        # Keep URL fragments intact: a.md#section -> a.html#section.
+        base, sep, fragment = path.partition("#")
         for ext in (".md", ".rst", ".txt"):
-            if path.endswith(ext):
-                path = path[: -len(ext)] + ".html"
+            if base.endswith(ext):
+                path = base[: -len(ext)] + ".html" + (sep + fragment if sep else "")
                 break
         return f'{prefix}{path}{suffix}'
 

@@ -120,7 +120,9 @@ def _write_export_pages(
         p(f"  语法转换完成 ({n} 个文件)")
 
     p("  解析标签与交叉引用…")
-    ref_labels = extract_labels(project_root, files)
+    ref_labels, ref_candidates = extract_labels(
+        project_root, files, with_candidates=True
+    )
     rst_index_dirs = extract_rst_index_directives(files)
     dtags_extracted = extract_dtags_from_sources(files)
 
@@ -136,7 +138,7 @@ def _write_export_pages(
         r_out = {**r, "dtags": merged}
         html_rel = fi.rel_path.with_suffix(".html")
         body = resolve_references(
-            r_out["body"], str(html_rel), ref_labels,
+            r_out["body"], str(html_rel), ref_labels, ref_candidates,
         )
         full = wrap_export_note_html(
             body,
