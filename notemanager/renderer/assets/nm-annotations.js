@@ -63,6 +63,72 @@
         return {w: w, h: h};
     }
 
+    var zoomDialog = null;
+
+    function openZoom(img) {
+        if (zoomDialog) {
+            if (zoomDialog.parentNode) zoomDialog.parentNode.removeChild(zoomDialog);
+            zoomDialog = null;
+        }
+        var src = img.getAttribute('src') || img.currentSrc || img.src;
+        var alt = img.getAttribute('alt') || '';
+        var natural = img.naturalWidth || 0;
+        var current = Math.round(img.getBoundingClientRect().width || natural || 600);
+        var maxW = Math.max(2400, natural || 0);
+        zoomDialog = document.createElement('div');
+        zoomDialog.className = 'nm-zoom-overlay';
+        zoomDialog.innerHTML = '<div class="nm-zoom-dialog" role="dialog" aria-label="图片缩放">' +
+            '<div class="nm-zoom-head"><h2>图片缩放</h2><button type="button" class="nm-zoom-close" aria-label="关闭">×</button></div>' +
+            '<div class="nm-zoom-controls"><label>宽度</label><input type="range" min="40" max="' + maxW + '" step="10" value="' + current + '">' +
+            '<span class="nm-zoom-value">' + current + 'px</span></div>' +
+            '<div class="nm-zoom-stage"><img class="nm-zoom-image" alt=""></div>' +
+            '<div class="nm-zoom-code"><label>Markdown</label><pre class="nm-zoom-md"></pre>' +
+            '<button type="button" class="nm-zoom-copy" data-kind="md">复制</button></div>' +
+            '<div class="nm-zoom-code"><label>reST</label><pre class="nm-zoom-rst"></pre>' +
+            '<button type="button" class="nm-zoom-copy" data-kind="rst">复制</button></div>' +
+            '<p class="nm-zoom-note">这里只预览显示宽度，不会修改源文件；把代码复制到源文件后即可固定该尺寸。</p>' +
+            '</div>';
+        document.body.appendChild(zoomDialog);
+        document.body.classList.add('nm-note-open');
+        var range = zoomDialog.querySelector('input[type=range]');
+        var value = zoomDialog.querySelector('.nm-zoom-value');
+        var preview = zoomDialog.querySelector('.nm-zoom-image');
+        var mdPre = zoomDialog.querySelector('.nm-zoom-md');
+        var rstPre = zoomDialog.querySelector('.nm-zoom-rst');
+        preview.src = src;
+        function update() {
+            var px = parseInt(range.value, 10) || current;
+            value.textContent = px + 'px';
+            preview.style.width = px + 'px';
+            mdPre.textContent = '![' + alt + '](' + src + '){width=' + px + 'px}';
+            rstPre.textContent = '.. image:: ' + src + '\n   :width: ' + px + 'px' +
+                (alt ? '\n   :alt: ' + alt : '');
+        }
+        range.addEventListener('input', update);
+        update();
+        zoomDialog.querySelector('.nm-zoom-close').addEventListener('click', closeZoom);
+        zoomDialog.addEventListener('mousedown', function (event) {
+            if (event.target === zoomDialog) closeZoom();
+        });
+        zoomDialog.querySelectorAll('.nm-zoom-copy').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var text = btn.dataset.kind === 'rst' ? rstPre.textContent : mdPre.textContent;
+                if (navigator.clipboard) navigator.clipboard.writeText(text).then(function () {
+                    btn.textContent = '已复制';
+                    setTimeout(function () { btn.textContent = '复制'; }, 1200);
+                }).catch(function () {});
+            });
+        });
+        setTimeout(function () { range.focus(); }, 0);
+    }
+
+    function closeZoom() {
+        if (!zoomDialog) return;
+        if (zoomDialog.parentNode) zoomDialog.parentNode.removeChild(zoomDialog);
+        zoomDialog = null;
+        if (!editor) document.body.classList.remove('nm-note-open');
+    }
+
     function attach(img) {
         if (!img || img.getAttribute('data-nm-annotation-skip')) return;
         if (img.closest('.nm-annotated-media')) return;
@@ -91,12 +157,21 @@
             preserveAspectRatio: 'none'
         });
         wrap.appendChild(overlay);
+        var actions = document.createElement('span');
+        actions.className = 'nm-image-actions';
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'nm-annotate-btn';
         btn.textContent = '标注';
         btn.title = '在图片上添加圈注、箭头、下划线和文字';
-        wrap.appendChild(btn);
+        actions.appendChild(btn);
+        var zoomBtn = document.createElement('button');
+        zoomBtn.type = 'button';
+        zoomBtn.className = 'nm-annotate-btn nm-image-zoom-btn';
+        zoomBtn.textContent = '缩放';
+        zoomBtn.title = '预览图片显示宽度，并查看 Markdown/reST 写法';
+        actions.appendChild(zoomBtn);
+        wrap.appendChild(actions);
 
         function ready() {
             naturalBox(img, overlay);
@@ -112,6 +187,11 @@
         else img.addEventListener('load', ready, {once: true});
 
         btn.style.display = info.rel ? '' : 'none';
+        zoomBtn.addEventListener('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            openZoom(img);
+        });
         btn.addEventListener('click', function (event) {
             event.preventDefault();
             event.stopPropagation();
@@ -121,6 +201,7 @@
 
     function createToolbar(dialog, state) {
         var tools = [
+            ['select', '选择'],
             ['ellipse', '圈'],
             ['rect', '框'],
             ['arrow', '箭头'],
@@ -135,9 +216,9 @@
             b.className = 'nm-annotate-tool';
             b.dataset.tool = pair[0];
             b.textContent = pair[1];
-            if (pair[0] === 'ellipse') b.classList.add('active');
+            if (pair[0] === 'select') b.classList.add('active');
             b.addEventListener('click', function () {
-                state.tool = pair[0];
+                state.setTool(pair[0]);
                 bar.querySelectorAll('.nm-annotate-tool').forEach(function (x) {
                     x.classList.toggle('active', x === b);
                 });
@@ -149,20 +230,73 @@
         color.value = '#e53935';
         color.className = 'nm-annotate-color';
         color.title = '颜色';
-        color.addEventListener('input', function () { state.color = color.value; });
+        color.addEventListener('input', function () {
+            state.color = color.value;
+            if (state.markerPath) state.markerPath.setAttribute('fill', state.color);
+            state.applyStyle();
+        });
         bar.appendChild(color);
 
         var width = document.createElement('select');
         width.className = 'nm-annotate-width';
-        [2, 3, 5, 8].forEach(function (w) {
+        width.title = '线宽';
+        [1, 2, 3, 5, 8, 12, 16, 24, 32].forEach(function (w) {
             var o = document.createElement('option');
             o.value = String(w);
             o.textContent = w + 'px';
-            if (w === 3) o.selected = true;
+            if (w === 5) o.selected = true;
             width.appendChild(o);
         });
-        width.addEventListener('change', function () { state.width = Number(width.value) || 3; });
+        width.addEventListener('change', function () {
+            state.width = Number(width.value) || 5;
+            state.applyStyle();
+        });
         bar.appendChild(width);
+
+        var dash = document.createElement('select');
+        dash.className = 'nm-annotate-width';
+        dash.title = '线型';
+        [['solid', '实线'], ['dashed', '虚线']].forEach(function (pair) {
+            var o = document.createElement('option');
+            o.value = pair[0];
+            o.textContent = pair[1];
+            dash.appendChild(o);
+        });
+        dash.addEventListener('change', function () {
+            state.dash = dash.value === 'dashed';
+            state.applyStyle();
+        });
+        bar.appendChild(dash);
+
+        var fontSize = document.createElement('select');
+        fontSize.className = 'nm-annotate-width';
+        fontSize.title = '文字大小';
+        [12, 16, 20, 24, 28, 36, 48, 64, 80, 96].forEach(function (size) {
+            var o = document.createElement('option');
+            o.value = String(size);
+            o.textContent = size + 'px';
+            if (size === 28) o.selected = true;
+            fontSize.appendChild(o);
+        });
+        fontSize.addEventListener('change', function () {
+            state.fontSize = Number(fontSize.value) || 28;
+            state.applyStyle();
+        });
+        bar.appendChild(fontSize);
+
+        var editText = document.createElement('button');
+        editText.type = 'button';
+        editText.className = 'nm-annotate-action';
+        editText.textContent = '改文字';
+        editText.addEventListener('click', function () { state.editText(); });
+        bar.appendChild(editText);
+
+        var del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'nm-annotate-action';
+        del.textContent = '删除';
+        del.addEventListener('click', function () { state.deleteSelected(); });
+        bar.appendChild(del);
 
         var undo = document.createElement('button');
         undo.type = 'button';
@@ -204,21 +338,130 @@
         var svg = editor.querySelector('.nm-annotate-svg');
         var status = editor.querySelector('#nm-annotate-status');
         var state = {
-            tool: 'ellipse',
+            tool: 'select',
             color: '#e53935',
-            width: 3,
+            width: 5,
+            dash: false,
+            fontSize: 28,
             drawing: null,
+            mode: null,
             start: null,
+            original: null,
+            selected: null,
+            markerPath: null,
             shapes: [],
             undo: function () {
                 var node = this.shapes.pop();
                 if (node && node.parentNode) node.parentNode.removeChild(node);
+                if (node === this.selected) this.selected = null;
+                this.renderSelection();
             },
             clear: function () {
                 this.shapes.forEach(function (n) { if (n.parentNode) n.parentNode.removeChild(n); });
                 this.shapes = [];
+                this.selected = null;
+                this.renderSelection();
+            },
+            setTool: function (tool) {
+                this.tool = tool;
+                this.mode = null;
+                this.drawing = null;
+                if (tool !== 'select') {
+                    this.selected = null;
+                    this.renderSelection();
+                }
+                this.shapes.forEach(function (node) {
+                    node.style.pointerEvents = tool === 'select' ? 'all' : 'none';
+                });
+            },
+            applyStyle: function () {
+                if (!this.selected) return;
+                applyStyleTo(this.selected);
+                this.renderSelection();
+            },
+            editText: function () {
+                var node = this.selected;
+                if (!node || node.nodeName.toLowerCase() !== 'text') return;
+                var text = window.prompt('修改标注文字', node.textContent || '');
+                if (text === null) return;
+                node.textContent = text;
+                this.renderSelection();
+            },
+            deleteSelected: function () {
+                var node = this.selected;
+                if (!node) return;
+                var index = this.shapes.indexOf(node);
+                if (index >= 0) this.shapes.splice(index, 1);
+                if (node.parentNode) node.parentNode.removeChild(node);
+                this.selected = null;
+                this.renderSelection();
+            },
+            renderSelection: function () {
+                renderSelection();
             }
         };
+        var selectionGroup = null;
+
+        function applyStyleTo(node) {
+            var tag = node.nodeName.toLowerCase();
+            if (tag === 'text') {
+                node.setAttribute('fill', state.color);
+                node.setAttribute('font-size', state.fontSize);
+            } else {
+                node.setAttribute('stroke', state.color);
+                node.setAttribute('stroke-width', state.width);
+                node.setAttribute('fill', 'none');
+                if (state.dash) node.setAttribute('stroke-dasharray', (state.width * 3) + ' ' + (state.width * 2));
+                else node.removeAttribute('stroke-dasharray');
+            }
+        }
+
+        function selectShape(node) {
+            state.selected = node;
+            state.mode = null;
+            state.drawing = null;
+            state.shapes.forEach(function (n) { n.style.pointerEvents = 'all'; });
+            renderSelection();
+        }
+
+        function deselect() {
+            state.selected = null;
+            state.mode = null;
+            state.drawing = null;
+            renderSelection();
+        }
+
+        function renderSelection() {
+            if (selectionGroup && selectionGroup.parentNode) {
+                selectionGroup.parentNode.removeChild(selectionGroup);
+            }
+            selectionGroup = null;
+            var node = state.selected;
+            if (!node || state.tool !== 'select' || !node.parentNode) return;
+            var box;
+            try { box = node.getBBox(); } catch (e) { return; }
+            if (!box || (!box.width && !box.height)) return;
+            selectionGroup = makeSvg('g', {'data-nm-editor-only': '1'});
+            var pad = Math.max(3, Math.min(8, state.width * 1.5));
+            var rect = makeSvg('rect', {
+                x: box.x - pad, y: box.y - pad,
+                width: box.width + pad * 2, height: box.height + pad * 2,
+                fill: 'none', stroke: '#1e88e5', 'stroke-width': 1,
+                'stroke-dasharray': '4 3', 'pointer-events': 'none'
+            });
+            selectionGroup.appendChild(rect);
+            var size = Math.max(9, Math.min(16, box.width * 0.04 + 7));
+            var handle = makeSvg('rect', {
+                x: box.x + box.width - size / 2,
+                y: box.y + box.height - size / 2,
+                width: size, height: size, fill: '#fff', stroke: '#1e88e5',
+                'stroke-width': 1.5, 'data-nm-resize': '1',
+                style: 'pointer-events:all;cursor:nwse-resize;'
+            });
+            selectionGroup.appendChild(handle);
+            svg.appendChild(selectionGroup);
+        }
+
         edImg.src = img.currentSrc || img.src;
         createToolbar(dialog, state);
         editor.querySelector('.nm-annotate-close').addEventListener('click', closeEditor);
@@ -229,7 +472,9 @@
             id: 'nm-annotate-arrowhead', viewBox: '0 0 10 10', refX: '9', refY: '5',
             markerWidth: '5', markerHeight: '5', orient: 'auto-start-reverse'
         });
-        marker.appendChild(makeSvg('path', {d: 'M 0 0 L 10 5 L 0 10 z', fill: state.color}));
+        var markerPath = makeSvg('path', {d: 'M 0 0 L 10 5 L 0 10 z', fill: state.color});
+        marker.appendChild(markerPath);
+        state.markerPath = markerPath;
         defs.appendChild(marker);
         svg.appendChild(defs);
 
@@ -241,8 +486,12 @@
                 var node = originalOverlay.childNodes[i];
                 if (node.nodeName.toLowerCase() === 'defs') continue;
                 var copy = node.cloneNode(true);
-                svg.appendChild(copy);
-                if (copy.nodeType === 1) state.shapes.push(copy);
+                if (copy.nodeType === 1) {
+                    copy.setAttribute('data-nm-shape', '1');
+                    copy.style.pointerEvents = 'all';
+                    svg.appendChild(copy);
+                    state.shapes.push(copy);
+                }
             }
         }
 
@@ -268,13 +517,16 @@
 
         function newShape(tool, p) {
             var common = {stroke: state.color, 'stroke-width': state.width, fill: 'none'};
-            if (tool === 'rect') return makeSvg('rect', Object.assign({x: p.x, y: p.y, width: 0, height: 0}, common));
-            if (tool === 'ellipse') return makeSvg('ellipse', Object.assign({cx: p.x, cy: p.y, rx: 0, ry: 0}, common));
-            if (tool === 'arrow' || tool === 'line') {
-                var line = makeSvg('line', Object.assign({x1: p.x, y1: p.y, x2: p.x, y2: p.y}, common));
-                if (tool === 'arrow') line.setAttribute('marker-end', 'url(#nm-annotate-arrowhead)');
-                return line;
+            if (state.dash) common['stroke-dasharray'] = (state.width * 3) + ' ' + (state.width * 2);
+            var shape = null;
+            if (tool === 'rect') shape = makeSvg('rect', Object.assign({x: p.x, y: p.y, width: 0, height: 0}, common));
+            else if (tool === 'ellipse') shape = makeSvg('ellipse', Object.assign({cx: p.x, cy: p.y, rx: 0, ry: 0}, common));
+            else if (tool === 'arrow' || tool === 'line') {
+                shape = makeSvg('line', Object.assign({x1: p.x, y1: p.y, x2: p.x, y2: p.y}, common));
+                if (tool === 'arrow') shape.setAttribute('marker-end', 'url(#nm-annotate-arrowhead)');
             }
+            if (shape) shape.setAttribute('data-nm-shape', '1');
+            return shape;
             return null;
         }
 
@@ -296,24 +548,109 @@
             }
         }
 
+        function shapeFromTarget(target) {
+            while (target && target !== svg) {
+                if (target.getAttribute && target.getAttribute('data-nm-shape') === '1') return target;
+                target = target.parentNode;
+            }
+            return null;
+        }
+
+        function geometry(node) {
+            var tag = node.nodeName.toLowerCase();
+            if (tag === 'rect') return {x: +node.getAttribute('x') || 0, y: +node.getAttribute('y') || 0};
+            if (tag === 'ellipse') return {cx: +node.getAttribute('cx') || 0, cy: +node.getAttribute('cy') || 0};
+            if (tag === 'line') return {
+                x1: +node.getAttribute('x1') || 0, y1: +node.getAttribute('y1') || 0,
+                x2: +node.getAttribute('x2') || 0, y2: +node.getAttribute('y2') || 0
+            };
+            if (tag === 'text') return {x: +node.getAttribute('x') || 0, y: +node.getAttribute('y') || 0};
+            return {};
+        }
+
+        function moveTo(node, orig, dx, dy) {
+            var tag = node.nodeName.toLowerCase();
+            if (tag === 'rect' || tag === 'text') {
+                node.setAttribute('x', Math.max(0, orig.x + dx));
+                node.setAttribute('y', Math.max(0, orig.y + dy));
+            } else if (tag === 'ellipse') {
+                node.setAttribute('cx', Math.max(0, orig.cx + dx));
+                node.setAttribute('cy', Math.max(0, orig.cy + dy));
+            } else if (tag === 'line') {
+                node.setAttribute('x1', orig.x1 + dx);
+                node.setAttribute('y1', orig.y1 + dy);
+                node.setAttribute('x2', orig.x2 + dx);
+                node.setAttribute('y2', orig.y2 + dy);
+            }
+        }
+
+        function resizeTo(node, p) {
+            var tag = node.nodeName.toLowerCase();
+            if (tag === 'rect') {
+                var x = +node.getAttribute('x') || 0;
+                var y = +node.getAttribute('y') || 0;
+                node.setAttribute('width', Math.max(5, p.x - x));
+                node.setAttribute('height', Math.max(5, p.y - y));
+            } else if (tag === 'ellipse') {
+                var cx = +node.getAttribute('cx') || 0;
+                var cy = +node.getAttribute('cy') || 0;
+                node.setAttribute('rx', Math.max(5, Math.abs(p.x - cx)));
+                node.setAttribute('ry', Math.max(5, Math.abs(p.y - cy)));
+            } else if (tag === 'line') {
+                node.setAttribute('x2', p.x);
+                node.setAttribute('y2', p.y);
+            } else if (tag === 'text') {
+                var ty = +node.getAttribute('y') || 0;
+                var size = Math.max(8, Math.abs(p.y - ty));
+                node.setAttribute('font-size', Math.min(160, size));
+            }
+        }
+
         svg.addEventListener('pointerdown', function (event) {
             if (event.button !== 0) return;
-            event.preventDefault();
-            var p = point(event);
-            if (state.tool === 'text') {
-                var text = window.prompt('标注文字');
-                if (!text) return;
-                var node = makeSvg('text', {
-                    x: p.x, y: p.y, fill: state.color, 'font-size': 24,
-                    'font-family': 'sans-serif'
-                });
-                node.textContent = text;
-                svg.appendChild(node);
-                state.shapes.push(node);
+            var target = event.target;
+            if (target.getAttribute && target.getAttribute('data-nm-resize') === '1') {
+                if (!state.selected) return;
+                event.preventDefault();
+                state.mode = 'resize';
+                state.start = point(event);
+                svg.setPointerCapture && svg.setPointerCapture(event.pointerId);
                 return;
             }
+            if (state.tool === 'select') {
+                var hit = shapeFromTarget(target);
+                if (hit) {
+                    event.preventDefault();
+                    selectShape(hit);
+                    state.mode = 'move';
+                    state.start = point(event);
+                    state.original = geometry(hit);
+                    svg.setPointerCapture && svg.setPointerCapture(event.pointerId);
+                } else {
+                    deselect();
+                }
+                return;
+            }
+            if (state.tool === 'text') {
+                event.preventDefault();
+                var tp = point(event);
+                var text = window.prompt('标注文字');
+                if (!text) return;
+                var textNode = makeSvg('text', {
+                    x: tp.x, y: tp.y, fill: state.color, 'font-size': state.fontSize,
+                    'font-family': 'sans-serif', 'data-nm-shape': '1'
+                });
+                textNode.textContent = text;
+                svg.appendChild(textNode);
+                state.shapes.push(textNode);
+                return;
+            }
+            event.preventDefault();
+            deselect();
+            var p = point(event);
             var shape = newShape(state.tool, p);
             if (!shape) return;
+            shape.style.pointerEvents = 'none';
             svg.appendChild(shape);
             state.drawing = shape;
             state.start = p;
@@ -321,35 +658,69 @@
         });
 
         svg.addEventListener('pointermove', function (event) {
+            if (state.mode === 'move' && state.selected) {
+                event.preventDefault();
+                var p = point(event);
+                moveTo(state.selected, state.original, p.x - state.start.x, p.y - state.start.y);
+                renderSelection();
+                return;
+            }
+            if (state.mode === 'resize' && state.selected) {
+                event.preventDefault();
+                resizeTo(state.selected, point(event));
+                renderSelection();
+                return;
+            }
             if (!state.drawing) return;
             event.preventDefault();
             updateShape(state.drawing, state.tool, state.start, point(event));
         });
 
         svg.addEventListener('pointerup', function (event) {
+            if (state.mode === 'move' || state.mode === 'resize') {
+                state.mode = null;
+                state.start = null;
+                state.original = null;
+                renderSelection();
+                return;
+            }
             if (!state.drawing) return;
             updateShape(state.drawing, state.tool, state.start, point(event));
             var shape = state.drawing;
             state.drawing = null;
             state.start = null;
-            if (shape.getAttribute('width') === '0' || shape.getAttribute('height') === '0') {
-                // text/line etc. still useful; only discard empty rect/ellipse
-                if (state.tool === 'rect' || state.tool === 'ellipse') {
+            if (state.tool === 'rect' || state.tool === 'ellipse') {
+                var w = parseFloat(shape.getAttribute('width') || shape.getAttribute('rx') || '0');
+                var h = parseFloat(shape.getAttribute('height') || shape.getAttribute('ry') || '0');
+                if (w < 2 || h < 2) {
                     shape.parentNode.removeChild(shape);
                     return;
                 }
             }
+            shape.style.pointerEvents = state.tool === 'select' ? 'all' : 'none';
             state.shapes.push(shape);
         });
 
+        svg.addEventListener('dblclick', function (event) {
+            var hit = shapeFromTarget(event.target);
+            if (!hit || hit.nodeName.toLowerCase() !== 'text') return;
+            var text = window.prompt('修改标注文字', hit.textContent || '');
+            if (text === null) return;
+            hit.textContent = text;
+            selectShape(hit);
+        });
         editor.querySelector('.nm-annotate-save').addEventListener('click', function () {
             var btn = this;
             btn.disabled = true;
             setStatus('保存中…');
+            var serializer = svg.cloneNode(true);
+            serializer.querySelectorAll('[data-nm-editor-only]').forEach(function (n) {
+                if (n.parentNode) n.parentNode.removeChild(n);
+            });
             var payload = {
                 project: project,
                 image_rel_path: info.rel,
-                svg: svg.outerHTML
+                svg: serializer.outerHTML
             };
             fetch('/api/save_annotation', {
                 method: 'POST',
@@ -367,6 +738,7 @@
                     var defsSource = svg.querySelector('defs');
                     svg.childNodes.forEach(function (node) {
                         if (node.nodeName.toLowerCase() === 'defs') return;
+                        if (node.nodeType === 1 && node.getAttribute('data-nm-editor-only')) return;
                         originalOverlay.appendChild(node.cloneNode(true));
                     });
                     if (defsSource) originalOverlay.insertBefore(defsSource.cloneNode(true), originalOverlay.firstChild);
@@ -392,6 +764,9 @@
         if (event.key === 'Escape' && editor) {
             event.preventDefault();
             closeEditor();
+        } else if (event.key === 'Escape' && zoomDialog) {
+            event.preventDefault();
+            closeZoom();
         }
     });
 

@@ -202,6 +202,7 @@ def render_md(content: str, source_path: str = "<string>") -> dict:
             "tables",
             "toc",
             "md_in_html",
+            "attr_list",
         ],
         extension_configs={
             "codehilite": {

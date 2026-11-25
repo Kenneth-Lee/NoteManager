@@ -51,3 +51,21 @@ def test_annotation_script_is_in_document_page(tmp_path):
     assert (
         root / ".NoteManager" / "html" / "_static" / "nm-annotations.js"
     ).is_file()
+
+
+def test_markdown_image_width_attr_list():
+    from notemanager.renderer.md_renderer import render_md
+
+    body = render_md("![alt](_static/diagram.png){width=320px}", "x")["body"]
+    assert 'src="_static/diagram.png"' in body
+    assert 'width="320px"' in body
+
+
+def test_rst_image_width_option():
+    from notemanager.renderer.rst_renderer import render_rst
+
+    body = render_rst(
+        ".. image:: _static/diagram.png\n   :width: 320px\n", "x"
+    )["body"]
+    assert 'src="_static/diagram.png"' in body
+    assert 'width: 320px' in body

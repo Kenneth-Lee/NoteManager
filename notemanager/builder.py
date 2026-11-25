@@ -1210,11 +1210,34 @@ body.nm-note-open { overflow: hidden; }
 .nm-annotated-media > img { display: block; max-width: 100%; height: auto; }
 .nm-annotation-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
                        overflow: visible; }
-.nm-annotate-btn { position: absolute; right: 8px; bottom: 8px; z-index: 2; opacity: 0;
+.nm-image-actions { position: absolute; right: 8px; bottom: 8px; z-index: 2; display: flex;
+                    gap: 4px; opacity: 0; }
+.nm-annotated-media:hover .nm-image-actions, .nm-image-actions:focus-within { opacity: 1; }
+.nm-annotate-btn { position: static; z-index: 2;
                    border: 1px solid #bbdefb; background: rgba(255,255,255,.92); color: #1565c0;
                    border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
-.nm-annotated-media:hover .nm-annotate-btn, .nm-annotate-btn:focus { opacity: 1; }
-@media (hover: none) { .nm-annotate-btn { opacity: 1; } }
+@media (hover: none) { .nm-image-actions { opacity: 1; } }
+.nm-zoom-overlay { position: fixed; inset: 0; z-index: 1100; background: rgba(20,20,30,.5);
+                   display: flex; align-items: center; justify-content: center; padding: 16px;
+                   box-sizing: border-box; }
+.nm-zoom-dialog { background: #fff; border-radius: 8px; box-shadow: 0 18px 60px rgba(0,0,0,.35);
+                  width: min(720px, 96vw); max-height: 94vh; overflow: auto; padding: 12px 14px;
+                  box-sizing: border-box; }
+.nm-zoom-head { display: flex; align-items: center; justify-content: space-between; }
+.nm-zoom-head h2 { font-size: 16px; margin: 0; }
+.nm-zoom-close { border: 0; background: transparent; color: #999; font-size: 20px; cursor: pointer; }
+.nm-zoom-controls { display: flex; align-items: center; gap: 8px; margin: 10px 0; font-size: 12px; color: #607d8b; }
+.nm-zoom-controls input { flex: 1; }
+.nm-zoom-value { font-family: monospace; min-width: 55px; text-align: right; }
+.nm-zoom-stage { background: #f5f5f5; overflow: auto; padding: 10px; text-align: center; }
+.nm-zoom-image { display: inline-block; max-width: none; height: auto; }
+.nm-zoom-code { display: grid; grid-template-columns: 48px 1fr auto; align-items: center; gap: 6px;
+                margin-top: 8px; font-size: 11px; color: #607d8b; }
+.nm-zoom-code pre { background: #f5f7f8; border: 1px solid #e0e5e8; border-radius: 4px;
+                    padding: 5px 7px; margin: 0; overflow-x: auto; font-size: 11px; color: #37474f; }
+.nm-zoom-copy { border: 1px solid #cfd8dc; background: #fff; border-radius: 4px; padding: 3px 7px;
+                font-size: 11px; cursor: pointer; }
+.nm-zoom-note { color: #90a4ae; font-size: 11px; line-height: 1.5; margin: 8px 0 0; }
 .nm-annotate-overlay { position: fixed; inset: 0; z-index: 1100; background: rgba(20,20,30,.5);
                        display: flex; align-items: center; justify-content: center; padding: 16px;
                        box-sizing: border-box; }
@@ -1238,7 +1261,7 @@ body.nm-note-open { overflow: hidden; }
 .nm-annotate-image { display: block; max-width: 100%; max-height: 68vh; user-select: none;
                      -webkit-user-drag: none; }
 .nm-annotate-svg { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none;
-                   cursor: crosshair; overflow: visible; }
+                   cursor: crosshair; overflow: visible; pointer-events: all; }
 .nm-annotate-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .nm-annotate-save { border: 1px solid #1565c0; background: #1565c0; color: #fff; border-radius: 4px;
                     padding: 5px 12px; cursor: pointer; }
