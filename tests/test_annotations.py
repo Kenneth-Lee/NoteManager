@@ -69,3 +69,78 @@ def test_rst_image_width_option():
     )["body"]
     assert 'src="_static/diagram.png"' in body
     assert 'width: 320px' in body
+
+
+def test_export_annotated_svg_is_self_contained(tmp_path):
+    root = tmp_path / "proj"
+    (root / "sub" / "_static").mkdir(parents=True)
+    (root / "sub" / "_static" / "diagram.png").write_bytes(b"png-data")
+    builder.full_build(root)
+    daemon = _daemon(root)
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50">'
+        '<ellipse cx="50" cy="25" rx="20" ry="10" fill="none" stroke="#e53935"/>'
+        "</svg>"
+    )
+    result = daemon.export_annotated_svg(0, "sub/_static/diagram.png", svg)
+    assert result["ok"] is True
+    assert result["path"] == "sub/_static/diagram.png.annotated.svg"
+    output = root / result["path"]
+    text = output.read_text(encoding="utf-8")
+    assert 'href="data:image/png;base64,' in text
+    assert "ellipse" in text
+    assert output.is_file()
+    assert (
+        root / ".NoteManager" / "html" / "sub" / "_static" / "diagram.png.annotated.svg"
+    ).is_file()
+    undone = daemon.delete_exported_svg(0, result["path"])
+    assert undone["ok"] is True
+    assert not output.exists()
+
+
+def test_delete_note_moves_and_restores_annotation_sidecar(tmp_path):
+    root = tmp_path / "proj"
+    (root / "sub" / "_static").mkdir(parents=True)
+    image = root / "sub" / "_static" / "diagram.png"
+    image.write_bytes(b"png")
+    sidecar = root / "sub" / "_static" / "diagram.png.ann.svg"
+    sidecar.write_text('<svg xmlns="http://www.w3.org/2000/svg"></svg>')
+    (root / "sub" / "note.md").write_text(
+        "# Note\n\n![d](_static/diagram.png)\n", encoding="utf-8"
+    )
+    builder.full_build(root)
+    daemon = _daemon(root)
+
+    result = daemon.delete_managed_source(0, "sub/note.md", delete_assets=True)
+    assert result["ok"] is True
+    assert not image.exists()
+    assert not sidecar.exists()
+    batch = root / result["trash_rel"]
+    assert (batch / "assets" / "sub" / "_static" / "diagram.png.ann.svg").is_file()
+
+    restored = daemon.restore_trash(0, result["trash_id"])
+    assert restored["ok"] is True
+    assert image.is_file()
+    assert sidecar.is_file()
+
+
+def test_annotation_sidecar_is_not_an_independent_asset(tmp_path):
+    from notemanager.assets import build_assets
+
+    root = tmp_path / "proj"
+    (root / "sub" / "_static").mkdir(parents=True)
+    (root / "sub" / "_static" / "diagram.png").write_bytes(b"png")
+    (root / "sub" / "_static" / "diagram.png.ann.svg").write_text(
+        "<svg xmlns='http://www.w3.org/2000/svg'></svg>"
+    )
+    (root / "sub" / "_static" / "diagram.png.annotated.svg").write_text(
+        "<svg xmlns='http://www.w3.org/2000/svg'></svg>"
+    )
+    (root / "sub" / "note.md").write_text(
+        "![d](_static/diagram.png)\n", encoding="utf-8"
+    )
+    data = build_assets(root, [{"source_path": "sub/note.md", "path": "sub/note.html"}])
+    assert "sub/_static/diagram.png" in data["assets"]
+    assert "sub/_static/diagram.png.ann.svg" not in data["assets"]
+    assert "sub/_static/diagram.png.ann.svg" not in data["orphans"]
+    assert "sub/_static/diagram.png.annotated.svg" in data["orphans"]

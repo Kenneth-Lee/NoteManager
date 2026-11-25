@@ -342,6 +342,26 @@ class WebHandler(BaseHTTPRequestHandler):
             params = urllib.parse.parse_qs(parsed.query or "", keep_blank_values=True)
             source = (params.get("source") or [""])[0]
             resp = self.daemon_ref.get_config_file(source)
+        elif path == "/api/logs":
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query or "", keep_blank_values=True)
+            try:
+                lines = int((params.get("lines") or ["300"])[0])
+            except ValueError:
+                lines = 300
+            resp = self.daemon_ref.get_log_tail(lines)
+        elif path == "/api/add_progress":
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query or "", keep_blank_values=True)
+            try:
+                job_id = int((params.get("job_id") or [""])[0])
+                since = int((params.get("since") or ["0"])[0])
+            except ValueError:
+                resp = {"ok": False, "error": "无效的任务编号"}
+            else:
+                resp = self.daemon_ref.handle_add_progress(
+                    {"job_id": job_id, "since": since}
+                )
         else:
             self._send_error(404, "Unknown API endpoint")
             return
@@ -358,6 +378,11 @@ class WebHandler(BaseHTTPRequestHandler):
         if path == "/api/add":
             directory = data.get("directory", "")
             resp = self.daemon_ref.add_directory(directory)
+        elif path == "/api/add_async":
+            directory = data.get("directory", "")
+            resp = self.daemon_ref.handle_add_with_progress({"directory": directory})
+        elif path == "/api/pick_directory":
+            resp = self.daemon_ref.pick_directory()
         elif path == "/api/remove":
             directory = data.get("directory", "")
             resp = self.daemon_ref.remove_directory(directory)
@@ -468,6 +493,26 @@ class WebHandler(BaseHTTPRequestHandler):
                 pj,
                 str(data.get("image_rel_path", "")),
                 str(data.get("svg", "")),
+            )
+        elif path == "/api/export_annotated_svg":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            resp = self.daemon_ref.export_annotated_svg(
+                pj,
+                str(data.get("image_rel_path", "")),
+                str(data.get("svg", "")),
+            )
+        elif path == "/api/delete_exported_svg":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            resp = self.daemon_ref.delete_exported_svg(
+                pj, str(data.get("path", ""))
             )
         elif path == "/api/import_url":
             try:
@@ -1003,6 +1048,11 @@ def _render_panel(daemon_ref) -> str:
 """
 
     pending_html = _pending_config_banner(daemon_ref)
+    pick_button_html = (
+        '<button type="button" id="pick-dir-btn" onclick="pickDirectory()">浏览...</button>'
+        if os.name == "nt" else ""
+    )
+    pick_hint = "，或点击「浏览」选择" if os.name == "nt" else ""
     return f"""\
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -1037,14 +1087,38 @@ h1 {{ margin-bottom: 20px; font-size: 24px; }}
 }}
 .card h2 {{ font-size: 16px; color: #666; margin-bottom: 12px; }}
 .table-wrap {{ overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }}
-.add-form {{ display: flex; gap: 8px; }}
+.add-form {{ display: flex; gap: 8px; flex-wrap: wrap; }}
 .add-form input {{
     flex: 1;
+    min-width: 180px;
     padding: 8px 12px;
     border: 1px solid #ddd;
     border-radius: 4px;
     font-size: 14px;
 }}
+.add-form button:disabled {{ background: #8ab4d8; cursor: wait; }}
+.add-status {{ margin-top: 8px; min-height: 18px; color: #607d8b; font-size: 12px;
+               white-space: pre-wrap; overflow-wrap: anywhere; }}
+.add-status.error {{ color: #cc3300; }}
+.log-modal {{ position: fixed; inset: 0; background: rgba(20,20,30,.5); z-index: 1200;
+              display: flex; align-items: center; justify-content: center; padding: 16px;
+              box-sizing: border-box; }}
+.log-modal[hidden] {{ display: none; }}
+.log-dialog {{ background: #fff; border-radius: 8px; box-shadow: 0 18px 60px rgba(0,0,0,.35);
+               width: min(1000px, 96vw); max-height: 90vh; padding: 12px 14px;
+               box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; }}
+.log-head {{ display: flex; align-items: center; gap: 10px; }}
+.log-head h2 {{ font-size: 16px; color: #455a64; margin: 0; }}
+.log-path {{ color: #90a4ae; font-size: 11px; flex: 1; overflow-wrap: anywhere; }}
+.log-close {{ border: 0; background: transparent; color: #999; font-size: 20px; cursor: pointer;
+              padding: 0 4px; }}
+.log-actions {{ display: flex; gap: 8px; align-items: center; }}
+.log-view {{ margin: 0; max-height: 65vh; overflow: auto; background: #1e1e1e;
+             color: #e6e6e6; border-radius: 4px; padding: 10px 12px; font-size: 12px;
+             line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }}
+.header-log-btn {{ margin-left: 10px; padding: 3px 9px; font-size: 12px; vertical-align: middle;
+                   background: #546e7a; }}
+.header-log-btn:hover {{ background: #37474f; }}
 button {{
     padding: 8px 16px;
     border: none;
@@ -1085,14 +1159,17 @@ td a:hover {{ text-decoration: underline; }}
 </head>
 <body>
 <div class="container">
-<h1>NoteManager <a class="config-link" href="/config">配置文件</a></h1>
+<h1>NoteManager <a class="config-link" href="/config">配置文件</a>
+<button type="button" class="header-log-btn" onclick="openLogs()">日志</button></h1>
 {pending_html}
 <div class="card">
 <h2>添加目录</h2>
 <div class="add-form">
-  <input type="text" id="dir-input" placeholder="输入目录路径...">
-  <button onclick="addProject()">添加</button>
+  <input type="text" id="dir-input" placeholder="输入目录路径{pick_hint}...">
+{pick_button_html}
+  <button type="button" id="add-dir-btn" onclick="addProject()">添加</button>
 </div>
+<div id="add-status" class="add-status"></div>
 </div>
 
 <div class="card">
@@ -1108,6 +1185,20 @@ td a:hover {{ text-decoration: underline; }}
 </div>
 </div>
 <div id="toast"></div>
+
+<div id="log-modal" class="log-modal" hidden>
+  <div class="log-dialog" role="dialog" aria-modal="true" aria-label="诊断日志">
+    <div class="log-head">
+      <h2>诊断日志</h2>
+      <span id="log-path" class="log-path"></span>
+      <button type="button" class="log-close" aria-label="关闭" onclick="closeLogs()">×</button>
+    </div>
+    <div class="log-actions">
+      <button type="button" id="log-refresh-btn" onclick="loadLogs()">刷新</button>
+    </div>
+    <pre id="log-view" class="log-view"></pre>
+  </div>
+</div>
 
 <script>
 function showToast(msg, duration) {{
@@ -1127,19 +1218,124 @@ function escAttr(s) {{
     return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
 }}
 
+function setAddStatus(msg, isError) {{
+    var el = document.getElementById('add-status');
+    el.textContent = msg || '';
+    el.className = 'add-status' + (isError ? ' error' : '');
+}}
+
+function pickDirectory() {{
+    var btn = document.getElementById('pick-dir-btn');
+    btn.disabled = true;
+    showToast('正在打开目录选择窗口…', 5000);
+    fetch('/api/pick_directory', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: '{{}}'
+    }}).then(function(r) {{ return r.json(); }}).then(function(d) {{
+        if (d.ok && d.path) {{
+            document.getElementById('dir-input').value = d.path;
+            document.getElementById('dir-input').focus();
+            showToast('已选择目录');
+        }} else if (d.error && d.error !== '已取消') {{
+            showToast('错误: ' + d.error, 5000);
+        }}
+    }}).catch(function(e) {{
+        showToast('错误: ' + (e.message || e), 5000);
+    }}).finally(function() {{
+        btn.disabled = false;
+    }});
+}}
+
 function addProject() {{
     var input = document.getElementById('dir-input');
     var dir = input.value.trim();
-    if (!dir) return;
-    fetch('/api/add', {{
+    if (!dir) {{
+        setAddStatus('请输入目录路径，或点击「浏览...」选择目录。', true);
+        showToast('请输入目录路径', 3000);
+        return;
+    }}
+    var btn = document.getElementById('add-dir-btn');
+    btn.disabled = true;
+    setAddStatus('正在添加并构建目录，首次构建可能需要一些时间…');
+    fetch('/api/add_async', {{
         method: 'POST',
         headers: {{'Content-Type': 'application/json'}},
         body: JSON.stringify({{directory: dir}})
     }}).then(function(r) {{ return r.json(); }}).then(function(d) {{
-        if (d.ok) showToast(d.message);
-        else showToast('错误: ' + d.error, 3000);
+        if (!d.ok) throw new Error(d.error || '添加失败');
+        var jobId = d.job_id;
+        var since = 0;
+        function poll() {{
+            fetch('/api/add_progress?job_id=' + encodeURIComponent(jobId) + '&since=' + since)
+                .then(function(r) {{ return r.json(); }}).then(function(p) {{
+                    if (!p.ok) throw new Error(p.error || '读取添加进度失败');
+                    var lines = p.new_lines || [];
+                    if (lines.length) setAddStatus(lines[lines.length - 1]);
+                    since = p.total_lines || since;
+                    if (!p.done) {{
+                        setTimeout(poll, 600);
+                        return;
+                    }}
+                    btn.disabled = false;
+                    if (p.success) {{
+                        setAddStatus(p.message || '添加完成');
+                        showToast(p.message || '添加完成', 4000);
+                        input.value = '';
+                        fetch('/api/status').then(function(r) {{ return r.json(); }})
+                            .then(function(st) {{ if (st && st.data) refreshProjects(st.data); }})
+                            .catch(function() {{}});
+                    }} else {{
+                        var msg = p.error || '添加失败';
+                        setAddStatus('错误: ' + msg, true);
+                        showToast('错误: ' + msg, 6000);
+                    }}
+                }}).catch(function(e) {{
+                    btn.disabled = false;
+                    setAddStatus('错误: ' + (e.message || e), true);
+                    showToast('错误: ' + (e.message || e), 6000);
+                }});
+        }}
+        poll();
+    }}).catch(function(e) {{
+        btn.disabled = false;
+        setAddStatus('错误: ' + (e.message || e), true);
+        showToast('错误: ' + (e.message || e), 6000);
     }});
 }}
+
+function openLogs() {{
+    document.getElementById('log-modal').hidden = false;
+    loadLogs();
+}}
+
+function closeLogs() {{
+    document.getElementById('log-modal').hidden = true;
+}}
+
+function loadLogs() {{
+    var refresh = document.getElementById('log-refresh-btn');
+    var view = document.getElementById('log-view');
+    var pathEl = document.getElementById('log-path');
+    refresh.disabled = true;
+    fetch('/api/logs?lines=300').then(function(r) {{ return r.json(); }}).then(function(d) {{
+        if (!d.ok) throw new Error(d.error || '读取日志失败');
+        view.textContent = d.text || '(暂无日志)';
+        pathEl.textContent = d.path || '';
+        view.scrollTop = view.scrollHeight;
+    }}).catch(function(e) {{
+        view.textContent = '读取失败: ' + (e.message || e);
+    }}).finally(function() {{
+        refresh.disabled = false;
+    }});
+}}
+
+document.getElementById('log-modal').addEventListener('mousedown', function(e) {{
+    if (e.target === this) closeLogs();
+}});
+document.addEventListener('keydown', function(e) {{
+    if (e.key === 'Escape' && !document.getElementById('log-modal').hidden) closeLogs();
+}});
 
 function removeProject(idx, dir) {{
     if (!confirm('确定移除 ' + dir + '？')) return;

@@ -164,6 +164,54 @@ def cmd_start(args):
         sys.exit(1)
 
 
+def cmd_launch(args):
+    """Start the daemon if needed and open its Web UI."""
+    if not _ensure_daemon():
+        print("错误: 无法启动 Daemon")
+        sys.exit(1)
+    port = get_daemon_web_port() or DEFAULT_WEB_PORT
+    url = f"http://localhost:{port}"
+    print(f"Web UI: {url}")
+    webbrowser.open(url)
+
+
+def _windows_desktop_dir() -> Path:
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            buf = ctypes.create_unicode_buffer(260)
+            # CSIDL_DESKTOPDIRECTORY = 0x0010; handles OneDrive redirects.
+            ctypes.windll.shell32.SHGetFolderPathW(None, 0x0010, None, 0, buf)
+            if buf.value:
+                return Path(buf.value)
+        except Exception:
+            pass
+    return Path.home() / "Desktop"
+
+
+def cmd_desktop(args):
+    """Create a Windows desktop launcher for the Web UI."""
+    if os.name != "nt":
+        print("desktop 命令目前仅支持 Windows。")
+        return
+    desktop = _windows_desktop_dir()
+    desktop.mkdir(parents=True, exist_ok=True)
+    launcher = desktop / "NoteManager.cmd"
+    content = (
+        "@echo off\n"
+        f"\"{sys.executable}\" -m notemanager.cli launch\n"
+        "if errorlevel 1 pause\n"
+    )
+    try:
+        launcher.write_text(content, encoding="utf-8")
+    except OSError as e:
+        print(f"创建桌面启动入口失败: {e}")
+        sys.exit(1)
+    print(f"已创建桌面启动入口: {launcher}")
+    print("双击后会启动 daemon 并打开浏览器。")
+
+
 def cmd_stop(args):
     pid = is_daemon_running()
     if not pid:
@@ -1028,6 +1076,8 @@ def main():
     start_p.add_argument("--restart", "-r", action="store_true",
                          help="先停止当前 daemon，再用相同端口启动新实例")
     subparsers.add_parser("stop", help="停止后台 daemon")
+    subparsers.add_parser("launch", help="启动 daemon 并打开 Web UI")
+    subparsers.add_parser("desktop", help="在 Windows 桌面创建启动入口")
     status_p = subparsers.add_parser("status", help="查看 daemon、项目与 Web 页面状态")
     status_p.add_argument("--json", action="store_true", help="以 JSON 输出完整状态")
 
@@ -1118,6 +1168,8 @@ def main():
     commands = {
         "start": cmd_start,
         "stop": cmd_stop,
+        "launch": cmd_launch,
+        "desktop": cmd_desktop,
         "status": cmd_status,
         "add": cmd_add,
         "remove": cmd_remove,

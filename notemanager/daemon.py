@@ -47,6 +47,24 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_WEB_PORT = 19833
 
+_ANNOTATION_BAD_RE = re.compile(r"\bon[a-z]+\s*=", re.IGNORECASE)
+
+
+def _annotation_svg_error(text: str) -> str | None:
+    """Return an error string for unsafe/invalid annotation SVG."""
+    if len(text.encode("utf-8")) > 2 * 1024 * 1024:
+        return "标注文件过大"
+    if not text.strip().startswith("<svg") or "</svg>" not in text:
+        return "不是有效的 SVG"
+    lowered = text.lower()
+    for bad in ("<script", "<foreignobject", "<iframe", "<object", "<embed",
+                "javascript:"):
+        if bad in lowered:
+            return "SVG 包含不允许的内容"
+    if _ANNOTATION_BAD_RE.search(text):
+        return "SVG 包含不允许的事件属性"
+    return None
+
 # A main page that disconnects (navigation/reload) keeps its role for a short
 # grace period so a normal page transition does not hand the role to another tab.
 WEB_MAIN_GRACE_SECONDS = 3.0
@@ -1054,7 +1072,12 @@ class NoteManagerDaemon:
         """Shared add-directory implementation with optional progress callback."""
         if progress is None:
             progress = lambda _msg: None
-        path = Path(directory).resolve()
+        raw = str(directory or "").strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in '\"\'':
+            raw = raw[1:-1].strip()
+        path = Path(raw).resolve()
+        if not raw:
+            return {"ok": False, "error": "需要 directory"}
         if not path.is_dir():
             return {"ok": False, "error": f"目录不存在: {path}"}
 
@@ -1098,6 +1121,62 @@ class NoteManagerDaemon:
         """Add a directory to monitoring."""
         return self._add_directory_impl(directory, progress=None)
 
+    def get_log_tail(self, max_lines: int = 300) -> dict:
+        """Return the tail of the daemon log for the control panel."""
+        path = HOME_NM_DIR / "daemon.log"
+        try:
+            lines = max(1, min(int(max_lines or 300), 2000))
+        except (TypeError, ValueError):
+            lines = 300
+        try:
+            # Only read the tail for large logs; never load a multi-hundred-MB
+            # log into the Web UI process.
+            with path.open("rb") as f:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                f.seek(max(0, size - 512 * 1024))
+                data = f.read()
+            text = data.decode("utf-8", errors="replace")
+        except FileNotFoundError:
+            return {"ok": True, "path": str(path), "text": ""}
+        except OSError as e:
+            return {"ok": False, "error": f"无法读取日志: {e}", "path": str(path)}
+        tail = "\n".join(text.splitlines()[-lines:])
+        return {"ok": True, "path": str(path), "text": tail}
+
+    def pick_directory(self) -> dict:
+        """Open a native folder picker on the machine running the daemon."""
+        if os.name == "nt":
+            script = (
+                "$ErrorActionPreference = 'Stop'; "
+                "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; "
+                "$OutputEncoding = [Console]::OutputEncoding; "
+                "Add-Type -AssemblyName System.Windows.Forms; "
+                "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
+                "$d.Description = 'Select NoteManager directory'; "
+                "$d.ShowNewFolderButton = $true; "
+                "if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) "
+                "{ [Console]::Out.WriteLine($d.SelectedPath) }"
+            )
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            try:
+                proc = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-STA", "-Command", script],
+                    capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=300, creationflags=flags,
+                )
+            except (OSError, subprocess.TimeoutExpired) as e:
+                return {"ok": False, "error": f"无法打开目录选择器: {e}"}
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or "").strip()
+                return {"ok": False, "error": detail or "目录选择器失败"}
+            selected = (proc.stdout or "").strip().splitlines()
+            if not selected:
+                return {"ok": False, "error": "已取消"}
+            return {"ok": True, "path": selected[-1].strip()}
+
+        return {"ok": False, "error": "目录选择窗口目前仅支持 Windows，请手动输入路径。"}
+
     def _add_worker(self, job_id: int, directory: str) -> None:
         with self._add_job_lock:
             job = self._add_jobs.get(job_id)
@@ -1129,8 +1208,11 @@ class NoteManagerDaemon:
                     self._add_active_job_id = None
 
     def handle_add_with_progress(self, cmd: dict) -> dict:
-        directory = str(Path(cmd.get("directory", "")).resolve())
-        if not directory:
+        raw = str(cmd.get("directory", "")).strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in '\"\'':
+            raw = raw[1:-1].strip()
+        directory = str(Path(raw).resolve())
+        if not raw:
             return {"ok": False, "error": "需要 directory"}
 
         with self._add_job_lock:
@@ -2234,6 +2316,12 @@ class NoteManagerDaemon:
             if src.is_file():
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(src), str(dst))
+        for asset in meta.get("sidecars") or []:
+            src = batch / "assets" / asset
+            dst = root / asset
+            if src.is_file():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(dst))
         shutil.rmtree(batch, ignore_errors=True)
 
     def delete_managed_source(
@@ -2262,6 +2350,11 @@ class NoteManagerDaemon:
         source_rel = rel.as_posix()
         all_refs, exclusive = self._asset_usage(root_r, source_rel)
         assets_to_move = exclusive if delete_assets else []
+        sidecars_to_move = []
+        for asset in assets_to_move:
+            sidecar = asset + ".ann.svg"
+            if (root_r / sidecar).is_file():
+                sidecars_to_move.append(sidecar)
         batch = None
         meta = {
             "version": 1,
@@ -2269,6 +2362,7 @@ class NoteManagerDaemon:
             "source_rel": source_rel,
             "html_rel": rel.with_suffix(".html").as_posix(),
             "assets": assets_to_move,
+            "sidecars": sidecars_to_move,
             "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
         }
         try:
@@ -2292,6 +2386,21 @@ class NoteManagerDaemon:
                 shutil.move(str(asset_abs), str(asset_dest))
                 moved_assets.append(asset)
             meta["assets"] = moved_assets
+            moved_sidecars = []
+            for sidecar in sidecars_to_move:
+                side_abs = (root_r / sidecar).resolve()
+                try:
+                    side_abs.relative_to(root_r)
+                except ValueError:
+                    continue
+                if not side_abs.is_file():
+                    continue
+                side_dest = batch / "assets" / sidecar
+                side_dest.parent.mkdir(parents=True, exist_ok=True)
+                suppress_path(side_abs)
+                shutil.move(str(side_abs), str(side_dest))
+                moved_sidecars.append(sidecar)
+            meta["sidecars"] = moved_sidecars
             (batch / "meta.json").write_text(
                 json.dumps(meta, ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -2317,7 +2426,7 @@ class NoteManagerDaemon:
                     pass
             return {"ok": False, "error": f"更新索引失败: {e}"}
         html_dir = root_r / ".NoteManager" / "html"
-        for asset in meta.get("assets") or []:
+        for asset in list(meta.get("assets") or []) + list(meta.get("sidecars") or []):
             try:
                 generated = (html_dir / asset).resolve()
                 generated.relative_to(html_dir.resolve())
@@ -2424,9 +2533,15 @@ class NoteManagerDaemon:
             return {"ok": False, "error": "没有可清理的未引用图片"}
 
         batch = None
+        sidecars = []
+        for rel in selected:
+            sidecar = rel + ".ann.svg"
+            if (root / sidecar).is_file():
+                sidecars.append(sidecar)
         try:
             batch = self._new_trash_batch(root)
             moved = []
+            moved_sidecars = []
             for rel in selected:
                 src = (root / rel).resolve()
                 dest = batch / "assets" / rel
@@ -2441,11 +2556,28 @@ class NoteManagerDaemon:
                         generated.unlink()
                 except (OSError, ValueError):
                     pass
+            for sidecar in sidecars:
+                side_src = (root / sidecar).resolve()
+                if not side_src.is_file():
+                    continue
+                side_dest = batch / "assets" / sidecar
+                side_dest.parent.mkdir(parents=True, exist_ok=True)
+                suppress_path(side_src)
+                shutil.move(str(side_src), str(side_dest))
+                moved_sidecars.append(sidecar)
+                generated = (root / ".NoteManager" / "html" / sidecar).resolve()
+                try:
+                    generated.relative_to((root / ".NoteManager" / "html").resolve())
+                    if generated.is_file():
+                        generated.unlink()
+                except (OSError, ValueError):
+                    pass
             meta = {
                 "version": 1,
                 "kind": "assets",
                 "title": "未引用图片清理",
                 "assets": moved,
+                "sidecars": moved_sidecars,
                 "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
             }
             (batch / "meta.json").write_text(
@@ -2453,7 +2585,7 @@ class NoteManagerDaemon:
             )
         except OSError as e:
             if batch is not None:
-                for rel in selected:
+                for rel in selected + sidecars:
                     src = batch / "assets" / rel
                     dst = root / rel
                     if src.is_file():
@@ -2560,9 +2692,10 @@ class NoteManagerDaemon:
                 meta = None
         if meta and meta.get("kind") == "assets":
             assets = list(meta.get("assets") or [])
+            sidecars = list(meta.get("sidecars") or [])
             if not assets:
                 return {"ok": False, "error": "回收站条目没有图片"}
-            for asset in assets:
+            for asset in assets + sidecars:
                 target = (root / asset).resolve()
                 try:
                     target.relative_to(root)
@@ -2573,7 +2706,7 @@ class NoteManagerDaemon:
                 if not (batch / "assets" / asset).is_file():
                     return {"ok": False, "error": f"回收站中的图片不存在: {asset}"}
             try:
-                for asset in assets:
+                for asset in assets + sidecars:
                     target = root / asset
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(batch / "assets" / asset), str(target))
@@ -2586,6 +2719,7 @@ class NoteManagerDaemon:
         if meta and meta.get("source_rel"):
             source_rel = str(meta["source_rel"])
             assets = list(meta.get("assets") or [])
+            sidecars = list(meta.get("sidecars") or [])
             src = batch / "source" / source_rel
         else:
             candidates = [
@@ -2597,6 +2731,7 @@ class NoteManagerDaemon:
             src = candidates[0]
             source_rel = src.relative_to(batch).as_posix()
             assets = []
+            sidecars = []
             meta = {"kind": "legacy", "source_rel": source_rel, "assets": []}
 
         dst = (root / source_rel).resolve()
@@ -2606,7 +2741,7 @@ class NoteManagerDaemon:
             return {"ok": False, "error": "拒绝恢复路径"}
         if dst.exists():
             return {"ok": False, "error": "目标文件已存在，未覆盖"}
-        for asset in assets:
+        for asset in assets + sidecars:
             target = (root / asset).resolve()
             try:
                 target.relative_to(root)
@@ -2619,7 +2754,7 @@ class NoteManagerDaemon:
         try:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(src), str(dst))
-            for asset in assets:
+            for asset in assets + sidecars:
                 asset_src = batch / "assets" / asset
                 if asset_src.is_file():
                     target = root / asset
@@ -2658,15 +2793,9 @@ class NoteManagerDaemon:
     def save_annotation(self, project_idx: int, image_rel_posix: str, svg_text: str) -> dict:
         """Save a transparent SVG annotation layer next to an image."""
         text = str(svg_text or "")
-        if len(text.encode("utf-8")) > 2 * 1024 * 1024:
-            return {"ok": False, "error": "标注文件过大"}
-        if not text.strip().startswith("<svg") or "</svg>" not in text:
-            return {"ok": False, "error": "不是有效的 SVG"}
-        lowered = text.lower()
-        for bad in ("<script", "<foreignobject", "<iframe", "<object", "<embed",
-                    "javascript:", " onload=", " onclick=", " onmouseover="):
-            if bad in lowered:
-                return {"ok": False, "error": "SVG 包含不允许的内容"}
+        error = _annotation_svg_error(text)
+        if error:
+            return {"ok": False, "error": error}
 
         with self._lock:
             dirs = list(self._observers.keys())
@@ -2704,6 +2833,128 @@ class NoteManagerDaemon:
             "annotation_rel_path": sidecar.relative_to(root).as_posix(),
             "image_rel_path": rel.as_posix(),
         }
+
+    def export_annotated_svg(
+        self, project_idx: int, image_rel_posix: str, svg_text: str
+    ) -> dict:
+        """Write a self-contained SVG (image + annotations) for sharing."""
+        import base64
+        import xml.etree.ElementTree as ET
+        from xml.sax.saxutils import escape as xml_escape
+
+        text = str(svg_text or "")
+        error = _annotation_svg_error(text)
+        if error:
+            return {"ok": False, "error": error}
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root = Path(dirs[project_idx]).resolve()
+        rel = Path(str(image_rel_posix or "").replace("\\", "/"))
+        if rel.is_absolute() or any(part == ".." for part in rel.parts):
+            return {"ok": False, "error": "非法图片路径"}
+        if rel.suffix.lower() not in _IMPORT_IMAGE_EXTS:
+            return {"ok": False, "error": "只支持图片文件"}
+        image_abs = (root / rel).resolve()
+        try:
+            image_abs.relative_to(root)
+        except ValueError:
+            return {"ok": False, "error": "拒绝路径"}
+        if not image_abs.is_file():
+            return {"ok": False, "error": "图片不存在"}
+
+        try:
+            ann_root = ET.fromstring(text)
+        except ET.ParseError as e:
+            return {"ok": False, "error": f"标注 SVG 解析失败: {e}"}
+        view_box = (ann_root.get("viewBox") or "").strip()
+        parts = view_box.replace(",", " ").split()
+        if len(parts) != 4:
+            return {"ok": False, "error": "标注 SVG 缺少 viewBox"}
+        try:
+            width = float(parts[2])
+            height = float(parts[3])
+        except ValueError:
+            return {"ok": False, "error": "标注 SVG 的 viewBox 无效"}
+        if width <= 0 or height <= 0:
+            return {"ok": False, "error": "标注 SVG 的尺寸无效"}
+        mime = mimetypes.guess_type(image_abs.name)[0] or "application/octet-stream"
+        if not mime.startswith("image/"):
+            return {"ok": False, "error": "无法识别图片类型"}
+        try:
+            data = base64.b64encode(image_abs.read_bytes()).decode("ascii")
+        except OSError as e:
+            return {"ok": False, "error": f"读取图片失败: {e}"}
+
+        ET.register_namespace("", "http://www.w3.org/2000/svg")
+        inner = "".join(
+            ET.tostring(child, encoding="unicode") for child in ann_root
+        )
+        out = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<svg xmlns="http://www.w3.org/2000/svg" '
+            f'xmlns:xlink="http://www.w3.org/1999/xlink" '
+            f'viewBox="{xml_escape(view_box)}" width="{width:g}" height="{height:g}">\n'
+            f'<image x="0" y="0" width="{width:g}" height="{height:g}" '
+            'preserveAspectRatio="none" '
+            f'href="data:{mime};base64,{data}" '
+            f'xlink:href="data:{mime};base64,{data}"/>\n'
+            f'<g>{inner}</g>\n</svg>\n'
+        )
+        out_abs = image_abs.with_name(image_abs.name + ".annotated.svg")
+        try:
+            suppress_path(out_abs)
+            out_abs.write_text(out, encoding="utf-8")
+        except OSError as e:
+            return {"ok": False, "error": f"写入 SVG 失败: {e}"}
+        html_dir = root / ".NoteManager" / "html"
+        out_rel = out_abs.relative_to(root).as_posix()
+        if html_dir.is_dir():
+            try:
+                from notemanager.builder import _copy_project_assets
+
+                _copy_project_assets(root, html_dir)
+                self._add_assets_to_index(root, [out_rel])
+            except Exception as ex:
+                logger.warning("导出标注 SVG 后同步资源失败: %s", ex)
+        return {
+            "ok": True,
+            "path": out_rel,
+            "markdown": f"![]({out_rel})",
+            "rst": f".. image:: {out_rel}",
+        }
+
+    def delete_exported_svg(self, project_idx: int, path_posix: str) -> dict:
+        """Undo a just-created annotated SVG export."""
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root = Path(dirs[project_idx]).resolve()
+        rel = Path(str(path_posix or "").replace("\\", "/"))
+        if rel.is_absolute() or any(part == ".." for part in rel.parts):
+            return {"ok": False, "error": "非法路径"}
+        if not rel.name.lower().endswith(".annotated.svg"):
+            return {"ok": False, "error": "只能删除导出生成的 .annotated.svg"}
+        target = (root / rel).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return {"ok": False, "error": "拒绝路径"}
+        if not target.is_file():
+            return {"ok": False, "error": "导出文件不存在"}
+        try:
+            suppress_path(target)
+            target.unlink()
+            generated = (root / ".NoteManager" / "html" / rel).resolve()
+            generated.relative_to((root / ".NoteManager" / "html").resolve())
+            if generated.is_file():
+                generated.unlink()
+            self._remove_assets_from_index(root, [rel.as_posix()])
+        except (OSError, ValueError) as e:
+            return {"ok": False, "error": f"删除导出文件失败: {e}"}
+        return {"ok": True}
 
     def save_imported_asset(
         self,

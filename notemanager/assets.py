@@ -21,6 +21,10 @@ _HTML_IMAGE_RE = re.compile(r"<img\b[^>]*\bsrc\s*=\s*['\"]([^'\"]+)['\"]", re.IG
 _RST_IMAGE_RE = re.compile(r"^\s*\.\.\s+(?:image|figure)::\s*(\S+)", re.MULTILINE)
 
 
+def _is_annotation_sidecar(path: str | Path) -> bool:
+    return str(path).lower().endswith(".ann.svg")
+
+
 def _clean_ref(raw: str) -> str | None:
     value = unquote(str(raw or "").strip()).strip("<>\"'")
     if not value or value.startswith(("http://", "https://", "data:", "mailto:", "#")):
@@ -28,6 +32,8 @@ def _clean_ref(raw: str) -> str | None:
     parsed = urlsplit(value)
     path = parsed.path.replace("\\", "/")
     if not path or path.startswith("/"):
+        return None
+    if _is_annotation_sidecar(path):
         return None
     if Path(path).suffix.lower() not in _IMAGE_EXTS:
         return None
@@ -86,6 +92,8 @@ def build_assets(project_root: Path, documents: list[dict]) -> dict:
         base = Path(dirpath)
         for name in filenames:
             path = base / name
+            if _is_annotation_sidecar(path):
+                continue
             if path.suffix.lower() not in _IMAGE_EXTS:
                 continue
             rel = path.relative_to(project_root).as_posix()

@@ -1248,25 +1248,41 @@ body.nm-note-open { overflow: hidden; }
 .nm-annotate-head h2 { font-size: 16px; margin: 0; }
 .nm-annotate-status { color: #c62828; font-size: 12px; flex: 1; }
 .nm-annotate-close { border: 0; background: transparent; color: #999; font-size: 20px; cursor: pointer; }
-.nm-annotate-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.nm-annotate-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;
+                       min-height: 32px; overflow-x: auto; }
 .nm-annotate-tool, .nm-annotate-action { border: 1px solid #cfd8dc; background: #fff; color: #455a64;
                   border-radius: 4px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
 .nm-annotate-tool.active { background: #e3f2fd; border-color: #64b5f6; color: #1565c0; }
 .nm-annotate-action:hover, .nm-annotate-tool:hover { background: #f5f5f5; }
 .nm-annotate-color { width: 28px; height: 24px; padding: 0; border: 1px solid #cfd8dc; background: #fff; }
 .nm-annotate-width { border: 1px solid #cfd8dc; border-radius: 4px; padding: 2px 4px; font-size: 12px; }
+.nm-annotate-check { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; color: #455a64; }
+.nm-annotate-opacity { width: 70px; }
+.nm-annotate-opacity-wrap { display: inline-flex; align-items: center; gap: 3px; }
+.nm-annotate-opacity-value { font-size: 11px; color: #607d8b; min-width: 34px; display: inline-block; }
+.nm-annotate-info { flex: 0 0 170px; margin-left: auto; color: #607d8b; font-size: 12px;
+                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nm-annotate-stage { position: relative; min-height: 120px; overflow: auto; background: #f5f5f5;
                      text-align: center; }
 .nm-annotate-canvas { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
 .nm-annotate-image { display: block; max-width: 100%; max-height: 68vh; user-select: none;
                      -webkit-user-drag: none; }
 .nm-annotate-svg { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none;
-                   cursor: crosshair; overflow: visible; pointer-events: all; }
+                   cursor: default; overflow: visible; pointer-events: all; }
 .nm-annotate-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .nm-annotate-save { border: 1px solid #1565c0; background: #1565c0; color: #fff; border-radius: 4px;
                     padding: 5px 12px; cursor: pointer; }
 .nm-annotate-cancel { border: 1px solid #cfd8dc; background: #fff; border-radius: 4px; padding: 5px 12px;
                       cursor: pointer; }
+.nm-annotate-export-btn { border: 1px solid #2e7d32; background: #2e7d32; color: #fff;
+                          border-radius: 4px; padding: 5px 12px; cursor: pointer; }
+.nm-annotate-export-btn:disabled { opacity: .55; cursor: wait; }
+.nm-annotate-export { z-index: 1300; }
+.nm-annotate-export-path { color: #37474f; font-family: monospace; font-size: 12px;
+                           overflow-wrap: anywhere; margin: 4px 0; }
+.nm-export-undo-row { display: flex; justify-content: flex-end; margin-top: 8px; }
+.nm-export-undo { border: 1px solid #c62828; background: #fff; color: #c62828;
+                  border-radius: 4px; padding: 4px 9px; font-size: 12px; cursor: pointer; }
 .nm-note-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(20, 20, 30, .42);
                    display: flex; align-items: flex-start; justify-content: center; padding-top: 14vh; }
 .nm-note-overlay[hidden] { display: none !important; }

@@ -146,10 +146,20 @@ nmr default [工程]          # 设置/查看默认工程
 nmr main [页面id]           # 查看/设置主页面（view/search 的默认目标）
 nmr start --restart/-r      # 重启 daemon；端口按 config.json / CLI 参数解析
 nmr --version               # 显示 NoteManager 版本
+nmr launch                  # 启动 daemon 并打开 Web UI
+nmr desktop                 # Windows：在桌面创建 NoteManager 启动入口
 nmr stop                    # 停止 daemon
 nmr view <文件>             # 临时渲染一个文件
 nmr check <文件>            # 检查一个文件有没有语法错误
 ```
+
+### 控制面板
+
+打开 `http://localhost:19833` 后：
+
+- 「添加目录」支持「浏览...」调用本机目录选择窗口，不用手工输入 Windows 路径；
+- 添加目录会在后台构建并显示进度，首次构建不会让页面看起来没反应；
+- 「诊断日志」可以直接查看 `daemon.log` 末尾，无需自己找日志文件。
 
 ### 导出手机用 .html.zip（export）
 
@@ -413,8 +423,10 @@ P1 已增加图片引用索引、独占图片清理和回收站恢复；详见�
 图片右下角可打开「缩放」和「标注」：
 
 - 「缩放」预览显示宽度，并生成 Markdown/reST 的宽度写法；
-- 「标注」在图片上添加圈、框、箭头、下划线和文字；
-- 标注支持选择、移动、调整大小、修改文字、虚线、线宽和文字大小。
+- 「标注」在图片上添加圈、框、箭头、直线和文字；
+- 标注支持选择、移动、调整大小、修改文字、虚线、线宽、文字大小和填充透明度；
+- 支持 Shift 多选、框选、整体移动/删除，以及 Delete、方向键、Ctrl+A 等热键；
+- 支持导出可分享的自包含 SVG（原图 + 标注），可直接在 Markdown/reST 中引用。
 
 标注保存为同名 `.ann.svg`，不修改原始图片；Markdown/reST 仍只引用原图，
 NoteManager 渲染时自动叠加 SVG 标注层。
