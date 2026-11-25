@@ -1,8 +1,8 @@
-"""Sidebar Home link: project landing page first, console as fallback.
+"""Sidebar hierarchy: console -> project -> document.
 
 Design intent:
-- managed project pages -> current project's landing page (``/p/N/index.html``)
-- temp single-file views (no project) -> console ``/`` so the user can pick one
+- managed project pages -> project landing via the project breadcrumb
+- temp single-file views (no project) -> only console + document
 """
 
 from pathlib import Path
@@ -12,25 +12,33 @@ from notemanager.daemon import NoteManagerDaemon
 from notemanager.renderer.template import wrap_html
 
 
-def test_document_home_returns_to_project_landing_page() -> None:
-    html = wrap_html("<p>x</p>", "t", "docs/guide.html")
-    assert '<div class="nm-sidebar-home"><a href="../index.html">Home</a>' in html
+def test_document_breadcrumb_returns_to_project_landing_page() -> None:
+    html = wrap_html(
+        "<p>x</p>", "t", "docs/guide.html", project_name="MyProject"
+    )
+    assert 'class="nm-sidebar-crumbs"' in html
+    assert 'href="../index.html" title="项目首页">MyProject</a>' in html
+    assert 'href="/" title="返回控制台">控制台</a>' in html
     assert 'id="nm-new-root"' in html
 
 
-def test_top_level_document_home_returns_to_index() -> None:
-    html = wrap_html("<p>x</p>", "t", "guide.html")
-    assert '<div class="nm-sidebar-home"><a href="index.html">Home</a>' in html
+def test_top_level_document_project_crumb_returns_to_index() -> None:
+    html = wrap_html(
+        "<p>x</p>", "t", "guide.html", project_name="MyProject"
+    )
+    assert 'href="index.html" title="项目首页">MyProject</a>' in html
     assert 'id="nm-new-root"' in html
 
 
 def test_explicit_home_href_overrides_project_home() -> None:
-    html = wrap_html("<p>x</p>", "t", "index.html", home_href="/")
-    assert '<div class="nm-sidebar-home"><a href="/">Home</a>' in html
+    html = wrap_html(
+        "<p>x</p>", "t", "index.html", home_href="/", project_name="MyProject"
+    )
+    assert 'href="/" title="项目首页">MyProject</a>' in html
     assert 'id="nm-new-root"' in html
 
 
-def test_temp_view_home_falls_back_to_console(tmp_path: Path, monkeypatch) -> None:
+def test_temp_view_shows_console_and_document_only(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "unmanaged.md"
     source.write_text("# Demo\n", encoding="utf-8")
 
@@ -41,7 +49,8 @@ def test_temp_view_home_falls_back_to_console(tmp_path: Path, monkeypatch) -> No
     page = temp_dir / Path(url).name
     html = page.read_text(encoding="utf-8")
 
-    assert '<div class="nm-sidebar-home"><a href="/">Home</a>' in html
+    assert 'href="/" title="返回控制台">控制台</a>' in html
+    assert "nm-sidebar-home" not in html
     assert 'id="nm-new-root"' in html
     # 临时页没有工程首页，必须用确定目标，不能再依赖浏览器历史。
     assert "history.back" not in _DEFAULT_JS

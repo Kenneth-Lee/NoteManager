@@ -14,6 +14,8 @@ import re
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from notemanager.scanner import is_ignored_path, load_ignore_rules
+
 _IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico"})
 _SKIP_DIRS = frozenset({".NoteManager", ".git", ".svn", ".hg", "_build", "_extensions", "__pycache__"})
 _MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(\s*<?([^)\s>]+)")
@@ -69,6 +71,7 @@ def build_assets(project_root: Path, documents: list[dict]) -> dict:
             "title": str(doc.get("title") or Path(source).stem),
         }
 
+    ignore_rules = load_ignore_rules(project_root)
     assets: dict[str, dict] = {}
     for source, meta in sorted(doc_by_source.items()):
         try:
@@ -76,6 +79,10 @@ def build_assets(project_root: Path, documents: list[dict]) -> dict:
         except OSError:
             continue
         for ref in _doc_refs(source, text):
+            if is_ignored_path(
+                project_root, project_root / ref, is_dir=False, rules=ignore_rules
+            ):
+                continue
             entry = assets.setdefault(ref, {
                 "path": ref,
                 "referenced_by": [],
@@ -88,13 +95,23 @@ def build_assets(project_root: Path, documents: list[dict]) -> dict:
     # Include image files that exist in the project, even if no document
     # currently references them; those are the cleanup candidates.
     for dirpath, dirnames, filenames in os.walk(project_root):
-        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
         base = Path(dirpath)
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in _SKIP_DIRS
+            and not is_ignored_path(
+                project_root, base / d, is_dir=True, rules=ignore_rules
+            )
+        ]
         for name in filenames:
             path = base / name
             if _is_annotation_sidecar(path):
                 continue
             if path.suffix.lower() not in _IMAGE_EXTS:
+                continue
+            if is_ignored_path(
+                project_root, path, is_dir=False, rules=ignore_rules
+            ):
                 continue
             rel = path.relative_to(project_root).as_posix()
             entry = assets.setdefault(rel, {

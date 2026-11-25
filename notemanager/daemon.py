@@ -2509,18 +2509,58 @@ class NoteManagerDaemon:
             "total_images": len(data.get("assets") or {}),
         }
 
-    def trash_orphan_assets(self, project_idx: int, paths: list) -> dict:
+    def list_assets(self, project_idx: int) -> dict:
+        """List all managed image resources, including referenced ones."""
         with self._lock:
             dirs = list(self._observers.keys())
         if not (0 <= project_idx < len(dirs)):
             return {"ok": False, "error": "无效工程编号"}
         root = Path(dirs[project_idx]).resolve()
         data = self._read_asset_index(root)
-        orphan_set = set(data.get("orphans") or [])
+        items = []
+        orphan_count = 0
+        for rel, entry in (data.get("assets") or {}).items():
+            if not entry.get("exists"):
+                continue
+            refs = entry.get("referenced_by") or []
+            if not refs:
+                orphan_count += 1
+            items.append({
+                "path": rel,
+                "size": entry.get("size", 0),
+                "reference_count": len(refs),
+                "referenced_by": [r.get("source_path", "") for r in refs[:12]],
+            })
+        missing = [
+            p for p in (data.get("missing") or [])
+            if not (root / p).is_file()
+        ]
+        items.sort(key=lambda item: (item["reference_count"] > 0, item["path"]))
+        return {
+            "ok": True,
+            "items": items,
+            "missing": missing,
+            "total_images": len(items),
+            "orphan_count": orphan_count,
+        }
+
+    def trash_orphan_assets(
+        self, project_idx: int, paths: list, allow_referenced: bool = False
+    ) -> dict:
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root = Path(dirs[project_idx]).resolve()
+        data = self._read_asset_index(root)
+        allowed_set = (
+            set(data.get("assets") or {})
+            if allow_referenced else set(data.get("orphans") or [])
+        )
         selected = []
         for raw in paths or []:
             rel = str(raw or "").replace("\\", "/").strip()
-            if rel not in orphan_set or rel in selected:
+            if rel not in allowed_set or rel in selected:
                 continue
             abs_path = (root / rel).resolve()
             try:
@@ -2530,7 +2570,7 @@ class NoteManagerDaemon:
             if abs_path.is_file():
                 selected.append(rel)
         if not selected:
-            return {"ok": False, "error": "没有可清理的未引用图片"}
+            return {"ok": False, "error": "没有可删除的资源"}
 
         batch = None
         sidecars = []
@@ -2834,8 +2874,159 @@ class NoteManagerDaemon:
             "image_rel_path": rel.as_posix(),
         }
 
+    def set_image_width(
+        self, project_idx: int, source_rel_posix: str, image_rel_posix: str,
+        width_px: int, occurrence: int = 0,
+    ) -> dict:
+        """Update only the image width in the source file, preserving all other text."""
+        import os as _os
+        import re as _re
+        from urllib.parse import unquote as _unquote
+
+        try:
+            width = int(width_px)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "无效宽度"}
+        width = max(40, min(4000, width))
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root, rel = self._validated_source_rel(Path(dirs[project_idx]), source_rel_posix)
+        if rel is None:
+            return {"ok": False, "error": "非法源文件路径"}
+        suffix = rel.suffix.lower()
+        if suffix not in (".md", ".rst"):
+            return {"ok": False, "error": "只有 Markdown/reST 支持图片宽度"}
+        source_path = (root / rel).resolve()
+        image_rel = Path(str(image_rel_posix or "").replace("\\", "/"))
+        if image_rel.is_absolute() or any(p == ".." for p in image_rel.parts):
+            return {"ok": False, "error": "非法图片路径"}
+        image_abs = (root / image_rel).resolve()
+        try:
+            image_abs.relative_to(root)
+        except ValueError:
+            return {"ok": False, "error": "拒绝路径"}
+        if not image_abs.is_file():
+            return {"ok": False, "error": "图片不存在"}
+        try:
+            with source_path.open("r", encoding="utf-8", newline="") as f:
+                text = f.read()
+        except OSError as e:
+            return {"ok": False, "error": f"读取源码失败: {e}"}
+        target_rel = image_rel.as_posix()
+
+        def resolve_ref(raw: str) -> str | None:
+            raw = _unquote(str(raw or "")).strip().strip("<>\"'")
+            if not raw or raw.startswith(("http://", "https://", "data:", "#")):
+                return None
+            p = Path(raw)
+            if p.is_absolute():
+                return None
+            try:
+                resolved = (source_path.parent / p).resolve()
+                return resolved.relative_to(root).as_posix()
+            except (ValueError, OSError):
+                return None
+
+        changed = False
+        if suffix == ".md":
+            pattern = _re.compile(
+                r'!\[[^\]]*\]\(\s*<?([^)\s>]+)(?:\s+["\'][^"\']*["\'])?\s*\)(\{[^}\n]*\})?'
+            )
+            matches = list(pattern.finditer(text))
+            target_matches = [
+                m for m in matches if resolve_ref(m.group(1)) == target_rel
+            ]
+            idx = max(0, int(occurrence or 0))
+            if idx >= len(target_matches):
+                return {"ok": False, "error": "没有找到对应的图片引用"}
+            match = target_matches[idx]
+            attrs = match.group(2)
+            if attrs:
+                body = attrs[1:-1].strip()
+                body = _re.sub(r'(^|\s)width\s*=\s*\S+', r'\1', body).strip()
+                if body:
+                    body += " "
+                body += f"width={width}px"
+                new_attrs = "{" + body + "}"
+                start = match.start(2)
+                end = match.end(2)
+            else:
+                new_attrs = f"{{width={width}px}}"
+                start = end = match.end()
+            text = text[:start] + new_attrs + text[end:]
+            changed = True
+        else:
+            lines = text.splitlines(keepends=True)
+            directive = _re.compile(
+                r'^([ \t]*)\.\.\s+(?:image|figure)::\s*(\S+)\s*$'
+            )
+            target_indices = []
+            for i, line in enumerate(lines):
+                m = directive.match(line.rstrip("\r\n"))
+                if m and resolve_ref(m.group(2)) == target_rel:
+                    target_indices.append((i, m.group(1)))
+            idx = max(0, int(occurrence or 0))
+            if idx >= len(target_indices):
+                return {"ok": False, "error": "没有找到对应的图片引用"}
+            i, indent = target_indices[idx]
+            m = directive.match(lines[i].rstrip("\r\n"))
+            option_re = _re.compile(r'^(\s*):width:\s*.*$')
+            j = i + 1
+            found = None
+            while j < len(lines):
+                raw_line = lines[j]
+                stripped = raw_line.strip()
+                if not stripped:
+                    break
+                leading = len(raw_line) - len(raw_line.lstrip(" \t"))
+                if leading <= len(indent):
+                    break
+                if option_re.match(raw_line.rstrip("\r\n")):
+                    found = j
+                    break
+                j += 1
+            if found is not None:
+                nl = "\r\n" if lines[found].endswith("\r\n") else ("\n" if lines[found].endswith("\n") else "")
+                lines[found] = option_re.sub(
+                    lambda om: om.group(1) + f":width: {width}px", lines[found].rstrip("\r\n")
+                ) + nl
+            else:
+                nl = "\r\n" if lines[i].endswith("\r\n") else ("\n" if lines[i].endswith("\n") else "\n")
+                lines.insert(i + 1, indent + f"   :width: {width}px{nl}")
+            text = "".join(lines)
+            changed = True
+        if not changed:
+            return {"ok": False, "error": "没有修改"}
+        tmp = source_path.with_name(source_path.name + ".nmr-width.tmp")
+        try:
+            suppress_path(tmp)
+            with tmp.open("w", encoding="utf-8", newline="") as f:
+                f.write(text)
+            _os.replace(tmp, source_path)
+        except OSError as e:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return {"ok": False, "error": f"写入源码失败: {e}"}
+        try:
+            from notemanager.builder import update_file
+
+            update_file(
+                root, source_path,
+                refresh_static_assets=False,
+                refresh_project_assets=False,
+            )
+        except Exception as e:
+            logger.exception("更新图片宽度后重建失败")
+            return {"ok": False, "error": f"已修改源码，但重建失败: {e}"}
+        return {"ok": True, "width": width, "source_rel_path": rel.as_posix()}
+
     def export_annotated_svg(
-        self, project_idx: int, image_rel_posix: str, svg_text: str
+        self, project_idx: int, image_rel_posix: str, svg_text: str,
+        delete_originals: bool = False,
     ) -> dict:
         """Write a self-contained SVG (image + annotations) for sharing."""
         import base64
@@ -2894,12 +3085,10 @@ class NoteManagerDaemon:
         out = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<svg xmlns="http://www.w3.org/2000/svg" '
-            f'xmlns:xlink="http://www.w3.org/1999/xlink" '
             f'viewBox="{xml_escape(view_box)}" width="{width:g}" height="{height:g}">\n'
             f'<image x="0" y="0" width="{width:g}" height="{height:g}" '
             'preserveAspectRatio="none" '
-            f'href="data:{mime};base64,{data}" '
-            f'xlink:href="data:{mime};base64,{data}"/>\n'
+            f'href="data:{mime};base64,{data}"/>\n'
             f'<g>{inner}</g>\n</svg>\n'
         )
         out_abs = image_abs.with_name(image_abs.name + ".annotated.svg")
@@ -2918,43 +3107,40 @@ class NoteManagerDaemon:
                 self._add_assets_to_index(root, [out_rel])
             except Exception as ex:
                 logger.warning("导出标注 SVG 后同步资源失败: %s", ex)
+
+        deleted = []
+        if delete_originals:
+            originals = [rel.as_posix(), rel.as_posix() + ".ann.svg"]
+            for original in originals:
+                src = (root / original).resolve()
+                try:
+                    src.relative_to(root)
+                except ValueError:
+                    continue
+                if not src.is_file():
+                    continue
+                try:
+                    suppress_path(src)
+                    src.unlink()
+                    generated = (html_dir / original).resolve()
+                    generated.relative_to(html_dir.resolve())
+                    if generated.is_file():
+                        generated.unlink()
+                    deleted.append(original)
+                except (OSError, ValueError) as e:
+                    return {
+                        "ok": False,
+                        "error": f"SVG 已导出，但删除 {original} 失败: {e}",
+                        "path": out_rel,
+                    }
+            self._remove_assets_from_index(root, deleted)
         return {
             "ok": True,
             "path": out_rel,
             "markdown": f"![]({out_rel})",
             "rst": f".. image:: {out_rel}",
+            "deleted_originals": deleted,
         }
-
-    def delete_exported_svg(self, project_idx: int, path_posix: str) -> dict:
-        """Undo a just-created annotated SVG export."""
-        with self._lock:
-            dirs = list(self._observers.keys())
-        if not (0 <= project_idx < len(dirs)):
-            return {"ok": False, "error": "无效工程编号"}
-        root = Path(dirs[project_idx]).resolve()
-        rel = Path(str(path_posix or "").replace("\\", "/"))
-        if rel.is_absolute() or any(part == ".." for part in rel.parts):
-            return {"ok": False, "error": "非法路径"}
-        if not rel.name.lower().endswith(".annotated.svg"):
-            return {"ok": False, "error": "只能删除导出生成的 .annotated.svg"}
-        target = (root / rel).resolve()
-        try:
-            target.relative_to(root)
-        except ValueError:
-            return {"ok": False, "error": "拒绝路径"}
-        if not target.is_file():
-            return {"ok": False, "error": "导出文件不存在"}
-        try:
-            suppress_path(target)
-            target.unlink()
-            generated = (root / ".NoteManager" / "html" / rel).resolve()
-            generated.relative_to((root / ".NoteManager" / "html").resolve())
-            if generated.is_file():
-                generated.unlink()
-            self._remove_assets_from_index(root, [rel.as_posix()])
-        except (OSError, ValueError) as e:
-            return {"ok": False, "error": f"删除导出文件失败: {e}"}
-        return {"ok": True}
 
     def save_imported_asset(
         self,

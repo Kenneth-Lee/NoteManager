@@ -50,6 +50,7 @@
     add('nm-source-new', '在与当前笔记相同的目录下新建文件', '新建笔记', NM_NEW_STYLE);
     add('nm-source-paste-image', '把剪贴板中的图片粘贴到当前笔记目录的 _static', '粘贴图片', NM_NEW_STYLE);
     add('nm-source-import', '把本地文件或 URL 导入当前笔记目录的 _static', '导入资源', NM_NEW_STYLE);
+    add('nm-source-reference', '从工程已有资源中选择并插入当前笔记', '引用资源', NM_NEW_STYLE);
     add('nm-source-delete', '删除磁盘上的当前源文件', '删除当前笔记', NM_DEL_STYLE);
   }
 
@@ -434,6 +435,233 @@
       setTimeout(function () { if (url) url.focus(); }, 0);
     }
 
+    var referenceOverlay = null;
+    var referenceItems = [];
+
+    function refEncodePath(path) {
+      return String(path || '').split('/').map(encodeURIComponent).join('/');
+    }
+
+    function refFormatSize(size) {
+      size = Number(size) || 0;
+      if (size < 1024) return size + ' B';
+      if (size < 1024 * 1024) return (size / 1024).toFixed(1) + ' KB';
+      return (size / 1024 / 1024).toFixed(1) + ' MB';
+    }
+
+    function referenceRelative(sourceRel, assetRel) {
+      var from = String(sourceRel || '').split('/').slice(0, -1);
+      var to = String(assetRel || '').split('/');
+      var common = 0;
+      while (common < from.length && common < to.length && from[common] === to[common]) common++;
+      var out = [];
+      for (var i = common; i < from.length; i++) out.push('..');
+      return out.concat(to.slice(common)).join('/');
+    }
+
+    function referenceScope(item) {
+      var scope = referenceOverlay.querySelector('#nm-reference-scope').value;
+      var source = String(cfg.source_rel || '').replace(/\\/g, '/');
+      var dir = source.indexOf('/') >= 0 ? source.slice(0, source.lastIndexOf('/')) : '';
+      var staticPrefix = (dir ? dir + '/' : '') + '_static/';
+      if (scope === 'static') return item.path.indexOf(staticPrefix) === 0;
+      if (scope === 'subtree') {
+        if (!dir) return true;
+        return item.path === dir || item.path.indexOf(dir + '/') === 0;
+      }
+      if (scope === 'orphan') return !Number(item.reference_count || 0);
+      return true;
+    }
+
+    function referenceGlobMatch(path, query) {
+      if (!query) return true;
+      if (!/[*?[{]/.test(query)) {
+        return path.toLowerCase().indexOf(query.toLowerCase()) >= 0;
+      }
+      var pattern = query.replace(/\\/g, '/');
+      var out = '^';
+      function escapeChar(ch) {
+        return /[.+^${}()|[\]\\]/.test(ch) ? '\\' + ch : ch;
+      }
+      for (var i = 0; i < pattern.length; i++) {
+        var ch = pattern[i];
+        if (ch === '*') {
+          out += '.*';
+        } else if (ch === '?') {
+          out += '.';
+        } else if (ch === '[') {
+          var close = pattern.indexOf(']', i + 1);
+          if (close < 0) {
+            out += '\\[';
+          } else {
+            var body = pattern.slice(i + 1, close);
+            if (body.indexOf('|') >= 0) {
+              out += '(?:' + body.split('|').map(function (part) {
+                return part.split('').map(escapeChar).join('');
+              }).join('|') + ')';
+            } else {
+              out += '[' + body.replace(/\\/g, '\\\\') + ']';
+            }
+            i = close;
+          }
+        } else if (ch === '{') {
+          var braceClose = pattern.indexOf('}', i + 1);
+          if (braceClose < 0) {
+            out += '\\{';
+          } else {
+            out += '(?:' + pattern.slice(i + 1, braceClose).split(',').map(function (part) {
+              return part.split('').map(escapeChar).join('');
+            }).join('|') + ')';
+            i = braceClose;
+          }
+        } else {
+          out += escapeChar(ch);
+        }
+      }
+      out += '$';
+      try {
+        return new RegExp(out, 'i').test(path);
+      } catch (e) {
+        return path.toLowerCase().indexOf(query.toLowerCase()) >= 0;
+      }
+    }
+
+    function renderReferenceList() {
+      if (!referenceOverlay) return;
+      var query = String(referenceOverlay.querySelector('#nm-reference-search').value || '')
+        .trim().toLowerCase();
+      var list = referenceOverlay.querySelector('#nm-reference-list');
+      var summary = referenceOverlay.querySelector('#nm-reference-summary');
+      var insert = referenceOverlay.querySelector('#nm-reference-insert');
+      list.textContent = '';
+      var visible = referenceItems.filter(function (item) {
+        return referenceScope(item) && referenceGlobMatch(item.path, query);
+      });
+      if (!visible.length) {
+        list.textContent = '没有匹配的资源。';
+        list.className = 'nm-reference-list nm-assets-empty';
+      } else {
+        list.className = 'nm-reference-list';
+      }
+      visible.forEach(function (item) {
+        var row = document.createElement('label');
+        row.className = 'nm-asset-item';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'nm-reference-check';
+        cb.value = item.path;
+        var img = document.createElement('img');
+        img.loading = 'lazy';
+        img.alt = '';
+        img.src = '/p/' + project + '/' + refEncodePath(item.path);
+        img.addEventListener('error', function () { img.style.display = 'none'; });
+        var main = document.createElement('div');
+        main.className = 'nm-asset-main';
+        var path = document.createElement('div');
+        path.className = 'nm-asset-path';
+        path.textContent = item.path;
+        var meta = document.createElement('div');
+        meta.className = 'nm-asset-size';
+        var refs = Number(item.reference_count || 0);
+        meta.textContent = (refs ? '引用 ' + refs + ' 篇' : '未引用') +
+          ' · ' + refFormatSize(item.size || 0);
+        main.appendChild(path);
+        main.appendChild(meta);
+        row.appendChild(cb);
+        row.appendChild(img);
+        row.appendChild(main);
+        list.appendChild(row);
+      });
+      var n = list.querySelectorAll('.nm-reference-check').length;
+      summary.textContent = '可选 ' + n + ' 张 · 当前目录 _static 优先';
+      insert.disabled = n === 0;
+    }
+
+    function closeReferenceDialog() {
+      if (!referenceOverlay) return;
+      referenceOverlay.hidden = true;
+      document.body.classList.remove('nm-note-open');
+    }
+
+    function openReferenceDialog() {
+      if (ext !== '.md' && ext !== '.rst') {
+        setStatus('只有 Markdown/reST 笔记可以插入图片引用', true);
+        return;
+      }
+      if (!referenceOverlay) {
+        referenceOverlay = document.createElement('div');
+        referenceOverlay.className = 'nm-note-overlay';
+        referenceOverlay.hidden = true;
+        referenceOverlay.innerHTML = '<div class="nm-note-dialog nm-reference-dialog" role="dialog" aria-label="引用资源">' +
+          '<div class="nm-note-head"><h2>引用资源</h2>' +
+          '<button type="button" class="nm-note-close" aria-label="关闭">×</button></div>' +
+          '<p class="nm-import-hint">从工程已有资源中选择；插入后会变成当前笔记的图片引用。</p>' +
+          '<div class="nm-reference-filters">' +
+          '<select id="nm-reference-scope">' +
+          '<option value="static">当前目录 _static</option>' +
+          '<option value="subtree">当前目录及子目录</option>' +
+          '<option value="orphan">未引用资源</option>' +
+          '<option value="all">全部资源</option>' +
+          '</select>' +
+          '<input id="nm-reference-search" type="search" placeholder="过滤路径（支持 *.png / *.[jpg|png] / *.{jpg,png}）" autocomplete="off">' +
+          '</div>' +
+          '<div class="nm-assets-summary" id="nm-reference-summary"></div>' +
+          '<div class="nm-reference-list" id="nm-reference-list">正在加载…</div>' +
+          '<div class="nm-note-error" id="nm-reference-error" hidden></div>' +
+          '<div class="nm-note-actions"><button type="button" class="nm-note-cancel">取消</button>' +
+          '<button type="button" class="nm-note-primary" id="nm-reference-insert" disabled>确定（插入引用）</button></div>' +
+          '</div>';
+        document.body.appendChild(referenceOverlay);
+        referenceOverlay.addEventListener('mousedown', function (event) {
+          if (event.target === referenceOverlay) closeReferenceDialog();
+        });
+        referenceOverlay.querySelector('.nm-note-close').addEventListener('click', closeReferenceDialog);
+        referenceOverlay.querySelector('.nm-note-cancel').addEventListener('click', closeReferenceDialog);
+        referenceOverlay.querySelector('#nm-reference-scope').addEventListener('change', renderReferenceList);
+        referenceOverlay.querySelector('#nm-reference-search').addEventListener('input', renderReferenceList);
+        referenceOverlay.querySelector('#nm-reference-insert').addEventListener('click', insertReferenceSelection);
+      }
+      referenceOverlay.hidden = false;
+      document.body.classList.add('nm-note-open');
+      var list = referenceOverlay.querySelector('#nm-reference-list');
+      var err = referenceOverlay.querySelector('#nm-reference-error');
+      err.hidden = true;
+      list.textContent = '正在加载…';
+      fetch('/api/list_assets', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+        body: JSON.stringify({project: project})
+      }).then(function (r) {
+        return r.json().then(function (d) {
+          if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+          return d;
+        });
+      }).then(function (data) {
+        referenceItems = (data.items || []).slice();
+        renderReferenceList();
+      }).catch(function (e) {
+        list.textContent = '无法加载资源。';
+        err.textContent = e && e.message ? e.message : '加载失败';
+        err.hidden = false;
+      });
+    }
+
+    function insertReferenceSelection() {
+      if (!referenceOverlay) return;
+      var checked = referenceOverlay.querySelectorAll('.nm-reference-check:checked');
+      if (!checked.length) return;
+      var blocks = [];
+      checked.forEach(function (cb) {
+        var rel = referenceRelative(cfg.source_rel, cb.value);
+        if (ext === '.rst') blocks.push('.. image:: ' + rel);
+        else blocks.push('![' + (cb.value.split('/').pop() || '') + '](' + rel + ')');
+      });
+      cm.replaceSelection(blocks.join('\n\n') + '\n');
+      recomputeDirty();
+      closeReferenceDialog();
+      setStatus('已插入 ' + blocks.length + ' 条图片引用，请保存并刷新渲染');
+    }
+
     function finishImport(d) {
       if (!d.ok) {
         setImportError(d.error || '导入失败');
@@ -509,6 +737,10 @@
     var importBtn = document.getElementById('nm-source-import');
     if (importBtn) {
       importBtn.addEventListener('click', openImportDialog);
+    }
+    var referenceBtn = document.getElementById('nm-source-reference');
+    if (referenceBtn) {
+      referenceBtn.addEventListener('click', openReferenceDialog);
     }
 
     function switchToRenderTab() {

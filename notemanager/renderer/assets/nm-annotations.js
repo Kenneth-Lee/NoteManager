@@ -65,7 +65,36 @@
 
     var zoomDialog = null;
 
-    function openZoom(img) {
+    function pageSourceInfo() {
+        var el = document.getElementById('nm-page-meta');
+        if (!el) return null;
+        try {
+            var data = JSON.parse(el.textContent || '{}');
+            if (!data || !data.editable) return null;
+            var rel = String(data.source_rel || '').replace(/\\/g, '/');
+            var ext = String(data.source_ext || '').toLowerCase();
+            if (!rel || (ext !== '.md' && ext !== '.rst')) return null;
+            return {rel: rel, ext: ext};
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function imageOccurrence(img) {
+        var panel = document.getElementById('nm-panel-render') || document.body;
+        var wanted = img.currentSrc || img.src;
+        var n = 0;
+        var imgs = panel.querySelectorAll('img');
+        for (var i = 0; i < imgs.length; i++) {
+            if ((imgs[i].currentSrc || imgs[i].src) === wanted) {
+                if (imgs[i] === img) return n;
+                n++;
+            }
+        }
+        return 0;
+    }
+
+    function openZoom(img, info) {
         if (zoomDialog) {
             if (zoomDialog.parentNode) zoomDialog.parentNode.removeChild(zoomDialog);
             zoomDialog = null;
@@ -80,7 +109,9 @@
         zoomDialog.innerHTML = '<div class="nm-zoom-dialog" role="dialog" aria-label="图片缩放">' +
             '<div class="nm-zoom-head"><h2>图片缩放</h2><button type="button" class="nm-zoom-close" aria-label="关闭">×</button></div>' +
             '<div class="nm-zoom-controls"><label>宽度</label><input type="range" min="40" max="' + maxW + '" step="10" value="' + current + '">' +
-            '<span class="nm-zoom-value">' + current + 'px</span></div>' +
+            '<span class="nm-zoom-value">' + current + 'px</span>' +
+            '<button type="button" class="nm-zoom-apply">写入源文件</button></div>' +
+            '<div class="nm-zoom-apply-status"></div>' +
             '<div class="nm-zoom-stage"><img class="nm-zoom-image" alt=""></div>' +
             '<div class="nm-zoom-code"><label>Markdown</label><pre class="nm-zoom-md"></pre>' +
             '<button type="button" class="nm-zoom-copy" data-kind="md">复制</button></div>' +
@@ -119,6 +150,45 @@
                 }).catch(function () {});
             });
         });
+        var applyStatus = zoomDialog.querySelector('.nm-zoom-apply-status');
+        var applyBtn = zoomDialog.querySelector('.nm-zoom-apply');
+        var noteSource = pageSourceInfo();
+        if (!noteSource || !info.rel) {
+            applyBtn.style.display = 'none';
+        } else {
+            applyBtn.addEventListener('click', function () {
+                if (window.__nmDirty) {
+                    applyStatus.textContent = '源码有未保存修改，请先保存后再改图片宽度。';
+                    return;
+                }
+                var px = parseInt(range.value, 10) || current;
+                applyBtn.disabled = true;
+                applyStatus.textContent = '正在写入源文件…';
+                fetch('/api/set_image_width', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json; charset=utf-8'},
+                    body: JSON.stringify({
+                        project: project,
+                        source_rel_path: noteSource.rel,
+                        image_rel_path: info.rel,
+                        width: px,
+                        occurrence: info.occurrence || 0
+                    })
+                }).then(function (r) {
+                    return r.json().then(function (d) {
+                        if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+                        return d;
+                    });
+                }).then(function (d) {
+                    img.style.width = px + 'px';
+                    applyStatus.textContent = '已写入 ' + d.source_rel_path + '，刷新页面查看结果…';
+                    setTimeout(function () { window.location.reload(); }, 500);
+                }).catch(function (e) {
+                    applyBtn.disabled = false;
+                    applyStatus.textContent = e && e.message ? e.message : '写入失败';
+                });
+            });
+        }
         setTimeout(function () { range.focus(); }, 0);
     }
 
@@ -147,6 +217,7 @@
                 return;
             }
         }
+        info.occurrence = imageOccurrence(img);
         var wrap = document.createElement('span');
         wrap.className = 'nm-annotated-media';
         img.parentNode.insertBefore(wrap, img);
@@ -190,7 +261,7 @@
         zoomBtn.addEventListener('click', function (event) {
             event.preventDefault();
             event.stopPropagation();
-            openZoom(img);
+            openZoom(img, info);
         });
         btn.addEventListener('click', function (event) {
             event.preventDefault();
@@ -1170,113 +1241,108 @@
             return serializer.outerHTML;
         }
 
-        function showExportResult(result) {
+        function docRelative(target) {
+            try {
+                var page = decodeURIComponent(window.location.pathname)
+                    .replace(/^\/p\/\d+\//, '');
+                var dir = page.indexOf('/') >= 0
+                    ? page.slice(0, page.lastIndexOf('/') + 1) : '';
+                var from = dir.split('/').filter(Boolean);
+                var to = String(target || '').split('/').filter(Boolean);
+                var common = 0;
+                while (common < from.length && common < to.length &&
+                       from[common] === to[common]) common++;
+                var out = [];
+                for (var i = common; i < from.length; i++) out.push('..');
+                out = out.concat(to.slice(common));
+                return out.join('/') || target;
+            } catch (e) {
+                return target;
+            }
+        }
+
+        function openExportConfirm() {
+            var outputPath = info.rel + ".annotated.svg";
+            var sourcePath = docRelative(outputPath);
             var overlay = document.createElement('div');
             overlay.className = 'nm-zoom-overlay nm-annotate-export';
             overlay.innerHTML = '<div class="nm-zoom-dialog" role="dialog" aria-label="导出 SVG">' +
-                '<div class="nm-zoom-head"><h2>已导出带标注 SVG</h2>' +
+                '<div class="nm-zoom-head"><h2>导出带标注 SVG</h2>' +
                 '<button type="button" class="nm-zoom-close" aria-label="关闭">×</button></div>' +
-                '<p class="nm-zoom-note">可以直接把这个 SVG 文件当作普通图片引用；原图不再需要同时引用。</p>' +
-                '<p class="nm-annotate-export-path"></p>' +
+                '<p class="nm-export-desc"></p>' +
+                '<p class="nm-export-desc">如果需要引用该图片，参考：</p>' +
                 '<div class="nm-zoom-code"><label>Markdown</label><pre class="nm-export-md"></pre>' +
                 '<button type="button" class="nm-zoom-copy" data-kind="md">复制</button></div>' +
                 '<div class="nm-zoom-code"><label>reST</label><pre class="nm-export-rst"></pre>' +
                 '<button type="button" class="nm-zoom-copy" data-kind="rst">复制</button></div>' +
-                '<div class="nm-export-undo-row"><button type="button" class="nm-export-undo">' +
-                '撤销导出（删除刚生成的文件）</button></div>' +
-                '</div>';
+                '<p class="nm-export-warning">“删除原图和标注”会删除原图片和 .ann.svg；' +
+                '源文件中旧的图片引用需要你手动改成上面的 SVG。</p>' +
+                '<div class="nm-export-actions">' +
+                '<button type="button" class="nm-annotate-cancel nm-export-cancel">取消</button>' +
+                '<button type="button" class="nm-annotate-save nm-export-keep">确定（保留原图和标注）</button>' +
+                '<button type="button" class="nm-export-delete">确定（删除原图和标注）</button>' +
+                '</div></div>';
             document.body.appendChild(overlay);
-            var path = overlay.querySelector('.nm-annotate-export-path');
-            var md = overlay.querySelector('.nm-export-md');
-            var rst = overlay.querySelector('.nm-export-rst');
-            function docRelative(target) {
-                try {
-                    var page = decodeURIComponent(window.location.pathname)
-                        .replace(/^\/p\/\d+\//, '');
-                    var dir = page.indexOf('/') >= 0
-                        ? page.slice(0, page.lastIndexOf('/') + 1) : '';
-                    var from = dir.split('/').filter(Boolean);
-                    var to = String(target || '').split('/').filter(Boolean);
-                    var common = 0;
-                    while (common < from.length && common < to.length &&
-                           from[common] === to[common]) common++;
-                    var out = [];
-                    for (var i = common; i < from.length; i++) out.push('..');
-                    out = out.concat(to.slice(common));
-                    return out.join('/') || target;
-                } catch (e) {
-                    return target;
-                }
+            var desc = overlay.querySelector('.nm-export-desc');
+            desc.textContent = '将把 ' + info.rel + ' 和它的标注合并成 ' +
+                outputPath + '。';
+            overlay.querySelector('.nm-export-md').textContent = '![](' + sourcePath + ')';
+            overlay.querySelector('.nm-export-rst').textContent = '.. image:: ' + sourcePath;
+            function close() {
+                if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
             }
-            var sourcePath = docRelative(result.path);
-            path.textContent = (result.path || '') +
-                (sourcePath !== result.path ? '  →  ' + sourcePath : '');
-            md.textContent = '![](' + sourcePath + ')';
-            rst.textContent = '.. image:: ' + sourcePath;
-            overlay.querySelector('.nm-zoom-close').addEventListener('click', function () {
-                overlay.parentNode.removeChild(overlay);
+            function run(deleteOriginals) {
+                var buttons = overlay.querySelectorAll('button');
+                buttons.forEach(function (b) { b.disabled = true; });
+                setStatus('正在导出 SVG…');
+                fetch('/api/export_annotated_svg', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json; charset=utf-8'},
+                    body: JSON.stringify({
+                        project: project,
+                        image_rel_path: info.rel,
+                        svg: serializedSvg(),
+                        delete_originals: deleteOriginals
+                    })
+                }).then(function (r) {
+                    return r.json().then(function (d) {
+                        if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+                        return d;
+                    });
+                }).then(function (result) {
+                    close();
+                    setStatus('已导出: ' + result.path);
+                    if (deleteOriginals) closeEditor();
+                }).catch(function (e) {
+                    buttons.forEach(function (b) { b.disabled = false; });
+                    setStatus(e && e.message ? e.message : '导出失败');
+                });
+            }
+            overlay.querySelector('.nm-zoom-close').addEventListener('click', close);
+            overlay.querySelector('.nm-export-cancel').addEventListener('click', close);
+            overlay.querySelector('.nm-export-keep').addEventListener('click', function () {
+                run(false);
+            });
+            overlay.querySelector('.nm-export-delete').addEventListener('click', function () {
+                run(true);
             });
             overlay.addEventListener('mousedown', function (event) {
-                if (event.target === overlay) overlay.parentNode.removeChild(overlay);
+                if (event.target === overlay) close();
             });
             overlay.querySelectorAll('.nm-zoom-copy').forEach(function (btn) {
                 btn.addEventListener('click', function () {
-                    var text = btn.dataset.kind === 'rst' ? rst.textContent : md.textContent;
+                    var text = btn.dataset.kind === 'rst'
+                        ? overlay.querySelector('.nm-export-rst').textContent
+                        : overlay.querySelector('.nm-export-md').textContent;
                     if (navigator.clipboard) navigator.clipboard.writeText(text).then(function () {
                         btn.textContent = '已复制';
                         setTimeout(function () { btn.textContent = '复制'; }, 1200);
                     }).catch(function () {});
                 });
             });
-            var undo = overlay.querySelector('.nm-export-undo');
-            undo.addEventListener('click', function () {
-                if (!window.confirm('删除刚导出的 SVG 文件？')) return;
-                undo.disabled = true;
-                fetch('/api/delete_exported_svg', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json; charset=utf-8'},
-                    body: JSON.stringify({project: project, path: result.path})
-                }).then(function (r) {
-                    return r.json().then(function (d) {
-                        if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
-                        return d;
-                    });
-                }).then(function () {
-                    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-                    setStatus('已删除刚导出的 SVG');
-                }).catch(function (e) {
-                    undo.disabled = false;
-                    setStatus(e && e.message ? e.message : '删除失败');
-                });
-            });
         }
 
-        editor.querySelector('.nm-annotate-export-btn').addEventListener('click', function () {
-            var btn = this;
-            btn.disabled = true;
-            setStatus('正在导出 SVG…');
-            fetch('/api/export_annotated_svg', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json; charset=utf-8'},
-                body: JSON.stringify({
-                    project: project,
-                    image_rel_path: info.rel,
-                    svg: serializedSvg()
-                })
-            }).then(function (r) {
-                return r.json().then(function (d) {
-                    if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
-                    return d;
-                });
-            }).then(function (result) {
-                setStatus('');
-                showExportResult(result);
-            }).catch(function (e) {
-                setStatus(e && e.message ? e.message : '导出失败');
-            }).finally(function () {
-                btn.disabled = false;
-            });
-        });
+        editor.querySelector('.nm-annotate-export-btn').addEventListener('click', openExportConfirm);
 
         editor.querySelector('.nm-annotate-save').addEventListener('click', function () {
             var btn = this;

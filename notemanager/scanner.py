@@ -79,31 +79,22 @@ def _rule_matches(rel_posix: str, rule: IgnoreRule, *, is_dir: bool) -> bool:
     rel = rel_posix.strip("/")
     if not rel:
         return False
-    p = PurePosixPath(rel)
-    name = p.name
+    name = PurePosixPath(rel).name
+    # A pattern without a slash matches a basename at any depth. A pattern
+    # containing a slash (or an explicitly anchored pattern) is relative to
+    # the project root, matching gitignore's important distinction.
+    root_relative = rule.anchored or "/" in rule.pattern
+    parts = rel.split("/")
+    prefixes = ["/".join(parts[:i + 1]) for i in range(len(parts))]
 
     if rule.dir_only:
-        # directory pattern matches the dir itself and everything under it
-        if rule.anchored:
-            return rel == rule.pattern or rel.startswith(rule.pattern + "/")
-        parts = rel.split("/")
-        prefixes = ["/".join(parts[:i + 1]) for i in range(len(parts))]
-        for pref in prefixes:
-            q = PurePosixPath(pref)
-            if q.match(rule.pattern) or q.match("**/" + rule.pattern):
-                return True
-            if fnmatch.fnmatch(q.name, rule.pattern):
-                return True
-        return False
+        if root_relative:
+            return any(fnmatch.fnmatchcase(prefix, rule.pattern) for prefix in prefixes)
+        return any(fnmatch.fnmatchcase(part, rule.pattern) for part in parts)
 
-    if rule.anchored:
-        return p.match(rule.pattern)
-
-    return (
-        p.match(rule.pattern)
-        or p.match("**/" + rule.pattern)
-        or fnmatch.fnmatch(name, rule.pattern)
-    )
+    if root_relative:
+        return fnmatch.fnmatchcase(rel, rule.pattern)
+    return fnmatch.fnmatchcase(name, rule.pattern)
 
 
 def is_ignored_path(

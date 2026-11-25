@@ -494,6 +494,21 @@ class WebHandler(BaseHTTPRequestHandler):
                 str(data.get("image_rel_path", "")),
                 str(data.get("svg", "")),
             )
+        elif path == "/api/set_image_width":
+            try:
+                pj = int(data.get("project", -1))
+                width = int(data.get("width", 0))
+                occurrence = int(data.get("occurrence", 0))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "参数无效"})
+                return
+            resp = self.daemon_ref.set_image_width(
+                pj,
+                str(data.get("source_rel_path", "")),
+                str(data.get("image_rel_path", "")),
+                width,
+                occurrence,
+            )
         elif path == "/api/export_annotated_svg":
             try:
                 pj = int(data.get("project", -1))
@@ -504,15 +519,7 @@ class WebHandler(BaseHTTPRequestHandler):
                 pj,
                 str(data.get("image_rel_path", "")),
                 str(data.get("svg", "")),
-            )
-        elif path == "/api/delete_exported_svg":
-            try:
-                pj = int(data.get("project", -1))
-            except (TypeError, ValueError):
-                self._send_json({"ok": False, "error": "无效工程编号"})
-                return
-            resp = self.daemon_ref.delete_exported_svg(
-                pj, str(data.get("path", ""))
+                bool(data.get("delete_originals")),
             )
         elif path == "/api/import_url":
             try:
@@ -524,6 +531,25 @@ class WebHandler(BaseHTTPRequestHandler):
                 pj,
                 str(data.get("source_rel_path", "")),
                 str(data.get("url", "")),
+            )
+        elif path == "/api/list_assets":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            resp = self.daemon_ref.list_assets(pj)
+        elif path == "/api/trash_assets":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            paths = data.get("paths")
+            if not isinstance(paths, list):
+                paths = []
+            resp = self.daemon_ref.trash_orphan_assets(
+                pj, paths, allow_referenced=True
             )
         elif path == "/api/orphan_assets":
             try:

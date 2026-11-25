@@ -58,7 +58,8 @@ def wrap_html(body: str, title: str, html_rel_path: str,
               extra_css_files: list[str] | None = None,
               extra_js_files: list[str] | None = None,
               home_href: str | None = None,
-              project_id: str = "") -> str:
+              project_id: str = "",
+              project_name: str = "") -> str:
     """Wrap an HTML body fragment in a full HTML5 page.
 
     Args:
@@ -83,6 +84,12 @@ def wrap_html(body: str, title: str, html_rel_path: str,
     prefix = _static_prefix(html_rel_path)
     if home_href is None:
         home_href = prefix + "index.html"
+    doc_label = "首页" if project_name and title == project_name else title
+    project_crumb_html = (
+        '<a href="' + _escape(home_href) + '" title="项目首页">' +
+        _escape(project_name) + '</a><span class="nm-crumb-sep">›</span>'
+        if project_name else ""
+    )
     warnings = warnings or []
     dtags = dtags or []
     extra_css_files = extra_css_files or []
@@ -227,10 +234,15 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .nm-sidebar {{ position: fixed; top: 0; left: 0; width: 280px; height: 100vh;
                background: #f8f9fa; border-right: 1px solid #e0e0e0; overflow-y: auto;
                z-index: 50; display: flex; flex-direction: column; }}
-.nm-sidebar-home {{ padding: 12px 16px; border-bottom: 1px solid #e0e0e0; font-size: 15px; font-weight: 600;
-                     display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
-.nm-sidebar-home a {{ text-decoration: none; color: #333; }}
-.nm-sidebar-home a:hover {{ color: #0066cc; }}
+.nm-sidebar-crumbs {{ padding: 10px 14px 8px; border-bottom: 1px solid #e0e0e0; font-size: 12px;
+                      display: flex; align-items: center; gap: 5px; min-width: 0; }}
+.nm-sidebar-crumbs a {{ color: #1565c0; text-decoration: none; font-weight: 600; white-space: nowrap; }}
+.nm-sidebar-crumbs a:hover {{ text-decoration: underline; }}
+.nm-crumb-sep {{ color: #b0bec5; flex: 0 0 auto; }}
+.nm-crumb-doc {{ color: #37474f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                 min-width: 0; }}
+.nm-sidebar-tools {{ padding: 6px 14px 9px; border-bottom: 1px solid #e0e0e0;
+                     display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }}
 .nm-new-note-btn {{ border: 1px solid #bbdefb; background: #f5f9ff; color: #1565c0; border-radius: 4px;
                     font-size: 11px; padding: 2px 6px; cursor: pointer; font-weight: 400; white-space: nowrap; }}
 .nm-new-note-btn:hover {{ background: #e3f2fd; }}
@@ -432,10 +444,16 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 </head>
 <body data-nm-project="{_escape(project_id)}" data-nm-page-path="{_escape(str(html_rel_path))}" data-nm-source-path="{_escape(source_path)}">
 <div class="nm-sidebar">
-<div class="nm-sidebar-home"><a href="{_escape(home_href)}">Home</a>
+<div class="nm-sidebar-crumbs">
+<a href="/" title="返回控制台">控制台</a>
+<span class="nm-crumb-sep">›</span>
+{project_crumb_html}<span class="nm-crumb-doc" title="{_escape(title)}">{_escape(doc_label)}</span>
+</div>
+<div class="nm-sidebar-tools">
 <button type="button" id="nm-new-root" class="nm-new-note-btn" title="在项目根目录新建笔记">＋ 新建</button>
 <button type="button" id="nm-trash-open" class="nm-trash-btn" title="回收站">回收站</button>
-<button type="button" id="nm-assets-open" class="nm-trash-btn" title="清理未引用图片">资源</button></div>
+<button type="button" id="nm-assets-open" class="nm-trash-btn" title="清理未引用图片">资源清理</button>
+</div>
 <div class="nm-sidebar-search">
 <input type="text" id="nm-search" placeholder="搜索...">
 <button class="nm-search-help" onclick="nmToggleHelp()" title="搜索语法帮助">?</button>
@@ -488,7 +506,6 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <button class="nm-split-btn" id="nm-open-external" type="button" title="在外部编辑器中打开当前源文件（默认 gvim；Ctrl/⌘+Alt+E）" style="display:none">外部编辑</button>
 <button class="nm-split-btn" id="nm-split-btn" type="button" title="左右分屏，同时查看渲染与源文件">分屏</button>
 <button class="nm-split-btn" id="nm-sync-btn" type="button" title="分屏时双向同步滚动（点击开/关）">同步</button>
-<a class="nm-console-btn" href="/" title="返回控制台">控制台</a>
 </div>
 </div>
 <div class="nm-tab-panels">

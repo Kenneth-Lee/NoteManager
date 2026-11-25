@@ -88,14 +88,37 @@ def test_export_annotated_svg_is_self_contained(tmp_path):
     output = root / result["path"]
     text = output.read_text(encoding="utf-8")
     assert 'href="data:image/png;base64,' in text
+    assert text.count("base64,") == 1
     assert "ellipse" in text
     assert output.is_file()
     assert (
         root / ".NoteManager" / "html" / "sub" / "_static" / "diagram.png.annotated.svg"
     ).is_file()
-    undone = daemon.delete_exported_svg(0, result["path"])
-    assert undone["ok"] is True
-    assert not output.exists()
+
+
+def test_export_can_remove_original_and_annotation(tmp_path):
+    root = tmp_path / "proj"
+    (root / "sub" / "_static").mkdir(parents=True)
+    image = root / "sub" / "_static" / "diagram.png"
+    image.write_bytes(b"png-data")
+    sidecar = root / "sub" / "_static" / "diagram.png.ann.svg"
+    sidecar.write_text("<svg xmlns='http://www.w3.org/2000/svg'></svg>")
+    builder.full_build(root)
+    daemon = _daemon(root)
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50">'
+        '<ellipse cx="50" cy="25" rx="20" ry="10" fill="none" stroke="#e53935"/>'
+        "</svg>"
+    )
+    result = daemon.export_annotated_svg(
+        0, "sub/_static/diagram.png", svg, delete_originals=True
+    )
+    assert result["ok"] is True
+    assert (root / result["path"]).is_file()
+    assert not image.exists()
+    assert not sidecar.exists()
+    assert "sub/_static/diagram.png" in result["deleted_originals"]
+    assert "sub/_static/diagram.png.ann.svg" in result["deleted_originals"]
 
 
 def test_delete_note_moves_and_restores_annotation_sidecar(tmp_path):
@@ -144,3 +167,94 @@ def test_annotation_sidecar_is_not_an_independent_asset(tmp_path):
     assert "sub/_static/diagram.png.ann.svg" not in data["assets"]
     assert "sub/_static/diagram.png.ann.svg" not in data["orphans"]
     assert "sub/_static/diagram.png.annotated.svg" in data["orphans"]
+
+
+def test_nmrignore_excludes_unmanaged_images_from_assets(tmp_path):
+    from notemanager.assets import build_assets
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / ".nmrignore").write_text("sphinx/\n", encoding="utf-8")
+    (root / "sphinx" / "images").mkdir(parents=True)
+    (root / "sphinx" / "images" / "logo.png").write_bytes(b"png")
+    (root / "note.md").write_text("# Note\n", encoding="utf-8")
+    data = build_assets(root, [{"source_path": "note.md", "path": "note.html"}])
+    assert "sphinx/images/logo.png" not in data["assets"]
+    assert "sphinx/images/logo.png" not in data["orphans"]
+
+
+def test_nmrignore_slash_pattern_is_root_relative(tmp_path):
+    from notemanager.assets import build_assets
+
+    root = tmp_path / "proj"
+    (root / "_static").mkdir(parents=True)
+    (root / "sub" / "_static").mkdir(parents=True)
+    (root / ".nmrignore").write_text("_static/*.*\n", encoding="utf-8")
+    (root / "_static" / "ignored.png").write_bytes(b"png")
+    (root / "sub" / "_static" / "kept.png").write_bytes(b"png")
+    data = build_assets(root, [])
+    assert "_static/ignored.png" not in data["assets"]
+    assert "sub/_static/kept.png" in data["assets"]
+
+
+def test_list_assets_and_allow_deleting_referenced_image(tmp_path):
+    root = tmp_path / "proj"
+    (root / "sub" / "_static").mkdir(parents=True)
+    image = root / "sub" / "_static" / "diagram.png"
+    image.write_bytes(b"png")
+    (root / "sub" / "note.md").write_text(
+        "![d](_static/diagram.png)\n", encoding="utf-8"
+    )
+    builder.full_build(root)
+    daemon = _daemon(root)
+    listed = daemon.list_assets(0)
+    assert listed["ok"] is True
+    item = [x for x in listed["items"] if x["path"] == "sub/_static/diagram.png"][0]
+    assert item["reference_count"] == 1
+    result = daemon.trash_orphan_assets(
+        0, ["sub/_static/diagram.png"], allow_referenced=True
+    )
+    assert result["ok"] is True
+    assert not image.exists()
+
+
+def test_set_image_width_modifies_only_markdown_image(tmp_path):
+    root = tmp_path / "proj"
+    (root / "_static").mkdir(parents=True)
+    (root / "_static" / "a.png").write_bytes(b"png")
+    note = root / "note.md"
+    note.write_text(
+        "# T\n\n:dtag:`keep`\n\n![alt](_static/a.png){width=300px .wide}\n\n尾注\n",
+        encoding="utf-8",
+    )
+    builder.full_build(root)
+    daemon = _daemon(root)
+    result = daemon.set_image_width(0, "note.md", "_static/a.png", 480, 0)
+    assert result["ok"] is True
+    text = note.read_text(encoding="utf-8")
+    assert "width=480px" in text
+    assert ":dtag:`keep`" in text
+    assert ".wide" in text
+    assert "尾注" in text
+
+
+def test_set_image_width_preserves_rst_docinfo(tmp_path):
+    root = tmp_path / "proj"
+    (root / "_static").mkdir(parents=True)
+    (root / "_static" / "a.png").write_bytes(b"png")
+    note = root / "note.rst"
+    note.write_text(
+        "T\n=\n\n:Author: Me\n:dtag:`keep`\n\n"
+        ".. image:: _static/a.png\n   :alt: A\n\n正文\n",
+        encoding="utf-8",
+    )
+    builder.full_build(root)
+    daemon = _daemon(root)
+    result = daemon.set_image_width(0, "note.rst", "_static/a.png", 480, 0)
+    assert result["ok"] is True
+    text = note.read_text(encoding="utf-8")
+    assert ":width: 480px" in text
+    assert ":Author: Me" in text
+    assert ":dtag:`keep`" in text
+    assert ":alt: A" in text
+    assert "正文" in text

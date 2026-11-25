@@ -434,6 +434,7 @@ def _write_html(html_dir, fi, rendered, ref_labels, ui_plugin: UiPluginBundle):
         extra_css_files=ui_plugin.css_files,
         extra_js_files=ui_plugin.js_files,
         project_id=_project_id(html_dir.parent.parent),
+        project_name=Path(html_dir.parent.parent).name,
     )
     html_path.write_text(full_html, encoding="utf-8")
 
@@ -875,6 +876,7 @@ def _ensure_overview_assets(html_dir) -> None:
         or "__nmSuppressBuildReload" not in filetree_js
         or "__nmSuppressBuildReload" not in editor_js
         or "import_asset" not in editor_js
+        or "nm-source-reference" not in editor_js
         or "__nmSuppressBuildReload" not in js
         or "nmExitSplit" not in js
         or "NM_SPLIT_HOTKEY" not in js
@@ -930,6 +932,7 @@ def _generate_landing_page(html_dir, documents, ui_plugin=None, overview_data=No
         extra_css_files=ui_plugin.css_files,
         extra_js_files=list(ui_plugin.js_files) + ["nm-overview.js"],
         project_id=_project_id(html_dir.parent.parent),
+        project_name=project_name,
     )
     (html_dir / "index.html").write_text(full_html, encoding="utf-8")
 
@@ -1229,6 +1232,10 @@ body.nm-note-open { overflow: hidden; }
 .nm-zoom-controls { display: flex; align-items: center; gap: 8px; margin: 10px 0; font-size: 12px; color: #607d8b; }
 .nm-zoom-controls input { flex: 1; }
 .nm-zoom-value { font-family: monospace; min-width: 55px; text-align: right; }
+.nm-zoom-apply { border: 1px solid #2e7d32; background: #2e7d32; color: #fff; border-radius: 4px;
+                 padding: 4px 9px; font-size: 12px; cursor: pointer; }
+.nm-zoom-apply:disabled { opacity: .55; cursor: wait; }
+.nm-zoom-apply-status { min-height: 17px; color: #c62828; font-size: 11px; margin-top: 4px; }
 .nm-zoom-stage { background: #f5f5f5; overflow: auto; padding: 10px; text-align: center; }
 .nm-zoom-image { display: inline-block; max-width: none; height: auto; }
 .nm-zoom-code { display: grid; grid-template-columns: 48px 1fr auto; align-items: center; gap: 6px;
@@ -1280,9 +1287,13 @@ body.nm-note-open { overflow: hidden; }
 .nm-annotate-export { z-index: 1300; }
 .nm-annotate-export-path { color: #37474f; font-family: monospace; font-size: 12px;
                            overflow-wrap: anywhere; margin: 4px 0; }
-.nm-export-undo-row { display: flex; justify-content: flex-end; margin-top: 8px; }
-.nm-export-undo { border: 1px solid #c62828; background: #fff; color: #c62828;
-                  border-radius: 4px; padding: 4px 9px; font-size: 12px; cursor: pointer; }
+.nm-export-desc { color: #455a64; font-size: 13px; line-height: 1.6; margin: 6px 0; }
+.nm-export-warning { color: #b26a00; background: #fff8e1; border: 1px solid #ffe0a3;
+                     border-radius: 4px; padding: 6px 8px; font-size: 12px; line-height: 1.5; }
+.nm-export-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 4px; }
+.nm-export-delete { border: 1px solid #c62828; background: #c62828; color: #fff;
+                    border-radius: 4px; padding: 5px 12px; cursor: pointer; }
+.nm-export-delete:disabled, .nm-export-actions button:disabled { opacity: .55; cursor: wait; }
 .nm-note-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(20, 20, 30, .42);
                    display: flex; align-items: flex-start; justify-content: center; padding-top: 14vh; }
 .nm-note-overlay[hidden] { display: none !important; }
@@ -1311,6 +1322,16 @@ body.nm-note-open { overflow: hidden; }
 .nm-note-danger:disabled { opacity: .55; cursor: default; }
 .nm-note-file { font-size: 13px; color: #263238; margin-top: 8px; overflow-wrap: anywhere; }
 .nm-import-hint { color: #78909c; font-size: 11px; line-height: 1.55; margin: 8px 0 0; }
+.nm-reference-dialog { width: min(720px, calc(100vw - 32px)); max-height: 88vh; overflow-y: auto; }
+.nm-reference-dialog .nm-note-actions { position: sticky; bottom: 0; background: #fff;
+                                        padding-top: 8px; padding-bottom: 2px; z-index: 1; }
+.nm-reference-filters { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.nm-reference-filters select, .nm-reference-filters input { border: 1px solid #cfd8dc; border-radius: 4px;
+                                                          padding: 5px 7px; font-size: 12px; }
+.nm-reference-filters select { min-width: 150px; }
+.nm-reference-filters input { flex: 1; min-width: 160px; }
+.nm-reference-list { max-height: 330px; overflow-y: auto; border: 1px solid #eceff1; border-radius: 5px;
+                     margin-top: 8px; }
 .nm-import-hint code { background: #eceff1; padding: 0 3px; border-radius: 2px; }
 #nm-import-file { padding: 4px 0; border: 0; background: transparent; font-size: 12px; }
 .nm-note-impact { font-size: 12px; color: #555; background: #f7f9fa; border: 1px solid #eceff1;
@@ -1345,7 +1366,10 @@ body.nm-note-open { overflow: hidden; }
                       margin: 9px 0; flex-wrap: wrap; }
 .nm-assets-all { font-size: 12px; color: #455a64; cursor: pointer; }
 .nm-assets-all input { vertical-align: middle; margin: 0 4px 0 0; }
-#nm-assets-trash { padding: 4px 9px; border-radius: 4px; font-size: 11px; }
+#nm-assets-trash, .nm-assets-insert { padding: 4px 9px; border-radius: 4px; font-size: 11px; }
+.nm-assets-insert { border: 1px solid #90caf9; background: #e3f2fd; color: #1565c0; cursor: pointer; }
+.nm-assets-insert:disabled { opacity: .5; cursor: default; }
+.nm-assets-status { min-height: 17px; margin-top: 7px; color: #2e7d32; font-size: 11px; }
 .nm-assets-list { max-height: 300px; overflow-y: auto; border: 1px solid #eceff1; border-radius: 5px; }
 .nm-assets-empty { padding: 16px 12px; color: #999; font-size: 12px; text-align: center; }
 .nm-asset-item { display: flex; align-items: center; gap: 9px; padding: 7px 9px;
