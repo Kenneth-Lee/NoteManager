@@ -41,6 +41,11 @@
     var resetBtn = document.getElementById('nm-dir-graph-scale-reset');
     var currentScale = 100;
     var autoFit = true;
+    if (scaleInput) {
+        // Keep the control usable even when an old cached page has min=50.
+        scaleInput.min = '10';
+        scaleInput.step = '5';
+    }
 
     function esc(s) {
         return String(s == null ? '' : s)
@@ -322,10 +327,24 @@
         var vb = graph.viewBox && graph.viewBox.baseVal;
         var wrap = graph.parentElement;
         if (!vb || !vb.height || !wrap) return 100;
-        var availW = Math.max(200, wrap.clientWidth - 16);
-        var availH = Math.max(200, window.innerHeight * 0.8 - 16);
+        var style = window.getComputedStyle(wrap);
+        var padX = (parseFloat(style.paddingLeft) || 0) +
+                   (parseFloat(style.paddingRight) || 0);
+        var padY = (parseFloat(style.paddingTop) || 0) +
+                   (parseFloat(style.paddingBottom) || 0);
+        // Leave a small margin so percentage rounding and a scrollbar cannot
+        // clip the last node/label.
+        var availW = Math.max(100, wrap.clientWidth - padX - 12);
+        var availH = Math.max(100, (wrap.clientHeight || window.innerHeight * 0.8) - padY - 12);
         var fitW = Math.min(availW, availH * (vb.width / vb.height));
-        return Math.max(50, Math.min(100, Math.round(fitW / availW * 100)));
+        var pct = Math.round(fitW / availW * 100);
+        // Do not stretch a tiny graph (a root plus one child) until it fills a
+        // wide page.  Graph units are already roughly pixel-sized; allowing
+        // 2-5x enlargement makes the root circle huge and the labels clumsy.
+        // Large graphs can still use the full available width/height.
+        var naturalLimit = (vb.width * 1.5) / availW * 100;
+        pct = Math.min(pct, naturalLimit);
+        return Math.max(10, Math.min(100, Math.floor(pct / 5) * 5));
     }
 
     function updateNav() {
@@ -493,7 +512,12 @@
         savedAuto = localStorage.getItem('nmGraphAuto');
     } catch (e) {}
     autoFit = savedAuto === '1' || !savedScale;
-    var initialScale = savedScale ? parseInt(savedScale, 10) : fitValue();
-    if (!(initialScale >= 50 && initialScale <= 300)) initialScale = 100;
+    var initialScale;
+    if (autoFit) {
+        initialScale = fitValue();
+    } else {
+        initialScale = savedScale ? parseInt(savedScale, 10) : 100;
+    }
+    if (!(initialScale >= 10 && initialScale <= 300)) initialScale = 100;
     applyScale(initialScale);
 })();

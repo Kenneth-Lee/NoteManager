@@ -13,8 +13,35 @@ from notemanager.scanner import FileInfo, scan_directory
 
 logger = logging.getLogger(__name__)
 
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2
 SCAN_MANIFEST_NAME = "scan_manifest.json"
+
+
+def runtime_fingerprint() -> str:
+    """Fingerprint the renderer/runtime code so a daemon restart after a code
+    change invalidates the startup short-circuit.
+
+    Third-party bundles (mermaid, KaTeX, CodeMirror, fonts) are intentionally
+    excluded; they do not change during normal development and are large.
+    """
+    root = Path(__file__).resolve().parent
+    h = hashlib.sha256()
+    paths: list[Path] = []
+    paths.extend(sorted(root.rglob("*.py")))
+    assets = root / "renderer" / "assets"
+    if assets.is_dir():
+        paths.extend(sorted(assets.glob("nm-*.js")))
+        paths.extend(sorted(assets.glob("preformatted.css")))
+    for path in paths:
+        try:
+            rel = path.relative_to(root).as_posix()
+            data = path.read_bytes()
+        except OSError:
+            continue
+        h.update(rel.encode("utf-8"))
+        h.update(b"\0")
+        h.update(hashlib.sha256(data).digest())
+    return h.hexdigest()
 
 
 def build_manifest_payload(project_root: Path, files: list[FileInfo]) -> dict:
@@ -42,6 +69,7 @@ def build_manifest_payload(project_root: Path, files: list[FileInfo]) -> dict:
         "max_mtime_ns": max_mtime_ns,
         "root_anchor": root_anchor,
         "engine": f"notemanager-{__version__}",
+        "runtime_fingerprint": runtime_fingerprint(),
     }
 
 

@@ -881,7 +881,7 @@ def render_directory_overview(overview: dict | None) -> str:
         "</div>"
         '<div class="nm-dir-graph-tools">'
         '<label for="nm-dir-graph-scale">比例</label>'
-        '<input id="nm-dir-graph-scale" type="range" min="50" max="300" step="10" value="100">'
+        '<input id="nm-dir-graph-scale" type="range" min="10" max="300" step="5" value="100">'
         '<span id="nm-dir-graph-scale-label">100%</span>'
         '<button id="nm-dir-graph-scale-fit" type="button">适应</button>'
         '<button id="nm-dir-graph-scale-reset" type="button">重置</button>'

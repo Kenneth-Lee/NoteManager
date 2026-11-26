@@ -30,7 +30,12 @@ from notemanager.protocol import (
     use_unix_socket,
 )
 from notemanager.builder import full_build
-from notemanager.scan_manifest import MANIFEST_VERSION, live_payload_and_files, read_scan_manifest
+from notemanager.scan_manifest import (
+    MANIFEST_VERSION,
+    live_payload_and_files,
+    read_scan_manifest,
+    runtime_fingerprint,
+)
 from notemanager.watcher import start_watcher
 from notemanager.watcher import suppress_path
 from notemanager.web import broadcaster, notify_event
@@ -397,20 +402,14 @@ def _need_rebuild_on_startup(directory: str | Path) -> bool:
 
     saved = read_scan_manifest(nm_dir)
     if saved is not None and int(saved.get("version", -1)) == MANIFEST_VERSION:
-        try:
-            root_stat = root.stat()
-            r_ns = getattr(root_stat, "st_mtime_ns", int(root_stat.st_mtime * 1_000_000_000))
-            root_anchor = f"{r_ns}:{root_stat.st_ino}"
-            if (
-                root_anchor == saved.get("root_anchor")
-                and int(saved.get("file_count", -1)) == built_file_count
-            ):
-                return False
-        except (OSError, ValueError, TypeError):
-            pass
+        if saved.get("runtime_fingerprint") != runtime_fingerprint():
+            return True
 
+    # A directory mtime only changes when entries are added/removed.  Editing
+    # an existing note, or replacing a renderer asset, must also invalidate the
+    # cold-start shortcut.  The scan is cheap relative to a full build.
     try:
-        live, files = live_payload_and_files(root)
+        live, _files = live_payload_and_files(root)
     except Exception:
         return True
 
@@ -428,10 +427,10 @@ def _need_rebuild_on_startup(directory: str | Path) -> bool:
 
     if live["file_count"] != built_file_count:
         return True
-    if not files:
+    if not _files:
         return False
 
-    return any(datetime.datetime.fromtimestamp(f.mtime) > last_build for f in files)
+    return any(datetime.datetime.fromtimestamp(f.mtime) > last_build for f in _files)
 
 
 class NoteManagerDaemon:
