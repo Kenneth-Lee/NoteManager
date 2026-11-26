@@ -73,7 +73,7 @@ def _annotation_svg_error(text: str) -> str | None:
 # A main page that disconnects (navigation/reload) keeps its role for a short
 # grace period so a normal page transition does not hand the role to another tab.
 WEB_MAIN_GRACE_SECONDS = 3.0
-_WEB_CLIENT_ID_RE = re.compile(r"^nm-[A-Za-z0-9_-]{4,40}$")
+_WEB_CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 
 
 def _temp_renderer_fingerprint() -> str:
@@ -484,6 +484,8 @@ class NoteManagerDaemon:
         self._main_id: str | None = None
         self._main_disconnected_since: float | None = None
         self._load_web_state()
+        self._stale_dirs: dict[str, str] = {}
+        self._stale_dirs_lock = threading.Lock()
 
     # ---- Web page (SSE client) registry ---------------------------------
     @staticmethod
@@ -519,6 +521,52 @@ class NoteManagerDaemon:
             if client_id != self._main_id and broadcaster.get_client(client_id) is None:
                 return client_id
         return "nm-" + secrets.token_hex(8)
+
+    def _new_page_with_optional_id(
+        self,
+        cmd: dict,
+        target_url: str,
+        event_type: str,
+        event_payload: dict,
+    ) -> dict:
+        """Create a new page, or reuse a connected page with the requested id.
+
+        ``new_id`` is optional.  Without it a random id is generated, preserving
+        the old ``--new`` behavior.  With it, an already connected page is
+        navigated in place; otherwise the id is embedded in the new page URL.
+        """
+        requested = str(cmd.get("new_id", "") or "").strip()
+        if requested and not self._valid_web_client_id(requested):
+            return {
+                "ok": False,
+                "error": "页面 id 只能包含字母、数字、下划线和连字符，长度 1-40",
+            }
+
+        if requested:
+            with self._web_lock:
+                existing = broadcaster.get_client(requested)
+            if existing is not None:
+                if broadcaster.send_to(requested, event_type, event_payload):
+                    return {
+                        "ok": True,
+                        "message": f"已发送到已有页面: {requested}",
+                        "url": target_url,
+                        "web_port": self.web_port,
+                        "delivered": True,
+                        "target_client": requested,
+                    }
+
+        new_id = requested or self._new_web_client_id()
+        new_url = self._append_query_param(target_url, "nm_client_id", new_id)
+        return {
+            "ok": True,
+            "message": f"已在新页面打开: {target_url}",
+            "url": new_url,
+            "new_url": new_url,
+            "new_client_id": new_id,
+            "web_port": self.web_port,
+            "delivered": False,
+        }
 
     @staticmethod
     def _normalize_web_path(path: str) -> str:
@@ -987,6 +1035,10 @@ class NoteManagerDaemon:
                     {"directory": str(Path(d).resolve())},
                 )
             job["success"] = True
+            with self._stale_dirs_lock:
+                for d in targets:
+                    self._stale_dirs.pop(str(Path(d).resolve()), None)
+                    self._stale_dirs.pop(str(d), None)
         except Exception as e:
             logger.exception("重建任务失败")
             job["success"] = False
@@ -1571,6 +1623,11 @@ class NoteManagerDaemon:
             else:
                 status_info[d] = {"error": "尚未构建"}
         config_pending = self.get_pending_config_changes()
+        with self._stale_dirs_lock:
+            stale_projects = [
+                {"directory": d, "reason": reason}
+                for d, reason in sorted(self._stale_dirs.items())
+            ]
         now = time.time()
         with self._web_lock:
             self._maybe_elect_main_locked(now)
@@ -1600,6 +1657,7 @@ class NoteManagerDaemon:
                 "config_pending": config_pending["changed"],
                 "config_pending_fields": config_pending["fields"],
                 "config_pending_error": config_pending["error"],
+                "stale_projects": stale_projects,
             },
         }
 
@@ -1627,19 +1685,13 @@ class NoteManagerDaemon:
             payload["open_url"] = open_url
 
         if cmd.get("new"):
-            with self._web_lock:
-                new_id = self._new_web_client_id()
             base_url = open_url or f"/p/{idx}/?q={quote(str(query), safe='')}"
-            new_url = self._append_query_param(base_url, "nm_client_id", new_id)
-            return {
-                "ok": True,
-                "message": f"已在新页面打开搜索: {query}",
-                "url": new_url,
-                "new_url": new_url,
-                "new_client_id": new_id,
-                "web_port": self.web_port,
-                "delivered": False,
-            }
+            result = self._new_page_with_optional_id(
+                cmd, base_url, "cli_search", payload
+            )
+            if result.get("ok") and result.get("new_client_id"):
+                result["message"] = f"已在新页面打开搜索: {query}"
+            return result
 
         raw_target = str(cmd.get("target", "") or "").strip()
         now = time.time()
@@ -1739,18 +1791,9 @@ class NoteManagerDaemon:
             message = f"已临时渲染: {target_url}"
 
         if cmd.get("new"):
-            with self._web_lock:
-                new_id = self._new_web_client_id()
-            new_url = self._append_query_param(target_url, "nm_client_id", new_id)
-            return {
-                "ok": True,
-                "message": f"已在新页面打开: {target_url}",
-                "url": new_url,
-                "new_url": new_url,
-                "new_client_id": new_id,
-                "web_port": self.web_port,
-                "delivered": False,
-            }
+            return self._new_page_with_optional_id(
+                cmd, target_url, "cli_view", {"url": target_url}
+            )
 
         raw_target = str(cmd.get("target", "") or "").strip()
         now = time.time()
@@ -3476,8 +3519,13 @@ class NoteManagerDaemon:
                 logger.info("恢复监控: %s", directory)
                 try:
                     if _need_rebuild_on_startup(directory):
-                        logger.info("检测到变更，执行重建: %s", directory)
-                        full_build(directory)
+                        reason = "启动时检测到源文件或渲染资源变化"
+                        with self._stale_dirs_lock:
+                            self._stale_dirs[directory] = reason
+                        logger.warning(
+                            "检测到变更，未自动重建；请执行 nmr rebuild: %s",
+                            directory,
+                        )
                     else:
                         logger.info("未检测到变更，跳过重建: %s", directory)
                     observer = start_watcher(directory)

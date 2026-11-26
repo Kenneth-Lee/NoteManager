@@ -311,6 +311,11 @@ def wrap_html(body: str, title: str, html_rel_path: str,
            border-bottom: 1px solid #e0e0e0; background: #fafafa; padding: 0 20px; flex: 0 0 auto; }}
 .nm-tabs-left {{ display: flex; align-items: center; gap: 0; }}
 .nm-tabs-right {{ display: flex; align-items: center; gap: 10px; }}
+.nm-page-id {{ max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+              font-size: 11px; color: #607d8b; background: #f5f7f8; border: 1px solid #dde5e8;
+              border-radius: 10px; padding: 3px 9px; cursor: pointer; user-select: none; }}
+.nm-page-id:hover {{ background: #e8f1f5; border-color: #b0bec5; color: #37474f; }}
+.nm-page-id.copied {{ background: #e8f5e9; border-color: #a5d6a7; color: #2e7d32; }}
 .nm-split-btn {{ font-size: 12px; color: #1565c0; border: 1px solid #bbdefb; background: #e3f2fd;
                  border-radius: 4px; padding: 4px 10px; cursor: pointer; }}
 .nm-split-btn:hover {{ background: #bbdefb; color: #0d47a1; }}
@@ -501,6 +506,8 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <button class="nm-tab" data-tab="warnings">诊断</button>
 </div>
 <div class="nm-tabs-right">
+<span id="nm-page-id" class="nm-page-id" role="button" tabindex="0"
+      title="当前浏览器标签页 ID；点击复制，可用于 nmr view/search --id">页面: …</span>
 <span id="nm-reading-controls" class="nm-reading-controls"></span>
 {delete_current_button}
 <button class="nm-split-btn" id="nm-open-external" type="button" title="在外部编辑器中打开当前源文件（默认 gvim；Ctrl/⌘+Alt+E）" style="display:none">外部编辑</button>

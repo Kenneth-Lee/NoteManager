@@ -20,7 +20,11 @@ from notemanager.renderer.txt_renderer import render_txt
 from notemanager.renderer.template import wrap_html
 from notemanager.ref_resolver import extract_labels, resolve_references
 from notemanager.index_body import extract_render_panel_inner_html
-from notemanager.indexer import build_index, extract_rst_index_directives
+from notemanager.indexer import (
+    build_index,
+    extract_rst_index_directives,
+    extract_rst_title_index_roles,
+)
 from notemanager.indexer import extract_dtags_from_sources
 from notemanager.scanner import is_ignored_path
 from notemanager.web_client_js import CLIENT_BOOTSTRAP_JS
@@ -148,6 +152,7 @@ def full_build(
 
     # Extract .. index:: directives from RST sources
     rst_index_dirs = extract_rst_index_directives(files)
+    rst_title_index_roles = extract_rst_title_index_roles(files)
 
     # 文档标签：以源码抽取为准（含 Markdown #标签、reST :dtag:），并与渲染结果合并；
     # 避免仅依赖 render_md 返回值时，旧安装或未同步代码导致 rebuild 后 dtag 索引为空。
@@ -179,7 +184,10 @@ def full_build(
 
     # Build search index (includes labels and index directives)
     p("  构建搜索索引…")
-    index_count = build_index(documents, index_dir, ref_labels, rst_index_dirs, all_dtags)
+    index_count = build_index(
+        documents, index_dir, ref_labels, rst_index_dirs, all_dtags,
+        rst_title_index_roles,
+    )
 
     # Write ref_labels
     (index_dir / "ref_labels.json").write_text(
@@ -291,6 +299,7 @@ def update_file(
 
     # Re-extract .. index:: directives
     rst_index_dirs = extract_rst_index_directives(files)
+    rst_title_index_roles = extract_rst_title_index_roles(files)
 
     # Re-extract dtags from source
     dtags_per_doc = extract_dtags_from_sources(files)
@@ -320,7 +329,10 @@ def update_file(
             })
 
     index_dir.mkdir(parents=True, exist_ok=True)
-    index_count = build_index(documents, index_dir, ref_labels, rst_index_dirs, dtags_per_doc)
+    index_count = build_index(
+        documents, index_dir, ref_labels, rst_index_dirs, dtags_per_doc,
+        rst_title_index_roles,
+    )
 
     # Write dtag index
     dtag_index = _build_dtag_index(dtags_per_doc)
@@ -381,6 +393,7 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
         project_root, files, with_candidates=True
     )
     rst_index_dirs = extract_rst_index_directives(files)
+    rst_title_index_roles = extract_rst_title_index_roles(files)
     dtags_per_doc = extract_dtags_from_sources(files)
 
     documents = []
@@ -398,7 +411,10 @@ def remove_file(project_root: str | Path, file_path: str | Path) -> None:
             })
 
     index_dir.mkdir(parents=True, exist_ok=True)
-    index_count = build_index(documents, index_dir, ref_labels, rst_index_dirs, dtags_per_doc)
+    index_count = build_index(
+        documents, index_dir, ref_labels, rst_index_dirs, dtags_per_doc,
+        rst_title_index_roles,
+    )
 
     (index_dir / "ref_labels.json").write_text(
         json.dumps(ref_labels, ensure_ascii=False, indent=2),

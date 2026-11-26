@@ -27,7 +27,25 @@ def runtime_fingerprint() -> str:
     root = Path(__file__).resolve().parent
     h = hashlib.sha256()
     paths: list[Path] = []
-    paths.extend(sorted(root.rglob("*.py")))
+    # Only modules that can affect generated HTML/index/static output should
+    # invalidate every project.  Changing daemon/CLI code should not force a
+    # full rebuild of all notes on the next `nmr start -r`.
+    for name in (
+        "builder.py",
+        "overview.py",
+        "scanner.py",
+        "indexer.py",
+        "assets.py",
+        "ref_resolver.py",
+        "web_client_js.py",
+        "web.py",
+    ):
+        path = root / name
+        if path.is_file():
+            paths.append(path)
+    renderer = root / "renderer"
+    if renderer.is_dir():
+        paths.extend(sorted(renderer.rglob("*.py")))
     assets = root / "renderer" / "assets"
     if assets.is_dir():
         paths.extend(sorted(assets.glob("nm-*.js")))

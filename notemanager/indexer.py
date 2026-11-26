@@ -177,6 +177,7 @@ def build_index(
     ref_labels: dict[str, str] | None = None,
     rst_index_directives: dict[str, list[str]] | None = None,
     dtags_per_doc: dict[str, list[str]] | None = None,
+    rst_title_index_roles: dict[str, list[str]] | None = None,
 ) -> None:
     """Build a categorized search index from rendered HTML documents.
 
@@ -188,6 +189,8 @@ def build_index(
             extracted from RST ``.. index::`` directives.
         dtags_per_doc: Mapping of rel_path -> list of dtag strings
             extracted from source before stripping.
+        rst_title_index_roles: Mapping of RST path -> inline index terms
+            appearing on section-title lines.
     """
     entries = []
     main_anchor_by_path: dict[str, str] = {}
@@ -230,6 +233,30 @@ def build_index(
                     "text": term.strip(),
                     "snippet": f"索引条目: {term.strip()}",
                 })
+
+    # Add index roles that docutils rendered as empty index-term spans
+    # (typically ``:index:`term``` on a section-title line).
+    if rst_title_index_roles:
+        seen_terms = {
+            (str(e.get("path", "")).split("#", 1)[0], str(e.get("text", "")).strip())
+            for e in entries
+            if e.get("type") == "index"
+        }
+        for path, terms in rst_title_index_roles.items():
+            html_path = str(Path(path).with_suffix(".html"))
+            main_anchor = main_anchor_by_path.get(html_path, "")
+            target = f"{html_path}#{main_anchor}" if main_anchor else html_path
+            for term in terms:
+                term = term.strip()
+                if term and (html_path, term) not in seen_terms:
+                    seen_terms.add((html_path, term))
+                    entries.append({
+                        "type": "index",
+                        "title": term,
+                        "path": target,
+                        "text": term,
+                        "snippet": f"索引条目: {term}",
+                    })
 
     # Add pre-extracted dtag entries
     if dtags_per_doc:
@@ -454,6 +481,42 @@ def extract_rst_index_directives(files) -> dict[str, list[str]]:
         except (OSError, UnicodeDecodeError):
             continue
         terms = _RST_INDEX_DIRECTIVE_RE.findall(content)
+        if terms:
+            result[str(fi.rel_path)] = terms
+    return result
+
+
+def extract_rst_title_index_roles(files) -> dict[str, list[str]]:
+    """Extract ``:index:`term``` roles used on RST section-title lines.
+
+    docutils renders an index role in a title as an empty ``index-term`` span
+    (the visible heading text is still the term), so the normal HTML-span
+    extraction cannot see it.  Mirror the role at source level so
+    ``index:term`` still finds the document.
+    """
+    result: dict[str, list[str]] = {}
+    for fi in files:
+        if fi.ext != ".rst":
+            continue
+        try:
+            content = fi.path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = content.splitlines()
+        terms: list[str] = []
+        for i, line in enumerate(lines):
+            if ":index:`" not in line or i + 1 >= len(lines):
+                continue
+            underline = lines[i + 1].strip()
+            if len(underline) < 2 or len(set(underline)) != 1:
+                continue
+            char = underline[0]
+            if char.isalnum() or char.isspace():
+                continue
+            for match in re.finditer(r":index:`([^`]+)`", line):
+                term = match.group(1).strip()
+                if term and term not in terms:
+                    terms.append(term)
         if terms:
             result[str(fi.rel_path)] = terms
     return result

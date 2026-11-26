@@ -144,6 +144,38 @@ def _resolve_windows_editor(parts: list[str]) -> list[str]:
     return parts
 
 
+def _print_stale_rebuild_hint() -> None:
+    """After an explicit start, tell the user if pages were left stale."""
+    if not is_daemon_running():
+        return
+    try:
+        resp = send_command(
+            {"cmd": "status"},
+            port=_get_daemon_port(),
+            timeout=3,
+            socket_path=_get_daemon_socket_path(),
+        )
+    except (ConnectionError, TimeoutError):
+        return
+    data = resp.get("data") if resp.get("ok") else None
+    if not isinstance(data, dict):
+        return
+    stale = data.get("stale_projects") or []
+    if not stale:
+        return
+    print("")
+    print("提示: 检测到工程文件或渲染资源有变化，启动时未自动重建：")
+    for item in stale:
+        if isinstance(item, dict):
+            path = item.get("directory", "")
+            reason = item.get("reason", "")
+            print(f"  - {Path(path).name}: {path}（{reason}）")
+        else:
+            print(f"  - {item}")
+    print("  请执行: nmr rebuild")
+    print("  或只重建指定工程: nmr rebuild -p <工程目录>")
+
+
 def cmd_start(args):
     if getattr(args, "restart", False):
         _restart_daemon(args)
@@ -155,6 +187,7 @@ def cmd_start(args):
         if web_port:
             print(f"Web UI: http://localhost:{web_port}")
         print("提示: 使用 nmr start --restart 重启")
+        _print_stale_rebuild_hint()
         return
     port, web_port = _startup_ports(
         getattr(args, "port", 0), getattr(args, "web_port", 0),
@@ -162,6 +195,7 @@ def cmd_start(args):
     daemon = NoteManagerDaemon(port=port, web_port=web_port)
     if not daemon.run_background():
         sys.exit(1)
+    _print_stale_rebuild_hint()
 
 
 def cmd_launch(args):
@@ -281,6 +315,7 @@ def _restart_daemon(args):
     daemon = NoteManagerDaemon(port=port, web_port=web_port)
     if not daemon.run_background():
         sys.exit(1)
+    _print_stale_rebuild_hint()
 
 
 def _format_age(timestamp) -> str:
@@ -372,6 +407,19 @@ def cmd_status(args):
                 )
         if default:
             print("  * = 默认工程")
+
+        stale = data.get("stale_projects") or []
+        if stale:
+            print("需要重建的工程:")
+            for item in stale:
+                if isinstance(item, dict):
+                    path = item.get("directory", "")
+                    reason = item.get("reason", "")
+                    print(f"  - {Path(path).name}: {path}（{reason}）")
+                else:
+                    print(f"  - {item}")
+            print("  提示: 执行 nmr rebuild")
+            print("  或只重建指定工程: nmr rebuild -p <工程目录>")
 
         clients = data.get("clients") or []
         main = data.get("main_client")
@@ -657,8 +705,10 @@ def cmd_search(args):
     payload: dict = {"cmd": "search", "query": args.query, "project": _resolve_project(args)}
     if getattr(args, "target", None):
         payload["target"] = args.target
-    if getattr(args, "new", False):
+    if getattr(args, "new", None) is not None:
         payload["new"] = True
+        if args.new:
+            payload["new_id"] = args.new
     try:
         resp = send_command(
             payload,
@@ -935,8 +985,10 @@ def cmd_view(args):
     payload = {"cmd": "view", "file": src}
     if getattr(args, "target", None):
         payload["target"] = args.target
-    if getattr(args, "new", False):
+    if getattr(args, "new", None) is not None:
         payload["new"] = True
+        if args.new:
+            payload["new_id"] = args.new
     try:
         resp = send_command(
             payload,
@@ -1125,8 +1177,10 @@ def main():
     search_p.add_argument("--project", "-p", help="指定工程 (编号或目录名)")
     search_target = search_p.add_mutually_exclusive_group()
     search_target.add_argument("--id", dest="target", help="发送到指定页面 id（可用唯一前缀）")
-    search_target.add_argument("--new", action="store_true",
-                               help="在新页面中打开搜索结果，不占用主页面")
+    search_target.add_argument(
+        "--new", nargs="?", const="", default=None, metavar="ID",
+        help="在新页面中打开搜索结果；可跟自定义 id，已存在则复用该页面",
+    )
     searche_p = subparsers.add_parser("searche", help="搜索并交互选择后进入目录或编辑")
     searche_p.add_argument(
         "query",
@@ -1137,8 +1191,10 @@ def main():
     view_p.add_argument("file", help="要查看的 md/rst/txt 文件路径")
     view_target = view_p.add_mutually_exclusive_group()
     view_target.add_argument("--id", dest="target", help="发送到指定页面 id（可用唯一前缀）")
-    view_target.add_argument("--new", action="store_true",
-                             help="在新页面中打开，不占用主页面")
+    view_target.add_argument(
+        "--new", nargs="?", const="", default=None, metavar="ID",
+        help="在新页面中打开；可跟自定义 id，已存在则复用该页面",
+    )
 
     check_p = subparsers.add_parser("check", help="检查文件或标准输入中的渲染语法问题")
     check_p.add_argument("file", nargs="?", help="要检查的文件路径（md/rst）。若使用 --stdin 可省略")

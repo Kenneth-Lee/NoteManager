@@ -8,7 +8,7 @@ pages.
 
 CLIENT_BOOTSTRAP_JS = r"""
 (function () {
-    var ID_RE = /^nm-[A-Za-z0-9_-]{4,40}$/;
+    var ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
     var id = '';
     try {
         var params = new URLSearchParams(window.location.search);
@@ -42,6 +42,50 @@ CLIENT_BOOTSTRAP_JS = r"""
     try { window.name = id; } catch (e) {}
     window.NM_CLIENT_ID = id;
 
+    function updatePageIdBadge(value) {
+        var badge = document.getElementById('nm-page-id');
+        if (!badge) return;
+        badge.setAttribute('data-page-id', value);
+        badge.textContent = '页面: ' + value;
+        badge.title = '页面 ID: ' + value + '（点击复制，可用于 nmr view/search --id）';
+    }
+    updatePageIdBadge(id);
+
+    var pageIdBadge = document.getElementById('nm-page-id');
+    if (pageIdBadge) {
+        var copyPageId = function () {
+            var value = pageIdBadge.getAttribute('data-page-id') || window.NM_CLIENT_ID || '';
+            if (!value) return;
+            var done = function () {
+                pageIdBadge.textContent = '已复制: ' + value;
+                pageIdBadge.classList.add('copied');
+                setTimeout(function () {
+                    pageIdBadge.textContent = '页面: ' + value;
+                    pageIdBadge.classList.remove('copied');
+                }, 900);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(value).then(done).catch(function () {});
+            } else {
+                var ta = document.createElement('textarea');
+                ta.value = value;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                try { document.execCommand('copy'); done(); } catch (e) {}
+                document.body.removeChild(ta);
+            }
+        };
+        pageIdBadge.addEventListener('click', copyPageId);
+        pageIdBadge.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                copyPageId();
+            }
+        });
+    }
+
     window.NMPingActive = function () {
         try {
             fetch('/api/client_active', {
@@ -73,6 +117,7 @@ CLIENT_BOOTSTRAP_JS = r"""
                 if (data && data.client_id && data.client_id !== window.NM_CLIENT_ID) {
                     window.NM_CLIENT_ID = data.client_id;
                     try { window.name = data.client_id; } catch (err) {}
+                    updatePageIdBadge(data.client_id);
                 }
             } catch (err) {}
         });

@@ -203,20 +203,26 @@ nmr view <文件路径.md|.rst|.txt>
 
 ### 多页面与主页面
 
-每个浏览器 tab 会在 `window.name` 里保存一个稳定的页面 id（`nm-...`），刷新/跳转后不变；新开的 tab 是新的从页面。
+每个浏览器 tab 会在 `window.name` 里保存一个稳定的页面 id，刷新/跳转后不变；新开的 tab 是新的从页面。页面 id 可以用自动生成的随机值，也可以在 `--new` 后指定一个容易记忆的名字。
 
 - **主页面**：第一个打开的页面。`nmr view` / `nmr search` 默认只发给它，不再影响其他页面。
 - **从页面**：后续打开的页面，默认不接收命令；可用 `nmr view --id <id>`、`nmr search --id <id>` 精确指定。
 - **新页面**：`nmr view --new` / `nmr search --new` 会新开 tab，并打印新页面 id，后续可用 `--id` 继续控制它。
+- **命名页面**：`nmr view 文件 --new notes` 会使用 `notes` 作为页面 id；如果该 id 已经连接，就在那个页面中打开，不再新建 tab；不存在才新建。
+- 页面 id 可包含字母、数字、下划线和连字符，长度 1-40；推荐把 `--new` 放在文件/关键词之后，或写成 `--new=notes`，避免可选参数把位置参数吞掉。
+- 当前页面右上角会显示 `页面: <id>`；点击即可复制，不必再用 `nmr status` 查找 id。
 - **主页面关闭/刷新**：刷新或跳转有 3 秒宽限期，同一 id 重连后仍是主页面；真正关闭后，最近活动的从页面自动继任。也可用 `nmr main <id>` 手动切换。
 - `nmr status` 会列出所有页面 id、所属工程、当前路径和主页面标记；`nmr status --json` 输出机器可读格式。
 
 ```bash
 nmr status
-nmr view --id a1b2c3 notes/design.md
-nmr view --new notes/design.md
-nmr search --id a1b2c3 关键词
-nmr main d4e5f6
+nmr view notes/design.md --new notes
+nmr view notes/design.md --new=notes
+nmr view other.md --id notes
+
+nmr search 关键词 --new search
+nmr search 关键词 --id search
+nmr main search
 ```
 
 > 升级后已有的工程页需要执行一次 `nmr rebuild` 才会加载新的页面 id 脚本；临时页会自动刷新。
