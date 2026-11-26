@@ -4,6 +4,7 @@ import json
 import re
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 try:
     from pygments.formatters import HtmlFormatter
@@ -90,6 +91,19 @@ def wrap_html(body: str, title: str, html_rel_path: str,
         _escape(project_name) + '</a><span class="nm-crumb-sep">›</span>'
         if project_name else ""
     )
+    dir_crumb_html = ""
+    if project_name:
+        current_parts: list[str] = []
+        for part in Path(html_rel_path).parent.parts:
+            if part in ("", "."):
+                continue
+            current_parts.append(str(part))
+            dir_path = "/".join(current_parts)
+            dir_href = f"{home_href}#nm-dir={quote(dir_path, safe='')}"
+            dir_crumb_html += (
+                f'<a href="{_escape(dir_href)}" title="打开目录 {_escape(dir_path)}">'
+                f'{_escape(str(part))}</a><span class="nm-crumb-sep">›</span>'
+            )
     warnings = warnings or []
     dtags = dtags or []
     extra_css_files = extra_css_files or []
@@ -235,7 +249,8 @@ def wrap_html(body: str, title: str, html_rel_path: str,
                background: #f8f9fa; border-right: 1px solid #e0e0e0; overflow-y: auto;
                z-index: 50; display: flex; flex-direction: column; }}
 .nm-sidebar-crumbs {{ padding: 10px 14px 8px; border-bottom: 1px solid #e0e0e0; font-size: 12px;
-                      display: flex; align-items: center; gap: 5px; min-width: 0; }}
+                      display: flex; align-items: center; gap: 5px; row-gap: 4px;
+                      flex-wrap: wrap; min-width: 0; }}
 .nm-sidebar-crumbs a {{ color: #1565c0; text-decoration: none; font-weight: 600; white-space: nowrap; }}
 .nm-sidebar-crumbs a:hover {{ text-decoration: underline; }}
 .nm-crumb-sep {{ color: #b0bec5; flex: 0 0 auto; }}
@@ -259,12 +274,20 @@ def wrap_html(body: str, title: str, html_rel_path: str,
 .nm-search-help:hover {{ color: #0066cc; }}
 .nm-search-help-popup {{ display: none; position: absolute; top: 100%; left: 12px; right: 12px;
     background: white; border: 1px solid #ddd; border-radius: 6px; padding: 12px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 200; font-size: 12px; color: #333; line-height: 1.6; }}
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 200; font-size: 12px; color: #333; line-height: 1.6;
+    max-height: 72vh; overflow-y: auto; }}
 .nm-search-help-popup.show {{ display: block; }}
 .nm-search-help-popup h4 {{ margin: 0 0 6px 0; font-size: 13px; color: #333; }}
 .nm-search-help-popup code {{ background: #f0f0f0; padding: 1px 4px; border-radius: 2px; font-size: 11px; }}
 .nm-search-help-popup ul {{ margin: 4px 0; padding-left: 16px; }}
 .nm-search-help-popup li {{ margin: 2px 0; }}
+.nm-regex-help {{ margin-top: 8px; border-top: 1px solid #eee; padding-top: 7px; }}
+.nm-regex-help summary {{ cursor: pointer; color: #1565c0; font-weight: 600; }}
+.nm-regex-table {{ width: 100%; border-collapse: collapse; margin: 6px 0 2px; font-size: 11px; }}
+.nm-regex-table th, .nm-regex-table td {{ border-bottom: 1px solid #eee; padding: 3px 4px;
+    text-align: left; vertical-align: top; }}
+.nm-regex-table th {{ color: #777; font-weight: 500; }}
+.nm-regex-table code {{ white-space: nowrap; }}
 .nm-search-shortcut-hint {{ display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
     margin-top: 6px; padding: 4px 6px; background: #f5f9ff; border: 1px solid #e1ecf8;
     border-radius: 4px; color: #607d8b; font-size: 11px; }}
@@ -452,7 +475,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <div class="nm-sidebar-crumbs">
 <a href="/" title="返回控制台">控制台</a>
 <span class="nm-crumb-sep">›</span>
-{project_crumb_html}<span class="nm-crumb-doc" title="{_escape(title)}">{_escape(doc_label)}</span>
+{project_crumb_html}{dir_crumb_html}<span class="nm-crumb-doc" title="{_escape(title)}">{_escape(doc_label)}</span>
 </div>
 <div class="nm-sidebar-tools">
 <button type="button" id="nm-new-root" class="nm-new-note-btn" title="在项目根目录新建笔记">＋ 新建</button>
@@ -467,12 +490,31 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <ul>
 <li><code>关键词</code> — 搜索所有类型</li>
 <li><code>chapter:关键词</code> — 仅搜索章节标题</li>
+<li><code>chapter:^pi$</code> — 章节标题完全等于 pi（区分大小写时仍忽略大小写）</li>
+<li><code>chapter:&#92;bpi&#92;b</code> — 章节标题中的全词 pi；<code>&#92;bpi&#92;b</code> 可搜索所有类型</li>
 <li><code>label:关键词</code> — 仅搜索锚点标签</li>
 <li><code>index:关键词</code> — 仅搜索索引条目</li>
 <li><code>dtag:关键词</code> — 仅搜索文档标签（reST 用 <code>:dtag:`标签`</code>；Markdown 用行内 <code>#标签</code>，须跟在空格或 <code>，。：</code> 等标点之后）</li>
 <li><code>grep:正则</code> — 在当前工程内全局扫描源码（按 Enter 触发，结果逐步更新）</li>
 </ul>
 <div style="margin-top:6px;color:#888;">支持正则；可写多条件（空格分隔，AND），如 <code>dtag:数学 grep:\"pi.*=\"</code>；值含空格请用引号。带映射条件键入即查；含 <code>grep:</code> 时按 Enter 执行并渐进返回结果。</div>
+<details class="nm-regex-help">
+<summary>正则表达式速查</summary>
+<p style="margin:4px 0;color:#888;">默认忽略大小写。搜索框会保留反斜杠转义；引号只用于包含空格，不会自动变成全词匹配。</p>
+<table class="nm-regex-table">
+<tr><th>写法</th><th>含义</th><th>例子</th></tr>
+<tr><td><code>pi</code></td><td>包含子串 pi</td><td><code>chapter:pi</code> 会命中 acpi、API</td></tr>
+<tr><td><code>^pi$</code></td><td>整个字段就是 pi</td><td><code>chapter:^pi$</code></td></tr>
+<tr><td><code>&#92;bpi&#92;b</code></td><td>完整单词 pi</td><td><code>chapter:&#92;bpi&#92;b</code></td></tr>
+<tr><td><code>pi|acpi</code></td><td>二选一</td><td><code>chapter:pi|acpi</code></td></tr>
+<tr><td><code>pi.*</code> / <code>.*pi</code></td><td>以 pi 开头 / 结尾</td><td><code>chapter:^pi.*</code></td></tr>
+<tr><td><code>[Pp]i</code></td><td>字符集合</td><td><code>chapter:[Pp]i</code></td></tr>
+<tr><td><code>(pi|acpi)</code></td><td>分组</td><td><code>chapter:(pi|acpi)</code></td></tr>
+<tr><td><code>&#92;d+</code> / <code>&#92;s+</code></td><td>数字 / 空白</td><td><code>grep:&#92;d+</code></td></tr>
+<tr><td><code>&#92;.</code></td><td>字面点号</td><td><code>grep:pi&#92;.</code></td></tr>
+</table>
+<p style="margin:4px 0 0;color:#888;">&#92;b 是 ASCII 单词边界，对中文通常不起作用；中文关键词直接写即可。</p>
+</details>
 <h4 style="margin-top:10px;">快捷键</h4>
 <ul>
 <li><code>Ctrl/⌘ K</code> — 打开/关闭命令面板</li>

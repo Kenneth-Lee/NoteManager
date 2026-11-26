@@ -381,8 +381,6 @@ class WebHandler(BaseHTTPRequestHandler):
         elif path == "/api/add_async":
             directory = data.get("directory", "")
             resp = self.daemon_ref.handle_add_with_progress({"directory": directory})
-        elif path == "/api/pick_directory":
-            resp = self.daemon_ref.pick_directory()
         elif path == "/api/remove":
             directory = data.get("directory", "")
             resp = self.daemon_ref.remove_directory(directory)
@@ -1074,11 +1072,6 @@ def _render_panel(daemon_ref) -> str:
 """
 
     pending_html = _pending_config_banner(daemon_ref)
-    pick_button_html = (
-        '<button type="button" id="pick-dir-btn" onclick="pickDirectory()">浏览...</button>'
-        if os.name == "nt" else ""
-    )
-    pick_hint = "，或点击「浏览」选择" if os.name == "nt" else ""
     return f"""\
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -1191,8 +1184,7 @@ td a:hover {{ text-decoration: underline; }}
 <div class="card">
 <h2>添加目录</h2>
 <div class="add-form">
-  <input type="text" id="dir-input" placeholder="输入目录路径{pick_hint}...">
-{pick_button_html}
+  <input type="text" id="dir-input" placeholder="输入目录绝对路径，例如 D:\\Notes">
   <button type="button" id="add-dir-btn" onclick="addProject()">添加</button>
 </div>
 <div id="add-status" class="add-status"></div>
@@ -1250,34 +1242,11 @@ function setAddStatus(msg, isError) {{
     el.className = 'add-status' + (isError ? ' error' : '');
 }}
 
-function pickDirectory() {{
-    var btn = document.getElementById('pick-dir-btn');
-    btn.disabled = true;
-    showToast('正在打开目录选择窗口…', 5000);
-    fetch('/api/pick_directory', {{
-        method: 'POST',
-        headers: {{'Content-Type': 'application/json'}},
-        body: '{{}}'
-    }}).then(function(r) {{ return r.json(); }}).then(function(d) {{
-        if (d.ok && d.path) {{
-            document.getElementById('dir-input').value = d.path;
-            document.getElementById('dir-input').focus();
-            showToast('已选择目录');
-        }} else if (d.error && d.error !== '已取消') {{
-            showToast('错误: ' + d.error, 5000);
-        }}
-    }}).catch(function(e) {{
-        showToast('错误: ' + (e.message || e), 5000);
-    }}).finally(function() {{
-        btn.disabled = false;
-    }});
-}}
-
 function addProject() {{
     var input = document.getElementById('dir-input');
     var dir = input.value.trim();
     if (!dir) {{
-        setAddStatus('请输入目录路径，或点击「浏览...」选择目录。', true);
+        setAddStatus('请输入目录绝对路径。', true);
         showToast('请输入目录路径', 3000);
         return;
     }}

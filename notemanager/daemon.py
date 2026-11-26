@@ -1195,39 +1195,6 @@ class NoteManagerDaemon:
         tail = "\n".join(text.splitlines()[-lines:])
         return {"ok": True, "path": str(path), "text": tail}
 
-    def pick_directory(self) -> dict:
-        """Open a native folder picker on the machine running the daemon."""
-        if os.name == "nt":
-            script = (
-                "$ErrorActionPreference = 'Stop'; "
-                "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; "
-                "$OutputEncoding = [Console]::OutputEncoding; "
-                "Add-Type -AssemblyName System.Windows.Forms; "
-                "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
-                "$d.Description = 'Select NoteManager directory'; "
-                "$d.ShowNewFolderButton = $true; "
-                "if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) "
-                "{ [Console]::Out.WriteLine($d.SelectedPath) }"
-            )
-            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            try:
-                proc = subprocess.run(
-                    ["powershell.exe", "-NoProfile", "-STA", "-Command", script],
-                    capture_output=True, text=True, encoding="utf-8",
-                    errors="replace", timeout=300, creationflags=flags,
-                )
-            except (OSError, subprocess.TimeoutExpired) as e:
-                return {"ok": False, "error": f"无法打开目录选择器: {e}"}
-            if proc.returncode != 0:
-                detail = (proc.stderr or proc.stdout or "").strip()
-                return {"ok": False, "error": detail or "目录选择器失败"}
-            selected = (proc.stdout or "").strip().splitlines()
-            if not selected:
-                return {"ok": False, "error": "已取消"}
-            return {"ok": True, "path": selected[-1].strip()}
-
-        return {"ok": False, "error": "目录选择窗口目前仅支持 Windows，请手动输入路径。"}
-
     def _add_worker(self, job_id: int, directory: str) -> None:
         with self._add_job_lock:
             job = self._add_jobs.get(job_id)

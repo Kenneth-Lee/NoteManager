@@ -25,18 +25,13 @@ def _fake_daemon():
     return fake
 
 
-def test_control_panel_has_popup_logs_and_async_add_on_linux(monkeypatch):
-    monkeypatch.setattr(web.os, "name", "posix")
+def test_control_panel_has_popup_logs_and_manual_path_add(monkeypatch):
     page = web._render_panel(_fake_daemon())
     assert "id=\"log-modal\"" in page
     assert "id=\"log-view\"" in page
+    assert "id=\"dir-input\"" in page
+    assert "id=\"add-status\"" in page
     assert "id=\"pick-dir-btn\"" not in page
+    assert "浏览" not in page
     assert "/api/logs" in page
     assert "/api/add_async" in page
-
-
-def test_control_panel_shows_picker_on_windows(monkeypatch):
-    monkeypatch.setattr(web.os, "name", "nt")
-    page = web._render_panel(_fake_daemon())
-    assert "id=\"pick-dir-btn\"" in page
-    assert "id=\"log-modal\"" in page

@@ -71,6 +71,13 @@
         continue;
       }
       if (ch === "\\") {
+        // Keep regex escapes such as \b, \d, \.; only consume the
+        // backslash when it is escaping whitespace, a quote, or another
+        // backslash (the quote/space escaping rules of the search box).
+        var next = s.charAt(i + 1);
+        if (next && next !== '"' && next !== "\\" && !/\s/.test(next)) {
+          cur += "\\";
+        }
         esc = true;
         continue;
       }
