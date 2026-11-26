@@ -103,24 +103,47 @@ CLIENT_BOOTSTRAP_JS = r"""
     window.NMPingActive();
 
     var es = null;
-    try {
-        es = new EventSource(
-            '/api/events?client_id=' + encodeURIComponent(window.NM_CLIENT_ID) +
-            '&path=' + encodeURIComponent(window.location.pathname)
-        );
-    } catch (e) {}
-    window.NM_EVENT_SOURCE = es;
-    if (es) {
-        es.addEventListener('init', function (e) {
-            try {
-                var data = JSON.parse(e.data || '{}');
-                if (data && data.client_id && data.client_id !== window.NM_CLIENT_ID) {
-                    window.NM_CLIENT_ID = data.client_id;
-                    try { window.name = data.client_id; } catch (err) {}
-                    updatePageIdBadge(data.client_id);
-                }
-            } catch (err) {}
-        });
+
+    function handleInit(e) {
+        try {
+            var data = JSON.parse(e.data || '{}');
+            if (data && data.client_id && data.client_id !== window.NM_CLIENT_ID) {
+                window.NM_CLIENT_ID = data.client_id;
+                try { window.name = data.client_id; } catch (err) {}
+                updatePageIdBadge(data.client_id);
+            }
+        } catch (err) {}
     }
+
+    function openEventStream() {
+        closeEventStream();
+        try {
+            es = new EventSource(
+                '/api/events?client_id=' + encodeURIComponent(window.NM_CLIENT_ID) +
+                '&path=' + encodeURIComponent(window.location.pathname)
+            );
+        } catch (e) {
+            es = null;
+        }
+        window.NM_EVENT_SOURCE = es;
+        if (es) es.addEventListener('init', handleInit);
+    }
+
+    function closeEventStream() {
+        if (!es) return;
+        try { es.close(); } catch (e) {}
+        es = null;
+        window.NM_EVENT_SOURCE = null;
+    }
+
+    // An SSE stream never ends by itself.  If it is not closed here, the
+    // browser keeps it in the per-host connection pool; after a few page
+    // navigations the pool is full and the next page waits tens of seconds.
+    window.addEventListener('pagehide', closeEventStream);
+    window.addEventListener('pageshow', function (e) {
+        if (e.persisted && !es) openEventStream();
+    });
+
+    openEventStream();
 })();
 """

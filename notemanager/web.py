@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import socket
 import sys
 import urllib.parse
 from html import escape as html_escape
@@ -28,6 +29,28 @@ logger = logging.getLogger(__name__)
 # SSE client navigates away). They are expected on every disconnect and must
 # not pollute daemon.log with scary tracebacks.
 _EXPECTED_CONN_ERRORS = (ConnectionError, TimeoutError)
+
+
+def _shutdown_stream(wfile) -> None:
+    """Best-effort shutdown of one browser SSE connection.
+
+    An SSE response never ends by itself, so a page that navigates away can
+    leave its stream open in the browser.  Shutting the socket down makes the
+    peer see EOF at once, which frees the browser's per-host connection slot
+    instead of leaking it until the tab is closed.
+
+    Only the socket is shut down, never the file object: the owning handler
+    thread still has to flush/close ``wfile`` itself, and closing it here makes
+    ``BaseHTTPRequestHandler.handle_one_request()`` raise
+    ``ValueError: I/O operation on closed file``.
+    """
+    sock = getattr(wfile, "_sock", None)
+    if sock is None:
+        return
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
 
 
 class WebClient:
@@ -60,8 +83,19 @@ class EventBroadcaster:
         """
         now = time.time()
         client = WebClient(client_id, wfile, path, project, now)
+        replaced = None
         with self._lock:
+            existing = self._clients.get(client_id)
+            if existing is not None and existing.wfile is not wfile:
+                replaced = existing
             self._clients[client_id] = client
+        if replaced is not None:
+            # Same tab, new page: the previous page's SSE stream must be
+            # closed.  Otherwise it keeps occupying one of the browser's
+            # per-host connections forever, and after a few navigations the
+            # browser connection pool is full (new pages then queue for tens
+            # of seconds).  See tests/test_sse_connections.py.
+            _shutdown_stream(replaced.wfile)
         return client
 
     def remove_client(self, wfile) -> WebClient | None:
@@ -101,32 +135,43 @@ class EventBroadcaster:
         encoded = message.encode("utf-8")
         with self._lock:
             client = self._clients.get(client_id)
-            if not client:
-                return False
-            try:
-                client.wfile.write(encoded)
-                client.wfile.flush()
-                client.last_active = time.time()
-                return True
-            except Exception:
-                self._clients.pop(client_id, None)
-                return False
+        if client is None:
+            return False
+        # Never write while holding the lock: a single stalled browser socket
+        # must not block every other SSE client (and the caller thread).
+        try:
+            client.wfile.write(encoded)
+            client.wfile.flush()
+            client.last_active = time.time()
+            return True
+        except Exception:
+            with self._lock:
+                if self._clients.get(client_id) is client:
+                    self._clients.pop(client_id, None)
+            _shutdown_stream(client.wfile)
+            return False
 
     def broadcast(self, event_type: str, data: dict = None) -> None:
         """Send an SSE event to all connected clients."""
         payload = json.dumps(data or {}, ensure_ascii=False)
         message = f"event: {event_type}\ndata: {payload}\n\n"
         encoded = message.encode("utf-8")
-        dead = []
         with self._lock:
-            for client in self._clients.values():
-                try:
-                    client.wfile.write(encoded)
-                    client.wfile.flush()
-                except Exception:
-                    dead.append(client.id)
-            for client_id in dead:
-                self._clients.pop(client_id, None)
+            clients = list(self._clients.values())
+        dead = []
+        for client in clients:
+            try:
+                client.wfile.write(encoded)
+                client.wfile.flush()
+            except Exception:
+                dead.append(client)
+        if dead:
+            with self._lock:
+                for client in dead:
+                    if self._clients.get(client.id) is client:
+                        self._clients.pop(client.id, None)
+            for client in dead:
+                _shutdown_stream(client.wfile)
 
 
 # Global broadcaster instance
@@ -309,6 +354,9 @@ class WebHandler(BaseHTTPRequestHandler):
                     break
         finally:
             self.daemon_ref.unregister_web_client(self.wfile)
+            # Make sure the browser sees the stream end right away, so it can
+            # reuse the connection slot for the next page.
+            _shutdown_stream(self.wfile)
             # Mark the connection dead so BaseHTTPRequestHandler.handle() does
             # not loop back into handle_one_request() and read from the broken
             # socket. On Windows that extra read raises ConnectionAbortedError

@@ -51,6 +51,10 @@ def _static_prefix(html_rel_path: str) -> str:
     return "/".join([".."] * len(parts)) + "/"
 
 
+# 静态资源缓存版本号：进程启动时确定一次，所有页面共用。
+_ASSET_VERSION = str(int(time.time()))
+
+
 def wrap_html(body: str, title: str, html_rel_path: str,
               toc: str = "", source: str = "", warnings: list | None = None,
               source_path: str = "", dtags: list | None = None,
@@ -121,8 +125,10 @@ def wrap_html(body: str, title: str, html_rel_path: str,
     heading_map_json = (
         json.dumps(heading_lines or {}, ensure_ascii=False).replace("<", "\\u003c")
     )
-    # 自研 JS/CSS 加版本参数：内容更新后 URL 随构建变化，彻底避开浏览器缓存旧脚本
-    asset_version = str(int(time.time()))
+    # 版本号在进程启动时固定一次（见 _ASSET_VERSION）。以前每次渲染都取一次
+    # time.time()，同一站点里不同页面的 ?v= 各不相同，每次重建后浏览器都要
+    # 整包重新下载 JS/CSS，白白拖慢导航。
+    asset_version = _ASSET_VERSION
 
     extra_css_tags = "\n".join(
         f'<link rel="stylesheet" href="{prefix}_static/{_escape(name)}">'
