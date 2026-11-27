@@ -172,7 +172,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
             '<button type="button" class="nm-source-secondary" id="nm-source-paste-image" title="把剪贴板中的图片粘贴到当前笔记目录的 _static">粘贴图片</button>'
             '<button type="button" class="nm-source-secondary" id="nm-source-import" title="把本地文件或 URL 导入当前笔记目录的 _static">导入资源</button>'
             '<button type="button" class="nm-source-secondary nm-source-delete" id="nm-source-delete" title="删除磁盘上的当前源文件">删除当前笔记</button>'
-            '<label class="nm-source-vim-wrap" title="启用 CodeMirror 内置 Vim 子集（默认关闭；偏好会保存在本机）">'
+            '<label class="nm-source-vim-wrap" title="启用 CodeMirror 内置 Vim 子集（默认关闭；:help 查看命令；偏好会保存在本机）">'
             '<input type="checkbox" id="nm-source-vim" autocomplete="off"> Vim 键位</label>'
             '<span class="nm-source-status" id="nm-source-status"></span></div>'
             f'<div class="nm-source-path">{source_path_display}</div>'
@@ -540,6 +540,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <h4 style="margin-top:10px;">快捷键</h4>
 <ul>
 <li><code>Ctrl/⌘ K</code> — 打开/关闭命令面板</li>
+<li><code>Ctrl/⌘+Alt+1/2/3</code> — 切换到渲染 / 源文件 / 诊断</li>
 <li><code>Ctrl/⌘+Alt+S</code> — 切换分屏</li>
 <li><code>Ctrl/⌘+Alt+E</code> — 用外部编辑器打开当前源文件</li>
 <li><code>Alt+↑</code> / <code>Ctrl/⌘+Alt+U</code> — 回到项目主页并定位当前目录</li>

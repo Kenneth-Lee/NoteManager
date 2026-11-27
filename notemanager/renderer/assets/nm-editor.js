@@ -169,6 +169,9 @@
       cm.setOption('keyMap', on ? 'vim' : 'default');
       if (vimCb) vimCb.checked = on;
       writeVimPref(on);
+      if (on) {
+        try { setStatus('Vim 模式：:help 查看命令'); } catch (e) {}
+      }
     }
     applyVimKeyMap(readVimPref());
     if (vimCb) {
@@ -797,6 +800,97 @@
       CodeMirror.Vim.defineEx('x', 'x', function () {
         saveSource({quit: true});
       });
+    }
+
+    function clickSourceButton(id) {
+      var button = document.getElementById(id);
+      if (!button) {
+        setStatus('当前没有可用的按钮: ' + id, true);
+        return false;
+      }
+      button.click();
+      return true;
+    }
+
+    var vimHelpOverlay = null;
+    function closeVimHelp() {
+      if (!vimHelpOverlay) return;
+      vimHelpOverlay.hidden = true;
+      document.body.classList.remove('nm-note-open');
+    }
+    function showVimHelp() {
+      if (!vimHelpOverlay) {
+        vimHelpOverlay = document.createElement('div');
+        vimHelpOverlay.className = 'nm-note-overlay';
+        vimHelpOverlay.hidden = true;
+        vimHelpOverlay.innerHTML = '<div class="nm-note-dialog nm-vim-help" role="dialog" aria-label="Vim 命令帮助">' +
+          '<div class="nm-note-head"><h2>Vim 命令帮助</h2>' +
+          '<button type="button" class="nm-note-close" aria-label="关闭">×</button></div>' +
+          '<p class="nm-import-hint">在「源文件」页签启用 Vim 键位后，在命令模式输入以下命令。</p>' +
+          '<table class="nm-vim-help-table"><thead><tr><th>命令</th><th>作用</th></tr></thead><tbody>' +
+          '<tr><td><code>:w</code></td><td>保存，不退出源文件页签</td></tr>' +
+          '<tr><td><code>:wq</code> / <code>:x</code></td><td>保存并返回渲染页</td></tr>' +
+          '<tr><td><code>:q</code></td><td>返回渲染页（有未保存修改会确认）</td></tr>' +
+          '<tr><td><code>:new</code></td><td>新建笔记</td></tr>' +
+          '<tr><td><code>:paste</code> / <code>:img</code></td><td>粘贴剪贴板图片</td></tr>' +
+          '<tr><td><code>:import</code></td><td>导入本地文件或 URL 资源</td></tr>' +
+          '<tr><td><code>:ref</code></td><td>引用工程已有资源</td></tr>' +
+          '<tr><td><code>:table</code></td><td>编辑/插入表格</td></tr>' +
+          '<tr><td><code>:delete</code></td><td>删除当前笔记</td></tr>' +
+          '<tr><td><code>:external</code> / <code>:ext</code></td><td>在外部编辑器中打开当前源文件</td></tr>' +
+          '<tr><td><code>:split</code></td><td>切换分屏</td></tr>' +
+          '<tr><td><code>:sync</code></td><td>切换分屏同步滚动</td></tr>' +
+          '<tr><td><code>:help</code> / <code>:vimhelp</code></td><td>显示本帮助</td></tr>' +
+          '</tbody></table>' +
+          '<div class="nm-note-actions"><button type="button" class="nm-note-cancel">关闭</button></div>' +
+          '</div>';
+        document.body.appendChild(vimHelpOverlay);
+        vimHelpOverlay.addEventListener('mousedown', function (event) {
+          if (event.target === vimHelpOverlay) closeVimHelp();
+        });
+        vimHelpOverlay.querySelector('.nm-note-close').addEventListener('click', closeVimHelp);
+        vimHelpOverlay.querySelector('.nm-note-cancel').addEventListener('click', closeVimHelp);
+      }
+      vimHelpOverlay.hidden = false;
+      document.body.classList.add('nm-note-open');
+    }
+
+    if (CodeMirror.Vim && typeof CodeMirror.Vim.defineEx === 'function') {
+      CodeMirror.Vim.defineEx('new', 'new', function () {
+        clickSourceButton('nm-source-new');
+      });
+      CodeMirror.Vim.defineEx('paste', 'paste', function () {
+        clickSourceButton('nm-source-paste-image');
+      });
+      CodeMirror.Vim.defineEx('img', 'img', function () {
+        clickSourceButton('nm-source-paste-image');
+      });
+      CodeMirror.Vim.defineEx('import', 'import', function () {
+        clickSourceButton('nm-source-import');
+      });
+      CodeMirror.Vim.defineEx('ref', 'ref', function () {
+        clickSourceButton('nm-source-reference');
+      });
+      CodeMirror.Vim.defineEx('table', 'table', function () {
+        clickSourceButton('nm-source-table');
+      });
+      CodeMirror.Vim.defineEx('delete', 'delete', function () {
+        clickSourceButton('nm-source-delete');
+      });
+      CodeMirror.Vim.defineEx('external', 'external', function () {
+        clickSourceButton('nm-open-external');
+      });
+      CodeMirror.Vim.defineEx('ext', 'ext', function () {
+        clickSourceButton('nm-open-external');
+      });
+      CodeMirror.Vim.defineEx('split', 'split', function () {
+        clickSourceButton('nm-split-btn');
+      });
+      CodeMirror.Vim.defineEx('sync', 'sync', function () {
+        clickSourceButton('nm-sync-btn');
+      });
+      CodeMirror.Vim.defineEx('help', 'help', showVimHelp);
+      CodeMirror.Vim.defineEx('vimhelp', 'vimhelp', showVimHelp);
     }
 
     var jump = getSourceJumpParams();

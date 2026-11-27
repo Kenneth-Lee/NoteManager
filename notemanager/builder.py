@@ -1213,6 +1213,12 @@ pre.nm-plaintext { white-space: pre-wrap; overflow-wrap: anywhere; background: #
 .nm-related-snippet { font-size: 11px; color: #999; margin-top: 2px; line-height: 1.45; }
 .nm-related-empty { font-size: 12px; color: #aaa; margin: 4px 0; }
 .nm-table-dialog { max-width: min(1100px, 96vw); width: min(1100px, 96vw); }
+.nm-vim-help { max-width: 620px; }
+.nm-vim-help-table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+.nm-vim-help-table th, .nm-vim-help-table td { border-bottom: 1px solid #e8eef2;
+                                                padding: 6px 8px; text-align: left; }
+.nm-vim-help-table th { color: #607d8b; font-weight: 600; background: #f7fafc; }
+.nm-vim-help-table code { white-space: nowrap; font-size: 12px; }
 .nm-table-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
                      margin: 4px 0 8px; color: #607d8b; font-size: 12px; }
 .nm-table-toolbar label { display: inline-flex; align-items: center; gap: 4px; }

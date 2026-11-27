@@ -413,3 +413,23 @@
     });
   })();
 })();
+
+/* Document tab shortcuts: Ctrl/⌘+Alt+1/2/3. */
+(function () {
+  'use strict';
+  var TAB_KEYS = {Digit1: 'render', Digit2: 'source', Digit3: 'warnings'};
+  document.addEventListener('keydown', function (event) {
+    if (!(event.ctrlKey || event.metaKey) || !event.altKey || event.shiftKey) return;
+    var name = TAB_KEYS[String(event.code || '')];
+    if (!name) return;
+    var tab = document.querySelector('.nm-tab[data-tab="' + name + '"]');
+    if (!tab) return;
+    event.preventDefault();
+    tab.click();
+    if (name === 'source') {
+      setTimeout(function () {
+        if (window.__nmCM) window.__nmCM.focus();
+      }, 0);
+    }
+  });
+})();
