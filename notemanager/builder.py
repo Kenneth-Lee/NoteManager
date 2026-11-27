@@ -775,6 +775,7 @@ _RUNTIME_STATIC_TOP_LEVEL = {
     "nm-refs.js",
     "nm-table-editor.js",
     "nm-math-editor.js",
+    "nm-mermaid-editor.js",
     "nm-object-editor.js",
     "nm-overview.js",
     "nm-relations.js",
@@ -926,6 +927,10 @@ def _ensure_overview_assets(html_dir) -> None:
     except OSError:
         math_editor_js = ""
     try:
+        mermaid_editor_js = (static_dir / "nm-mermaid-editor.js").read_text(encoding="utf-8")
+    except OSError:
+        mermaid_editor_js = ""
+    try:
         object_editor_js = (static_dir / "nm-object-editor.js").read_text(encoding="utf-8")
     except OSError:
         object_editor_js = ""
@@ -956,6 +961,7 @@ def _ensure_overview_assets(html_dir) -> None:
         or "nm-source-table" not in table_editor_js
         or "nm-source-math" not in math_editor_js
         or "nm-source-object" not in object_editor_js
+        or "nm-source-mermaid" not in mermaid_editor_js
         or "Ctrl/⌘+Alt+S" not in command_js
     ):
         _copy_static_assets(static_dir)
@@ -1231,13 +1237,27 @@ pre.nm-plaintext { white-space: pre-wrap; overflow-wrap: anywhere; background: #
 .nm-math-dialog { width: min(760px, calc(100vw - 32px)); }
 .nm-math-mode { display: flex; align-items: center; gap: 14px; margin: 8px 0; font-size: 12px; color: #607d8b; }
 .nm-math-mode select { margin-left: 4px; padding: 3px 6px; }
-.nm-object-create-choices { display: flex; gap: 8px; margin: 12px 0 4px; }
+.nm-object-create-choices { display: flex; gap: 8px; margin: 12px 0 4px; flex-wrap: wrap; }
 .nm-object-create { flex: 1; display: flex; flex-direction: column; gap: 3px; text-align: left;
                      padding: 10px 12px; border: 1px solid #cfd8dc; border-radius: 6px;
                      background: #fff; color: #37474f; cursor: pointer; }
 .nm-object-create:hover { background: #e3f2fd; border-color: #90caf9; }
 .nm-object-create strong { color: #1565c0; font-size: 13px; }
 .nm-object-create span { color: #78909c; font-size: 11px; }
+.nm-mermaid-dialog { width: min(980px, calc(100vw - 32px)); max-height: 92vh; display: flex; flex-direction: column; }
+.nm-mermaid-template { margin: 6px 0; color: #607d8b; font-size: 12px; }
+.nm-mermaid-template select { margin-left: 5px; padding: 3px 6px; }
+.nm-mermaid-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px;
+                    min-height: 280px; max-height: 62vh; }
+#nm-mermaid-input { width: 100%; height: 100%; box-sizing: border-box; resize: none;
+                   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+                   font-size: 13px; line-height: 1.55; padding: 9px 10px; border: 1px solid #cfd8dc;
+                   border-radius: 5px; background: #fbfcfd; }
+#nm-mermaid-input:focus { outline: 2px solid #90caf9; border-color: #90caf9; }
+.nm-mermaid-preview { border: 1px solid #e3ebef; border-radius: 5px; background: #fff;
+                      padding: 10px; overflow: auto; min-height: 180px; }
+.nm-mermaid-preview svg { max-width: 100%; height: auto; }
+@media (max-width: 760px) { .nm-mermaid-body { grid-template-columns: 1fr; max-height: none; } }
 .nm-math-palette { margin: 4px 0 8px; padding: 6px 7px; background: #f7fafc;
                    border: 1px solid #e3ebef; border-radius: 5px; }
 .nm-math-palette-tabs { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 6px; }

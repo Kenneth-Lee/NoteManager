@@ -2,6 +2,10 @@
 
 ## v0.4.3（2026-11-27）
 
+- 统一对象编辑器增加 Mermaid：识别 Markdown 围栏和 reST `code-block:: mermaid`，
+  提供实时预览和流程图/时序图/类图等模板；Vim 增加 `:mermaid`；
+- 修复 reST `code-block:: mermaid` 被 Pygments 当作未知语言而吞进
+  system message、最终不渲染的问题；
 - 表格和公式编辑器合并为统一「编辑/插入对象」入口：按光标位置自动识别，
   都未匹配时选择新建表格或公式；
 - 侧边栏「＋ 新建」改为在当前文档目录创建；项目首页仍在根目录创建；

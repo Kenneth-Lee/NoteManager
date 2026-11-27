@@ -22,3 +22,4 @@
 * [图片标注](image-annotations.md)
 * [表格图形编辑器](table-editor.md)
 * [数学公式编辑器](math-editor.md)
+* [Mermaid 编辑器](mermaid-editor.md)

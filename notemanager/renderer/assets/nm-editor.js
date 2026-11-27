@@ -890,6 +890,7 @@
           '<tr><td><code>:ref</code></td><td>引用工程已有资源</td></tr>' +
           '<tr><td><code>:object</code> / <code>:editobject</code></td><td>自动识别并编辑表格/公式；都不是则选择新建</td></tr>' +
           '<tr><td><code>:table</code></td><td>编辑/插入表格</td></tr>' +
+          '<tr><td><code>:mermaid</code></td><td>编辑/插入 Mermaid 图</td></tr>' +
           '<tr><td><code>:math</code> / <code>:formula</code></td><td>编辑/插入数学公式</td></tr>' +
           '<tr><td><code>:delete</code></td><td>删除当前笔记</td></tr>' +
           '<tr><td><code>:rename</code> / <code>:mv</code></td><td>重命名当前笔记文件</td></tr>' +
@@ -941,6 +942,9 @@
       });
       CodeMirror.Vim.defineEx('table', 'table', function () {
         clickSourceButton('nm-source-table');
+      });
+      CodeMirror.Vim.defineEx('mermaid', 'mermaid', function () {
+        clickSourceButton('nm-source-mermaid');
       });
       CodeMirror.Vim.defineEx('math', 'math', function () {
         clickSourceButton('nm-source-math');

@@ -1,6 +1,7 @@
 """RST to HTML renderer using docutils."""
 
 import contextlib
+import html
 import io
 import os
 import re
@@ -355,6 +356,61 @@ def _ensure_roles_registered():
         _roles_registered = True
 
 
+def _convert_mermaid_code_blocks(source: str) -> str:
+    """Turn reST ``code-block:: mermaid`` into a raw mermaid <pre> block.
+
+    Docutils' Pygments-backed code-block rejects unknown lexer names, loses the
+    block inside a system message, and never emits ``pre.mermaid`` for the
+    browser renderer.  Mermaid source is already text, so emit a raw HTML block
+    with the same class the Markdown path uses.
+    """
+    lines = source.splitlines(keepends=True)
+    out: list[str] = []
+    i = 0
+    directive_re = re.compile(r"^(\s*)\.\.\s+(?:code-block|code)::\s*mermaid\s*$", re.IGNORECASE)
+    while i < len(lines):
+        match = directive_re.match(lines[i].rstrip("\r\n"))
+        if not match:
+            out.append(lines[i])
+            i += 1
+            continue
+        indent = match.group(1)
+        base_indent = len(indent)
+        j = i + 1
+        # Skip blank lines and directive options before the code body.
+        while j < len(lines) and not lines[j].strip():
+            j += 1
+        body: list[str] = []
+        while j < len(lines):
+            raw = lines[j]
+            if not raw.strip():
+                body.append("")
+                j += 1
+                continue
+            current_indent = len(raw) - len(raw.lstrip(" "))
+            if current_indent <= base_indent:
+                break
+            body.append(raw.rstrip("\r\n"))
+            j += 1
+        # Dedent by the smallest nonblank body indentation.
+        nonblank = [line for line in body if line.strip()]
+        dedent = min((len(line) - len(line.lstrip(" ")) for line in nonblank), default=0)
+        code_lines = [
+            (line[dedent:] if line.strip() else "")
+            for line in body
+        ]
+        while code_lines and code_lines[0] == "":
+            code_lines.pop(0)
+        while code_lines and code_lines[-1] == "":
+            code_lines.pop()
+        escaped = html.escape("\n".join(code_lines), quote=False)
+        out.append(f"{indent}.. raw:: html\n")
+        out.append(f"{indent}\n")
+        out.append(f"{indent}   <pre class=\"mermaid\">{escaped}</pre>\n")
+        i = j
+    return "".join(out)
+
+
 def render_rst(content: str, source_path: str = "<string>") -> dict:
     """Render RST content to HTML.
 
@@ -374,6 +430,7 @@ def render_rst(content: str, source_path: str = "<string>") -> dict:
 
     # Pre-process: strip unsupported roles to prevent error nodes
     processed, ignored_roles = _strip_unsupported_roles(content)
+    processed = _convert_mermaid_code_blocks(processed)
 
     warnings = []
     if ignored_roles:

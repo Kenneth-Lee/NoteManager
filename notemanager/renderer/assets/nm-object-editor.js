@@ -60,6 +60,8 @@
             '<strong>新建表格</strong><span>两行两列，可增删行列</span></button>' +
           '<button type="button" class="nm-object-create" data-object="math">' +
             '<strong>新建公式</strong><span>行内或行间，KaTeX 实时预览</span></button>' +
+          '<button type="button" class="nm-object-create" data-object="mermaid">' +
+            '<strong>新建 Mermaid 图</strong><span>流程图、时序图、类图等模板</span></button>' +
         '</div>' +
         '<div class="nm-note-actions"><button type="button" class="nm-note-cancel">取消</button></div>' +
       '</div>';
@@ -81,7 +83,9 @@
       button.addEventListener('click', function () {
         var kind = button.getAttribute('data-object');
         close();
-        clickButton(kind === 'table' ? 'nm-source-table' : 'nm-source-math');
+        var target = kind === 'table' ? 'nm-source-table'
+          : (kind === 'mermaid' ? 'nm-source-mermaid' : 'nm-source-math');
+        clickButton(target);
       });
     });
     var first = overlay.querySelector('[data-object]');
@@ -93,6 +97,13 @@
     var cm = window.__nmCM;
     if (!cfg || !cm) {
       setStatus('对象编辑器仅在可写的源文件页签可用', true);
+      return;
+    }
+    var mermaid = window.nmMermaidEditor &&
+      window.nmMermaidEditor.findBlock(cm, cfg.source_ext || '');
+    if (mermaid) {
+      setStatus('');
+      clickButton('nm-source-mermaid');
       return;
     }
     setStatus('识别光标处的表格或公式…');
@@ -116,8 +127,10 @@
   function ensureButton() {
     var tableBtn = document.getElementById('nm-source-table');
     var mathBtn = document.getElementById('nm-source-math');
+    var mermaidBtn = document.getElementById('nm-source-mermaid');
     if (tableBtn) tableBtn.style.display = 'none';
     if (mathBtn) mathBtn.style.display = 'none';
+    if (mermaidBtn) mermaidBtn.style.display = 'none';
     if (document.getElementById('nm-source-object')) return;
     var toolbar = document.querySelector('.nm-source-toolbar');
     var anchor = document.getElementById('nm-source-reference') ||
@@ -128,7 +141,7 @@
     button.id = 'nm-source-object';
     button.className = 'nm-source-secondary';
     button.textContent = '编辑/插入对象';
-    button.title = '自动识别光标处的表格或公式；都不是则选择新建';
+    button.title = '自动识别光标处的 Mermaid/表格/公式；都不是则选择新建';
     anchor.insertAdjacentElement('afterend', button);
     button.addEventListener('click', openObjectEditor);
   }
