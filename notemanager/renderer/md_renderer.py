@@ -246,6 +246,10 @@ def _convert_links(html: str) -> str:
         prefix = match.group(1)
         path = match.group(2)
         suffix = match.group(3)
+        keyword = path.lower()
+        if keyword.startswith(("dtag:", "index:")):
+            data = _htmlmod.escape(path, quote=True)
+            return f'{prefix}#{suffix} data-nm-keyword-ref="{data}"'
         if path.startswith(("http://", "https://", "#", "mailto:")):
             return match.group(0)
         # Fix bare www. URLs
