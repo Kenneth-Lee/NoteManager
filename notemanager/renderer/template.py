@@ -58,6 +58,7 @@ _ASSET_VERSION = str(int(time.time()))
 def wrap_html(body: str, title: str, html_rel_path: str,
               toc: str = "", source: str = "", warnings: list | None = None,
               source_path: str = "", dtags: list | None = None,
+              source_abs_path: str = "",
               *, source_editable: bool = False,
               heading_lines: dict[str, int] | None = None,
               extra_css_files: list[str] | None = None,
@@ -75,6 +76,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
         source: Optional raw source text for source view.
         warnings: Optional list of warning strings for diagnostics view.
         source_path: Optional original source file path for display.
+        source_abs_path: Optional absolute source path for the copyable badge.
         dtags: Optional list of dtag strings for this document.
         source_editable: When True, source tab uses CodeMirror + save API (managed projects only).
         heading_lines: Optional mapping of heading anchor id -> 1-based source line number,
@@ -114,6 +116,13 @@ def wrap_html(body: str, title: str, html_rel_path: str,
     extra_js_files = extra_js_files or []
 
     source_path_display = _escape(source_path) if source_path else ""
+    source_abs_display = _escape(source_abs_path or source_path) if (source_abs_path or source_path) else ""
+    source_badge_html = (
+        f'<span id="nm-source-file-badge" class="nm-source-file-badge" '
+        f'data-nm-copy="{source_abs_display}" data-nm-copy-label="源: {source_abs_display}" '
+        f'title="源文件: {source_abs_display}（点击复制）">源: {source_abs_display}</span>'
+        if source_abs_display else ""
+    )
     delete_current_button = ""
     if source_editable and source_path:
         delete_current_button = (
@@ -179,7 +188,8 @@ def wrap_html(body: str, title: str, html_rel_path: str,
             f'<script src="{prefix}_static/codemirror/addon/search/searchcursor.js?v={asset_version}"></script>\n'
             f'<script src="{prefix}_static/codemirror/addon/dialog/dialog.js?v={asset_version}"></script>\n'
             f'<script src="{prefix}_static/codemirror/keymap/vim.js?v={asset_version}"></script>\n'
-            f'<script src="{prefix}_static/nm-editor.js?v={asset_version}"></script>'
+            f'<script src="{prefix}_static/nm-editor.js?v={asset_version}"></script>\n'
+            f'<script src="{prefix}_static/nm-table-editor.js?v={asset_version}"></script>'
         )
     else:
         cm_head = ""
@@ -345,6 +355,12 @@ def wrap_html(body: str, title: str, html_rel_path: str,
               border-radius: 10px; padding: 3px 9px; cursor: pointer; user-select: none; }}
 .nm-page-id:hover {{ background: #e8f1f5; border-color: #b0bec5; color: #37474f; }}
 .nm-page-id.copied {{ background: #e8f5e9; border-color: #a5d6a7; color: #2e7d32; }}
+.nm-source-file-badge {{ max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                        font-size: 11px; color: #607d8b; background: #f5f7f8; border: 1px solid #dde5e8;
+                        border-radius: 10px; padding: 3px 9px; cursor: pointer; user-select: none;
+                        font-family: 'SFMono-Regular', Consolas, monospace; }}
+.nm-source-file-badge:hover {{ background: #e8f1f5; border-color: #b0bec5; color: #37474f; }}
+.nm-source-file-badge.copied {{ background: #e8f5e9; border-color: #a5d6a7; color: #2e7d32; }}
 .nm-split-btn {{ font-size: 12px; color: #1565c0; border: 1px solid #bbdefb; background: #e3f2fd;
                  border-radius: 4px; padding: 4px 10px; cursor: pointer; }}
 .nm-split-btn:hover {{ background: #bbdefb; color: #0d47a1; }}
@@ -557,6 +573,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <div class="nm-tabs-right">
 <span id="nm-page-id" class="nm-page-id" role="button" tabindex="0"
       title="当前浏览器标签页 ID；点击复制，可用于 nmr view/search --id">页面: …</span>
+{source_badge_html}
 <span id="nm-reading-controls" class="nm-reading-controls"></span>
 {delete_current_button}
 <button class="nm-split-btn" id="nm-open-external" type="button" title="在外部编辑器中打开当前源文件（默认 gvim；Ctrl/⌘+Alt+E）" style="display:none">外部编辑</button>

@@ -475,6 +475,7 @@ def _write_html(html_dir, fi, rendered, ref_labels, ui_plugin: UiPluginBundle,
         source=rendered.get("source", ""),
         warnings=rendered.get("warnings", []),
         source_path=str(fi.rel_path),
+        source_abs_path=str(fi.path),
         dtags=rendered.get("dtags", []),
         source_editable=True,
         heading_lines=rendered.get("heading_lines"),
@@ -772,6 +773,7 @@ _RUNTIME_STATIC_TOP_LEVEL = {
     "nm-external-editor.js",
     "nm-annotations.js",
     "nm-refs.js",
+    "nm-table-editor.js",
     "nm-overview.js",
     "nm-relations.js",
     "nm-reading.js",
@@ -913,6 +915,10 @@ def _ensure_overview_assets(html_dir) -> None:
         refs_js = (static_dir / "nm-refs.js").read_text(encoding="utf-8")
     except OSError:
         refs_js = ""
+    try:
+        table_editor_js = (static_dir / "nm-table-editor.js").read_text(encoding="utf-8")
+    except OSError:
+        table_editor_js = ""
     if (
         ".nm-overview" not in css
         or "nmRevealSidebarDir" not in js
@@ -937,6 +943,7 @@ def _ensure_overview_assets(html_dir) -> None:
         or "NM_EXTERNAL_HOTKEY" not in external_js
         or "nm-annotate-overlay" not in annotations_js
         or "nm-ref-choice-list" not in refs_js
+        or "nm-source-table" not in table_editor_js
         or "Ctrl/⌘+Alt+S" not in command_js
     ):
         _copy_static_assets(static_dir)
@@ -1195,6 +1202,32 @@ pre.nm-plaintext { white-space: pre-wrap; overflow-wrap: anywhere; background: #
 .nm-related-col a:hover { text-decoration: underline; }
 .nm-related-snippet { font-size: 11px; color: #999; margin-top: 2px; line-height: 1.45; }
 .nm-related-empty { font-size: 12px; color: #aaa; margin: 4px 0; }
+.nm-table-dialog { max-width: min(1100px, 96vw); width: min(1100px, 96vw); }
+.nm-table-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+                     margin: 4px 0 8px; color: #607d8b; font-size: 12px; }
+.nm-table-toolbar label { display: inline-flex; align-items: center; gap: 4px; }
+.nm-table-toolbar button { padding: 3px 8px; border: 1px solid #cfd8dc; border-radius: 4px;
+                           background: #fff; color: #1565c0; cursor: pointer; font-size: 12px; }
+.nm-table-toolbar button:hover { background: #e3f2fd; }
+.nm-table-scroll { overflow: auto; max-height: 60vh; border: 1px solid #e0e6e9;
+                   border-radius: 4px; padding: 8px; }
+.nm-table-edit-grid { border-collapse: collapse; width: 100%; }
+.nm-table-edit-grid td { border: 1px solid #dfe7eb; padding: 3px; vertical-align: middle; }
+.nm-table-edit-grid, .nm-table-edit-grid input, .nm-table-edit-grid select {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; }
+.nm-table-edit-grid input[type=text] { width: 100%; min-width: 110px; box-sizing: border-box;
+                                       border: 0; padding: 5px 6px; background: transparent;
+                                       font-family: inherit; font-size: 13px; }
+.nm-table-edit-grid input[type=text]:focus { outline: 2px solid #90caf9; background: #fff; }
+.nm-table-edit-grid .nm-table-header-row input { font-weight: 600; background: #f5f9ff; }
+.nm-table-edit-grid .nm-table-gutter { width: 30px; text-align: right; color: #aaa;
+                                       font-size: 11px; padding-right: 5px; }
+.nm-table-edit-grid .nm-table-row-actions, .nm-table-edit-grid .nm-table-col-actions td:not(.nm-table-gutter) {
+    width: 26px; text-align: center; padding: 2px; }
+.nm-table-del { border: 0; background: transparent; color: #b71c1c; cursor: pointer;
+                font-size: 15px; line-height: 1; padding: 1px 4px; border-radius: 3px; }
+.nm-table-del:hover { background: #ffebee; }
+.nm-table-align-row select { width: 100%; font-size: 11px; padding: 2px; }
 
 /* Reading state and "since last visit" */
 .nm-reading-controls { display: flex; align-items: center; gap: 6px; }

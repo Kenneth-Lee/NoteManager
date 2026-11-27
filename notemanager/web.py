@@ -20,6 +20,7 @@ import threading
 import time
 
 from notemanager.web_client_js import CLIENT_BOOTSTRAP_JS
+from notemanager.table_editor import TableError, parse_table, serialize_table
 from notemanager import config_editor_page
 
 logger = logging.getLogger(__name__)
@@ -473,6 +474,24 @@ class WebHandler(BaseHTTPRequestHandler):
                 status = 200
             self._send_json(resp, status=status)
             return
+        elif path == "/api/table_parse":
+            try:
+                result = parse_table(
+                    str(data.get("content", "")),
+                    int(data.get("line", 0)),
+                    str(data.get("ext", "")),
+                )
+            except (TableError, TypeError, ValueError) as e:
+                resp = {"ok": False, "error": str(e)}
+            else:
+                resp = {"ok": True, "table": result}
+        elif path == "/api/table_serialize":
+            try:
+                text = serialize_table(data)
+            except (TableError, TypeError, ValueError) as e:
+                resp = {"ok": False, "error": str(e)}
+            else:
+                resp = {"ok": True, "text": text}
         elif path == "/api/save_source":
             try:
                 pj = int(data.get("project", -1))

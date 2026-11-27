@@ -396,6 +396,7 @@
       if (data && data.url) window.location.href = data.url;
     });
     evtSource.addEventListener("build_complete", function (e) {
+      if (window.__nmSuppressBuildReload) return;
       var data;
       try {
         data = JSON.parse(e.data);

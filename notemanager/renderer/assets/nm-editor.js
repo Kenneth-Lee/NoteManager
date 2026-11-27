@@ -274,6 +274,7 @@
 
     function saveSource(options) {
       options = options || {};
+      if (options.stay) window.__nmSuppressBuildReload = true;
       setStatus('保存中…');
       fetch('/api/save_source', {
         method: 'POST',
@@ -296,15 +297,28 @@
           if (d.ok) {
             window.__nmInitialSource = cm.getValue();
             window.__nmDirty = false;
+            if (options.stay) {
+              setStatus('已保存');
+              try { cm.focus(); } catch (e) {}
+              // update_file emits build_complete while the request is in
+              // flight; keep the source tab open instead of reloading it.
+              setTimeout(function () {
+                window.__nmSuppressBuildReload = false;
+              }, 3000);
+              return;
+            }
+            window.__nmSuppressBuildReload = false;
             if (options.quit && window.nmExitSplit) window.nmExitSplit();
             switchToRenderTab();
             setStatus('已保存，正在刷新…');
             window.location.reload();
           } else {
+            window.__nmSuppressBuildReload = false;
             setStatus(d.error || '保存失败', true);
           }
         })
         .catch(function (err) {
+          window.__nmSuppressBuildReload = false;
           setStatus(err && err.message ? err.message : '网络错误', true);
         });
     }
@@ -772,7 +786,7 @@
 
     if (CodeMirror.Vim && typeof CodeMirror.Vim.defineEx === 'function') {
       CodeMirror.commands.save = function () {
-        saveSource();
+        saveSource({stay: true});
       };
       CodeMirror.Vim.defineEx('quit', 'q', function () {
         quitToRender();

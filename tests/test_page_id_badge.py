@@ -16,3 +16,13 @@ def test_search_help_contains_regex_cheatsheet():
     assert "&#92;bpi&#92;b" in page
     assert "chapter:^pi$" in page
     assert "ASCII 单词边界" in page
+
+
+def test_source_path_badge_is_copyable():
+    page = wrap_html(
+        "<p>x</p>", "X", "a.html",
+        source_path="test/a.rst",
+        source_abs_path="/home/u/proj/test/a.rst",
+    )
+    assert 'id="nm-source-file-badge"' in page
+    assert 'data-nm-copy="/home/u/proj/test/a.rst"' in page

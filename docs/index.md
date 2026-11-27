@@ -20,3 +20,4 @@
 * [粘贴图片到目录级 _static](paste-image-static.md)
 * [粘贴图片 / 导入资源](asset-import.md)
 * [图片标注](image-annotations.md)
+* [表格图形编辑器](table-editor.md)

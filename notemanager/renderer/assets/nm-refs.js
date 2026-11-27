@@ -114,3 +114,50 @@
     openChooser(link, candidates);
   });
 })();
+
+/* Copyable source-path badge. */
+(function () {
+  'use strict';
+  function copyText(value) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(value);
+    }
+    return new Promise(function (resolve, reject) {
+      var ta = document.createElement('textarea');
+      ta.value = value;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+      document.body.removeChild(ta);
+    });
+  }
+
+  document.querySelectorAll('[data-nm-copy]').forEach(function (el) {
+    function copy() {
+      var value = el.getAttribute('data-nm-copy') || '';
+      if (!value) return;
+      copyText(value).then(function () {
+        el.classList.add('copied');
+        el.textContent = '已复制: ' + value;
+        setTimeout(function () {
+          el.textContent = el.getAttribute('data-nm-copy-label') || value;
+          el.classList.remove('copied');
+        }, 900);
+      }).catch(function () {});
+    }
+    el.addEventListener('click', copy);
+    el.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        copy();
+      }
+    });
+  });
+})();

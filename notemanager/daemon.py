@@ -1873,6 +1873,7 @@ class NoteManagerDaemon:
             source=content,
             warnings=warnings,
             source_path=str(source),
+            source_abs_path=str(source),
             dtags=rendered.get("dtags", []),
             source_editable=False,
             heading_lines=rendered.get("heading_lines"),
