@@ -507,7 +507,7 @@
       }
       close();
       cm.focus();
-      setStatus('公式已应用到源文件；请继续编辑文本，完成后保存并刷新渲染');
+      setStatus('公式已应用到源文件；请继续编辑文本，完成后保存退出');
     });
 
     renderPreview();

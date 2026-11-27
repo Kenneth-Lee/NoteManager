@@ -290,7 +290,7 @@
         cm.setCursor({line: startLine, ch: 0});
         close();
         cm.focus();
-        setStatus('表格已应用到源文件；请继续编辑文本，完成后保存并刷新渲染');
+        setStatus('表格已应用到源文件；请继续编辑文本，完成后保存退出');
       }).catch(function (err) {
         status.textContent = err.message || String(err);
         status.style.color = '#f88';

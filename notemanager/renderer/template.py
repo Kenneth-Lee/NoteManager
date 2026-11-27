@@ -167,7 +167,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
         )
         source_panel_inner = (
             '<div class="nm-source-toolbar">'
-            '<button type="button" class="nm-source-save" id="nm-source-save">保存并刷新渲染</button>'
+            '<button type="button" class="nm-source-save" id="nm-source-save">保存退出</button>'
             '<button type="button" class="nm-source-secondary" id="nm-source-new" title="在与当前笔记相同的目录下新建文件">新建笔记</button>'
             '<button type="button" class="nm-source-secondary" id="nm-source-paste-image" title="把剪贴板中的图片粘贴到当前笔记目录的 _static">粘贴图片</button>'
             '<button type="button" class="nm-source-secondary" id="nm-source-import" title="把本地文件或 URL 导入当前笔记目录的 _static">导入资源</button>'

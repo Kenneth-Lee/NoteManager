@@ -219,17 +219,18 @@
           if (!name || name === 'source') return;
           if (!sourcePanelVisible()) return;
           if (!window.__nmDirty) return;
-          if (
-            !window.confirm(
-              '源文件有未保存的修改，切换到「' +
-                (name === 'render' ? '渲染' : name === 'warnings' ? '诊断' : name) +
-                '」将丢弃这些修改。\n\n点「取消」留在源文件；请先点「保存并刷新渲染」。'
-            )
-          ) {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-          }
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          askUnsaved('切换到「' + (name === 'render' ? '渲染' : name === 'warnings' ? '诊断' : name) + '」').then(function (choice) {
+            if (choice === 'save') {
+              saveSource();
+            } else if (choice === 'discard') {
+              discardSourceChanges();
+              var target = document.querySelector('.nm-tab[data-tab="' + name + '"]');
+              if (target) target.click();
+            }
+          });
         },
         true
       );
@@ -277,6 +278,51 @@
       if (!statusEl) return;
       statusEl.textContent = msg || '';
       statusEl.style.color = isErr ? '#f88' : '#98c379';
+    }
+
+    function askUnsaved(action) {
+      return new Promise(function (resolve) {
+        var overlay = document.createElement('div');
+        overlay.className = 'nm-note-overlay';
+        overlay.innerHTML =
+          '<div class="nm-note-dialog" role="dialog" aria-label="未保存的修改">' +
+            '<div class="nm-note-head"><h2>有未保存的修改</h2>' +
+              '<button type="button" class="nm-note-close" aria-label="关闭">×</button></div>' +
+            '<p class="nm-import-hint">' + (action || '离开源文件') +
+              '前需要处理当前修改。</p>' +
+            '<div class="nm-note-actions">' +
+              '<button type="button" class="nm-note-cancel">取消</button>' +
+              '<button type="button" class="nm-note-danger" data-unsaved="discard">不保存退出</button>' +
+              '<button type="button" class="nm-note-primary" data-unsaved="save">保存并退出</button>' +
+            '</div>' +
+          '</div>';
+        document.body.appendChild(overlay);
+        document.body.classList.add('nm-note-open');
+        function done(value) {
+          if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+          document.body.classList.remove('nm-note-open');
+          resolve(value);
+        }
+        overlay.querySelector('.nm-note-close').addEventListener('click', function () { done('cancel'); });
+        overlay.querySelector('.nm-note-cancel').addEventListener('click', function () { done('cancel'); });
+        overlay.querySelector('[data-unsaved="discard"]').addEventListener('click', function () { done('discard'); });
+        overlay.querySelector('[data-unsaved="save"]').addEventListener('click', function () { done('save'); });
+        overlay.addEventListener('mousedown', function (event) {
+          if (event.target === overlay) done('cancel');
+        });
+        overlay.addEventListener('keydown', function (event) {
+          if (event.key === 'Escape') done('cancel');
+        });
+        var save = overlay.querySelector('[data-unsaved="save"]');
+        if (save) save.focus();
+      });
+    }
+
+    function discardSourceChanges() {
+      if (typeof window.__nmInitialSource === 'string' && cm.getValue() !== window.__nmInitialSource) {
+        cm.setValue(window.__nmInitialSource);
+      }
+      window.__nmDirty = false;
     }
 
     function saveSource(options) {
@@ -346,7 +392,7 @@
       }
       cm.replaceSelection(line + '\n');
       recomputeDirty();
-      setStatus('已插入资源引用，请保存并刷新渲染');
+      setStatus('已插入资源引用，请保存退出');
       return true;
     }
 
@@ -364,7 +410,7 @@
           });
         })
         .then(function (d) {
-          if (insertAssetResult(d)) setStatus('图片已插入，请保存并刷新渲染');
+          if (insertAssetResult(d)) setStatus('图片已插入，请保存退出');
         })
         .catch(function (err) {
           setStatus(err && err.message ? err.message : '上传图片失败', true);
@@ -680,7 +726,7 @@
       cm.replaceSelection(blocks.join('\n\n') + '\n');
       recomputeDirty();
       closeReferenceDialog();
-      setStatus('已插入 ' + blocks.length + ' 条图片引用，请保存并刷新渲染');
+      setStatus('已插入 ' + blocks.length + ' 条图片引用，请保存退出');
     }
 
     function finishImport(d) {
@@ -778,17 +824,20 @@
     }
 
     function quitToRender() {
-      if (window.__nmDirty) {
-        if (
-          !window.confirm(
-            '源文件有未保存的修改，切换到「渲染」将丢弃这些修改。\n\n点「取消」留在源文件；请先 :w 或点「保存并刷新渲染」。'
-          )
-        ) {
-          return;
-        }
+      if (!window.__nmDirty) {
+        if (window.nmExitSplit) window.nmExitSplit();
+        switchToRenderTab();
+        return;
       }
-      if (window.nmExitSplit) window.nmExitSplit();
-      switchToRenderTab();
+      askUnsaved('返回「渲染」').then(function (choice) {
+        if (choice === 'save') {
+          saveSource();
+        } else if (choice === 'discard') {
+          discardSourceChanges();
+          if (window.nmExitSplit) window.nmExitSplit();
+          switchToRenderTab();
+        }
+      });
     }
 
     if (CodeMirror.Vim && typeof CodeMirror.Vim.defineEx === 'function') {
@@ -834,7 +883,7 @@
           '<table class="nm-vim-help-table"><thead><tr><th>命令</th><th>作用</th></tr></thead><tbody>' +
           '<tr><td><code>:w</code></td><td>保存，不退出源文件页签</td></tr>' +
           '<tr><td><code>:wq</code> / <code>:x</code></td><td>保存并返回渲染页</td></tr>' +
-          '<tr><td><code>:q</code></td><td>返回渲染页（有未保存修改会确认）</td></tr>' +
+          '<tr><td><code>:q</code></td><td>返回渲染页；有未保存修改时可保存/放弃/取消</td></tr>' +
           '<tr><td><code>:new</code></td><td>新建笔记</td></tr>' +
           '<tr><td><code>:paste</code> / <code>:img</code></td><td>粘贴剪贴板图片</td></tr>' +
           '<tr><td><code>:import</code></td><td>导入本地文件或 URL 资源</td></tr>' +
