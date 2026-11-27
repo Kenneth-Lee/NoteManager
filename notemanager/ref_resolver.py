@@ -90,6 +90,18 @@ def _resolve_ref_links(
         full_tag = match.group(0)
         label = match.group(1)
 
+        if label.startswith(("dtag:", "index:")):
+            # Keyword indexes are resolved in the browser against
+            # _index/search_index.json.  Keep the link text and mark it so
+            # nm-refs.js can present the matching documents.
+            # A second class attribute would invalidate the rendered HTML;
+            # data attributes are enough for the click handler.
+            attr = html_escape(label)
+            return full_tag.replace(
+                f'href="#ref-{label}"',
+                f'href="#" data-nm-keyword-ref="{attr}"',
+            )
+
         choices = list((ref_candidates or {}).get(label) or [])
         target = (choices[-1] if choices else ref_labels.get(label))
         if not target:
