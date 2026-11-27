@@ -774,6 +774,7 @@ _RUNTIME_STATIC_TOP_LEVEL = {
     "nm-annotations.js",
     "nm-refs.js",
     "nm-table-editor.js",
+    "nm-math-editor.js",
     "nm-overview.js",
     "nm-relations.js",
     "nm-reading.js",
@@ -919,6 +920,10 @@ def _ensure_overview_assets(html_dir) -> None:
         table_editor_js = (static_dir / "nm-table-editor.js").read_text(encoding="utf-8")
     except OSError:
         table_editor_js = ""
+    try:
+        math_editor_js = (static_dir / "nm-math-editor.js").read_text(encoding="utf-8")
+    except OSError:
+        math_editor_js = ""
     if (
         ".nm-overview" not in css
         or "nmRevealSidebarDir" not in js
@@ -944,6 +949,7 @@ def _ensure_overview_assets(html_dir) -> None:
         or "nm-annotate-overlay" not in annotations_js
         or "nm-ref-choice-list" not in refs_js
         or "nm-source-table" not in table_editor_js
+        or "nm-source-math" not in math_editor_js
         or "Ctrl/⌘+Alt+S" not in command_js
     ):
         _copy_static_assets(static_dir)
@@ -1214,6 +1220,17 @@ pre.nm-plaintext { white-space: pre-wrap; overflow-wrap: anywhere; background: #
 .nm-related-empty { font-size: 12px; color: #aaa; margin: 4px 0; }
 .nm-table-dialog { max-width: min(1100px, 96vw); width: min(1100px, 96vw); }
 .nm-vim-help { max-width: 620px; }
+.nm-math-dialog { width: min(760px, calc(100vw - 32px)); }
+.nm-math-mode { display: flex; align-items: center; gap: 14px; margin: 8px 0; font-size: 12px; color: #607d8b; }
+.nm-math-mode select { margin-left: 4px; padding: 3px 6px; }
+.nm-math-format { color: #90a4ae; }
+#nm-math-input { width: 100%; box-sizing: border-box; resize: vertical; min-height: 120px;
+                 font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+                 font-size: 13px; line-height: 1.55; padding: 9px 10px; border: 1px solid #cfd8dc;
+                 border-radius: 5px; background: #fbfcfd; }
+#nm-math-input:focus { outline: 2px solid #90caf9; border-color: #90caf9; }
+.nm-math-preview { min-height: 64px; margin-top: 10px; padding: 14px; border: 1px solid #e3ebef;
+                    border-radius: 5px; background: #fff; overflow-x: auto; color: #263238; }
 .nm-vim-help-table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
 .nm-vim-help-table th, .nm-vim-help-table td { border-bottom: 1px solid #e8eef2;
                                                 padding: 6px 8px; text-align: left; }

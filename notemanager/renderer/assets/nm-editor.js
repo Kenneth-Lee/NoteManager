@@ -836,6 +836,7 @@
           '<tr><td><code>:import</code></td><td>导入本地文件或 URL 资源</td></tr>' +
           '<tr><td><code>:ref</code></td><td>引用工程已有资源</td></tr>' +
           '<tr><td><code>:table</code></td><td>编辑/插入表格</td></tr>' +
+          '<tr><td><code>:math</code> / <code>:formula</code></td><td>编辑/插入数学公式</td></tr>' +
           '<tr><td><code>:delete</code></td><td>删除当前笔记</td></tr>' +
           '<tr><td><code>:external</code> / <code>:ext</code></td><td>在外部编辑器中打开当前源文件</td></tr>' +
           '<tr><td><code>:split</code></td><td>切换分屏</td></tr>' +
@@ -873,6 +874,12 @@
       });
       CodeMirror.Vim.defineEx('table', 'table', function () {
         clickSourceButton('nm-source-table');
+      });
+      CodeMirror.Vim.defineEx('math', 'math', function () {
+        clickSourceButton('nm-source-math');
+      });
+      CodeMirror.Vim.defineEx('formula', 'formula', function () {
+        clickSourceButton('nm-source-math');
       });
       CodeMirror.Vim.defineEx('delete', 'delete', function () {
         clickSourceButton('nm-source-delete');

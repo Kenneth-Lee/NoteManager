@@ -21,3 +21,4 @@
 * [粘贴图片 / 导入资源](asset-import.md)
 * [图片标注](image-annotations.md)
 * [表格图形编辑器](table-editor.md)
+* [数学公式编辑器](math-editor.md)

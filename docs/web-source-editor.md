@@ -39,7 +39,7 @@
 
 **Vim 键位（可选）**：通过工具栏「Vim 键位」复选框启用 CodeMirror 5 自带的 `keymap/vim` 子集（非完整 Neovim）；**默认关闭**，勾选后在本机 `localStorage` 记住偏好。依赖 `addon/dialog`、`addon/search/searchcursor` 等脚本，与主编辑器脚本一并由 `_static` 提供。启用 Vim 后约定：`:w` / `:write` 只写盘并留在源文件页签；`:q` / `:quit` 切到「渲染」并退出分屏，若有未保存修改会先确认；`:wq` / `:x` 保存后退出分屏。
 
-Vim 模式提供与工具栏对应的命令：`:new`（新建笔记）、`:paste` / `:img`（粘贴图片）、`:import`（导入资源）、`:ref`（引用资源）、`:table`（编辑/插入表格）、`:delete`（删除当前笔记）、`:external` / `:ext`（外部编辑器）、`:split`（分屏）、`:sync`（同步滚动）、`:help` / `:vimhelp`（显示命令帮助）。
+Vim 模式提供与工具栏对应的命令：`:new`（新建笔记）、`:paste` / `:img`（粘贴图片）、`:import`（导入资源）、`:ref`（引用资源）、`:table`（编辑/插入表格）、`:math` / `:formula`（编辑/插入公式）、`:delete`（删除当前笔记）、`:external` / `:ext`（外部编辑器）、`:split`（分屏）、`:sync`（同步滚动）、`:help` / `:vimhelp`（显示命令帮助）。
 
 ## API 设计
 
