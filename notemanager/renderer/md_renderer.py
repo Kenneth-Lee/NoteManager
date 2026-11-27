@@ -270,7 +270,11 @@ def _convert_mermaid_blocks(html: str) -> str:
     """Convert mermaid code blocks to <pre class="mermaid"> for client-side rendering."""
     # codehilite wraps them in <div class="highlight"><pre>...<code>CONTENT</code></pre></div>
     # where CONTENT starts with a mermaid keyword
-    mermaid_start = r'(?:graph |pie\s|flowchart |sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt |journey |gitGraph)'
+    mermaid_start = (
+        r'(?:graph\b|pie\b|flowchart\b|sequenceDiagram\b|classDiagram\b|'
+        r'stateDiagram(?:-v2)?\b|erDiagram\b|gantt\b|journey\b|gitGraph\b|'
+        r'mindmap\b|timeline\b|quadrantChart\b|block-beta\b)'
+    )
     pattern = (
         r'<div class="highlight"><pre[^>]*><span></span>'
         r'<code>(' + mermaid_start + r'.*?)</code></pre></div>'
