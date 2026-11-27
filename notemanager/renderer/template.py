@@ -526,6 +526,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <li><code>Ctrl/⌘ K</code> — 打开/关闭命令面板</li>
 <li><code>Ctrl/⌘+Alt+S</code> — 切换分屏</li>
 <li><code>Ctrl/⌘+Alt+E</code> — 用外部编辑器打开当前源文件</li>
+<li><code>Alt+↑</code> / <code>Ctrl/⌘+Alt+U</code> — 回到项目主页并定位当前目录</li>
 <li><code>↑</code> / <code>↓</code> — 在命令面板中选择</li>
 <li><code>Enter</code> — 打开选中项</li>
 <li><code>Esc</code> — 关闭命令面板/帮助</li>

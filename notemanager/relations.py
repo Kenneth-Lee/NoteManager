@@ -201,6 +201,10 @@ def build_relations(documents: list[dict], entries: list[dict]) -> dict:
             related[left].append((score, right))
             related[right].append((score, left))
 
+    by_dir: dict[str, list[str]] = defaultdict(list)
+    for path in meta:
+        by_dir[posixpath.dirname(path)].append(path)
+
     docs: dict[str, dict] = {}
     for path, m in sorted(meta.items()):
         rel = [
@@ -211,14 +215,24 @@ def build_relations(documents: list[dict], entries: list[dict]) -> dict:
         ]
         backlinks = [ref_entry(p) for p in sorted(m["incoming"])[:_MAX_ITEMS]]
         outgoing = [ref_entry(p) for p in sorted(m["outgoing"])[:_MAX_ITEMS]]
+        same_dir_paths = sorted(
+            (
+                p for p in by_dir.get(posixpath.dirname(path), [])
+                if p != path
+            ),
+            key=lambda p: (meta[p]["title"].lower(), p),
+        )
+        same_dir = [ref_entry(p) for p in same_dir_paths[:_MAX_ITEMS]]
         docs[path] = {
             "title": m["title"],
             "backlinks": backlinks,
             "outgoing": outgoing,
             "related": rel,
+            "same_dir": same_dir,
             "backlink_count": len(m["incoming"]),
             "outgoing_count": len(m["outgoing"]),
             "related_count": len(related.get(path, [])),
+            "same_dir_count": len(same_dir_paths),
             "orphan": not backlinks and not outgoing,
         }
 

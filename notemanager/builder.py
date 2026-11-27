@@ -1184,9 +1184,11 @@ pre.nm-plaintext { white-space: pre-wrap; overflow-wrap: anywhere; background: #
 .nm-related-heading h2 { font-size: 17px; margin: 0; }
 .nm-related-orphan { font-size: 11px; color: #8d6e63; background: #efebe9;
                      border: 1px solid #d7ccc8; border-radius: 8px; padding: 1px 7px; }
-.nm-related-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+.nm-related-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
                    gap: 16px; align-items: start; }
 .nm-related-col h3 { font-size: 13px; margin: 0 0 6px; color: #607d8b; }
+.nm-related-col h3 a { color: #1565c0; text-decoration: none; }
+.nm-related-col h3 a:hover { text-decoration: underline; }
 .nm-related-col ul { list-style: none; padding: 0; margin: 0; }
 .nm-related-col li { font-size: 13px; margin: 7px 0; overflow-wrap: anywhere; }
 .nm-related-col a { color: #0066cc; text-decoration: none; }
@@ -1458,6 +1460,9 @@ body.nm-note-open { overflow: hidden; }
 }
 @media (max-width: 600px) {
     .nm-reading-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 1100px) {
+    .nm-related-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 800px) {
     .nm-related-grid { grid-template-columns: 1fr; }

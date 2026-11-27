@@ -8,6 +8,30 @@
     var prefix = el.getAttribute('data-nm-related-prefix') || '';
     if (!src || !path) return;
 
+    function directoryHref() {
+        var slash = path.lastIndexOf('/');
+        var dir = slash >= 0 ? path.slice(0, slash) : '';
+        return prefix + 'index.html' +
+            (dir ? '#nm-dir=' + encodeURIComponent(dir) : '');
+    }
+
+    function goDirectory() {
+        window.location.href = directoryHref();
+    }
+
+    document.addEventListener('keydown', function (event) {
+        var altUp = event.altKey && !event.ctrlKey && !event.metaKey &&
+            !event.shiftKey && event.key === 'ArrowUp';
+        var ctrlAltU = (event.ctrlKey || event.metaKey) && event.altKey &&
+            !event.shiftKey && String(event.code || '') === 'KeyU';
+        if (!altUp && !ctrlAltU) return;
+        var target = event.target;
+        if (target && (target.isContentEditable ||
+                /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || ''))) return;
+        event.preventDefault();
+        goDirectory();
+    });
+
     function makeLink(item) {
         var a = document.createElement('a');
         a.href = prefix + item.path;
@@ -15,12 +39,21 @@
         return a;
     }
 
-    function renderList(title, items, emptyText, total) {
+    function renderList(title, items, emptyText, total, titleHref) {
         var box = document.createElement('div');
         box.className = 'nm-related-col';
         var h = document.createElement('h3');
         var count = typeof total === 'number' ? total : items.length;
-        h.textContent = title + '（' + count + '）';
+        var label = title + '（' + count + '）';
+        if (titleHref) {
+            var titleLink = document.createElement('a');
+            titleLink.href = titleHref;
+            titleLink.textContent = label;
+            titleLink.title = '回到项目主页并定位到当前目录（Alt+↑ 或 Ctrl/⌘+Alt+U）';
+            h.appendChild(titleLink);
+        } else {
+            h.textContent = label;
+        }
         box.appendChild(h);
         if (!items.length) {
             var p = document.createElement('p');
@@ -51,7 +84,8 @@
     }).then(function (data) {
         var doc = data && data.docs && data.docs[path];
         if (!doc) return;
-        var hasAny = (doc.backlinks || []).length || (doc.outgoing || []).length ||
+        var hasAny = (doc.same_dir || []).length ||
+            (doc.backlinks || []).length || (doc.outgoing || []).length ||
             (doc.related || []).length;
         if (!hasAny && !doc.orphan) return;
 
@@ -72,6 +106,10 @@
         panel.appendChild(heading);
         var grid = document.createElement('div');
         grid.className = 'nm-related-grid';
+        grid.appendChild(renderList(
+            '同目录', doc.same_dir || [], '这个目录没有其他笔记',
+            doc.same_dir_count, directoryHref()
+        ));
         grid.appendChild(renderList('被引用', doc.backlinks || [], '还没有其他文档链接到这里', doc.backlink_count));
         grid.appendChild(renderList('引用', doc.outgoing || [], '这篇文档没有内部链接', doc.outgoing_count));
         grid.appendChild(renderList('相关文档', doc.related || [], '没有找到明显相关的文档', doc.related_count));
