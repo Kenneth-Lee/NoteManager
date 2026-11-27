@@ -775,6 +775,7 @@ _RUNTIME_STATIC_TOP_LEVEL = {
     "nm-refs.js",
     "nm-table-editor.js",
     "nm-math-editor.js",
+    "nm-object-editor.js",
     "nm-overview.js",
     "nm-relations.js",
     "nm-reading.js",
@@ -924,6 +925,10 @@ def _ensure_overview_assets(html_dir) -> None:
         math_editor_js = (static_dir / "nm-math-editor.js").read_text(encoding="utf-8")
     except OSError:
         math_editor_js = ""
+    try:
+        object_editor_js = (static_dir / "nm-object-editor.js").read_text(encoding="utf-8")
+    except OSError:
+        object_editor_js = ""
     if (
         ".nm-overview" not in css
         or "nmRevealSidebarDir" not in js
@@ -950,6 +955,7 @@ def _ensure_overview_assets(html_dir) -> None:
         or "nm-ref-choice-list" not in refs_js
         or "nm-source-table" not in table_editor_js
         or "nm-source-math" not in math_editor_js
+        or "nm-source-object" not in object_editor_js
         or "Ctrl/⌘+Alt+S" not in command_js
     ):
         _copy_static_assets(static_dir)
@@ -1225,6 +1231,13 @@ pre.nm-plaintext { white-space: pre-wrap; overflow-wrap: anywhere; background: #
 .nm-math-dialog { width: min(760px, calc(100vw - 32px)); }
 .nm-math-mode { display: flex; align-items: center; gap: 14px; margin: 8px 0; font-size: 12px; color: #607d8b; }
 .nm-math-mode select { margin-left: 4px; padding: 3px 6px; }
+.nm-object-create-choices { display: flex; gap: 8px; margin: 12px 0 4px; }
+.nm-object-create { flex: 1; display: flex; flex-direction: column; gap: 3px; text-align: left;
+                     padding: 10px 12px; border: 1px solid #cfd8dc; border-radius: 6px;
+                     background: #fff; color: #37474f; cursor: pointer; }
+.nm-object-create:hover { background: #e3f2fd; border-color: #90caf9; }
+.nm-object-create strong { color: #1565c0; font-size: 13px; }
+.nm-object-create span { color: #78909c; font-size: 11px; }
 .nm-math-palette { margin: 4px 0 8px; padding: 6px 7px; background: #f7fafc;
                    border: 1px solid #e3ebef; border-radius: 5px; }
 .nm-math-palette-tabs { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 6px; }

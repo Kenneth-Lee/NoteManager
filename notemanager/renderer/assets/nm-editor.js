@@ -839,6 +839,7 @@
           '<tr><td><code>:paste</code> / <code>:img</code></td><td>粘贴剪贴板图片</td></tr>' +
           '<tr><td><code>:import</code></td><td>导入本地文件或 URL 资源</td></tr>' +
           '<tr><td><code>:ref</code></td><td>引用工程已有资源</td></tr>' +
+          '<tr><td><code>:object</code> / <code>:editobject</code></td><td>自动识别并编辑表格/公式；都不是则选择新建</td></tr>' +
           '<tr><td><code>:table</code></td><td>编辑/插入表格</td></tr>' +
           '<tr><td><code>:math</code> / <code>:formula</code></td><td>编辑/插入数学公式</td></tr>' +
           '<tr><td><code>:delete</code></td><td>删除当前笔记</td></tr>' +
@@ -882,6 +883,12 @@
       });
       CodeMirror.Vim.defineEx('ref', 'ref', function () {
         clickSourceButton('nm-source-reference');
+      });
+      CodeMirror.Vim.defineEx('object', 'object', function () {
+        clickSourceButton('nm-source-object');
+      });
+      CodeMirror.Vim.defineEx('editobject', 'editobject', function () {
+        clickSourceButton('nm-source-object');
       });
       CodeMirror.Vim.defineEx('table', 'table', function () {
         clickSourceButton('nm-source-table');

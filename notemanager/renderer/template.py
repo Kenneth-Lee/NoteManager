@@ -190,7 +190,8 @@ def wrap_html(body: str, title: str, html_rel_path: str,
             f'<script src="{prefix}_static/codemirror/keymap/vim.js?v={asset_version}"></script>\n'
             f'<script src="{prefix}_static/nm-editor.js?v={asset_version}"></script>\n'
             f'<script src="{prefix}_static/nm-table-editor.js?v={asset_version}"></script>\n'
-            f'<script src="{prefix}_static/nm-math-editor.js?v={asset_version}"></script>'
+            f'<script src="{prefix}_static/nm-math-editor.js?v={asset_version}"></script>\n'
+            f'<script src="{prefix}_static/nm-object-editor.js?v={asset_version}"></script>'
         )
     else:
         cm_head = ""

@@ -116,7 +116,7 @@ Content-Type: application/json
 
 ### 4.3 前端入口
 
-源文件工具栏增加「编辑/插入表格」按钮。点击时：
+源文件工具栏使用统一的「编辑/插入对象」入口；光标在表格中时自动打开表格编辑器。点击时：
 
 1. 读取 `cm.getValue()` 和 `cm.getCursor().line`；
 2. 调用 `/api/table_parse`；
