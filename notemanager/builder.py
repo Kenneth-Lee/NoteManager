@@ -1106,9 +1106,19 @@ code {
     border-radius: 2px;
 }
 pre code { background: none; padding: 0; }
-table { border-collapse: collapse; width: 100%; }
-th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-th { background: #f5f5f5; }
+.nm-table-shell { display: inline-block; vertical-align: top; max-width: 100%;
+                  margin: 18px 0; overflow-x: auto; background: #fff;
+                  border: 1px solid #e2e8f0; border-radius: 8px; }
+.nm-table-shell table { width: auto; max-width: 100%; margin: 0; border-collapse: separate;
+                        border-spacing: 0; background: #fff; }
+.nm-table-shell th, .nm-table-shell td { border: 0; border-bottom: 1px solid #e8eef2;
+                                         border-right: 1px solid #eef3f6; padding: 8px 12px;
+                                         text-align: left; vertical-align: top; }
+.nm-table-shell th:last-child, .nm-table-shell td:last-child { border-right: 0; }
+.nm-table-shell tbody tr:last-child td { border-bottom: 0; }
+.nm-table-shell thead th { background: #f1f5f9; color: #37474f; font-weight: 600; }
+.nm-table-shell tbody tr:nth-child(even) { background: #fafcfe; }
+.nm-table-shell tbody tr:hover { background: #f1f7fd; }
 .admonition {
     padding: 12px;
     margin: 12px 0;

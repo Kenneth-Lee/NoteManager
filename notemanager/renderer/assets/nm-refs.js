@@ -161,3 +161,16 @@
     });
   });
 })();
+
+/* Keep wide tables readable without stretching small tables across the page. */
+(function () {
+  'use strict';
+  document.querySelectorAll('.nm-tab-panel table').forEach(function (table) {
+    if (table.closest('.nm-table-shell')) return;
+    if (table.classList.contains('nm-table-edit-grid')) return;
+    var shell = document.createElement('div');
+    shell.className = 'nm-table-shell';
+    table.parentNode.insertBefore(shell, table);
+    shell.appendChild(table);
+  });
+})();
