@@ -395,7 +395,7 @@ nmr rebuild
 项目首页目录树支持：
 
 - 目录右侧 `+`：在该目录新建笔记；
-- 侧边栏顶部「＋ 新建」：在**当前文档所在目录**新建；在项目首页时仍在根目录新建；
+- 侧边栏顶部「＋ 新建」：在**当前文档所在目录**新建；项目首页会读取径向目录图或 Alt+↑ 留在 URL 中的 `#nm-dir=` 当前目录，侧边栏顶部同步显示该目录；没有目录信息时才用根目录；
   如果项目 `.NoteManager/template.md|rst|txt` 或用户 `~/.NoteManager/template.md|rst|txt`
   存在，会用模板初始化，并支持 `{{filename}}`、`{{date}}`、`{{year}}`、`{{project}}` 和 `{{multi:=}}` 等替换；
   详见 `docs/note-templates.md`；

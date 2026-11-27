@@ -123,15 +123,28 @@
 
     function currentSourceDir() {
         var meta = document.getElementById('nm-page-meta');
-        if (!meta) return '';
-        try {
-            var cfg = JSON.parse(meta.textContent || '{}');
-            var rel = String(cfg.source_rel || '').replace(/\\/g, '/');
-            var slash = rel.lastIndexOf('/');
-            return slash >= 0 ? rel.slice(0, slash) : '';
-        } catch (e) {
-            return '';
+        if (meta) {
+            try {
+                var cfg = JSON.parse(meta.textContent || '{}');
+                var rel = String(cfg.source_rel || '').replace(/\\/g, '/');
+                var slash = rel.lastIndexOf('/');
+                return slash >= 0 ? rel.slice(0, slash) : '';
+            } catch (e) {
+                // Fall through to the project-home hash.
+            }
         }
+        // On the project home, the radial directory graph and Alt+Up encode
+        // the current directory in #nm-dir=<path>.  Use it for "new note".
+        var hash = String(window.location.hash || '');
+        var marker = '#nm-dir=';
+        if (hash.indexOf(marker) === 0) {
+            try {
+                return decodeURIComponent(hash.slice(marker.length));
+            } catch (e) {
+                return '';
+            }
+        }
+        return '';
     }
 
     function openCreate(dir) {

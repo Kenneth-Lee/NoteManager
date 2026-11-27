@@ -500,7 +500,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <div class="nm-sidebar-crumbs">
 <a href="/" title="返回控制台">控制台</a>
 <span class="nm-crumb-sep">›</span>
-{project_crumb_html}{dir_crumb_html}<span class="nm-crumb-doc" title="{_escape(title)}">{_escape(doc_label)}</span>
+{project_crumb_html}{dir_crumb_html}<span class="nm-crumb-doc" id="nm-sidebar-current" title="{_escape(title)}">{_escape(doc_label)}</span>
 </div>
 <div class="nm-sidebar-tools">
 <button type="button" id="nm-new-root" class="nm-new-note-btn" title="在当前目录新建笔记">＋ 新建</button>

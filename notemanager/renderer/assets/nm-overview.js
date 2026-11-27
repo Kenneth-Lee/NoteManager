@@ -38,9 +38,7 @@
     var scaleInput = document.getElementById('nm-dir-graph-scale');
     var scaleLabel = document.getElementById('nm-dir-graph-scale-label');
     var fitBtn = document.getElementById('nm-dir-graph-scale-fit');
-    var resetBtn = document.getElementById('nm-dir-graph-scale-reset');
     var currentScale = 100;
-    var autoFit = true;
     if (scaleInput) {
         // Keep the control usable even when an old cached page has min=50.
         scaleInput.min = '10';
@@ -316,35 +314,49 @@
         return chain;
     }
 
-    function applyScale(value) {
-        currentScale = value;
-        graph.style.width = value + '%';
-        if (scaleLabel) scaleLabel.textContent = value + '%';
-        if (scaleInput) scaleInput.value = String(value);
-    }
+    var fitWidth = 0;
+    var fitHeight = 0;
 
-    function fitValue() {
-        var vb = graph.viewBox && graph.viewBox.baseVal;
-        var wrap = graph.parentElement;
-        if (!vb || !vb.height || !wrap) return 100;
+    function computeFitSize() {
+        var vb = graph && graph.viewBox && graph.viewBox.baseVal;
+        if (!vb || !vb.width || !vb.height) return;
         var style = window.getComputedStyle(wrap);
         var padX = (parseFloat(style.paddingLeft) || 0) +
                    (parseFloat(style.paddingRight) || 0);
         var padY = (parseFloat(style.paddingTop) || 0) +
                    (parseFloat(style.paddingBottom) || 0);
-        // Leave a small margin so percentage rounding and a scrollbar cannot
-        // clip the last node/label.
         var availW = Math.max(100, wrap.clientWidth - padX - 12);
-        var availH = Math.max(100, (wrap.clientHeight || window.innerHeight * 0.8) - padY - 12);
-        var fitW = Math.min(availW, availH * (vb.width / vb.height));
-        var pct = Math.round(fitW / availW * 100);
-        // Do not stretch a tiny graph (a root plus one child) until it fills a
-        // wide page.  Graph units are already roughly pixel-sized; allowing
-        // 2-5x enlargement makes the root circle huge and the labels clumsy.
-        // Large graphs can still use the full available width/height.
-        var naturalLimit = (vb.width * 1.5) / availW * 100;
-        pct = Math.min(pct, naturalLimit);
-        return Math.max(10, Math.min(100, Math.floor(pct / 5) * 5));
+        var availH = Math.max(
+            180,
+            Math.min(wrap.clientHeight || window.innerHeight * 0.8,
+                     window.innerHeight * 0.78) - padY - 12
+        );
+        // Natural size is 1 viewBox unit = 1 CSS px.  Small graphs stay
+        // small; large graphs are reduced until the whole graph fits.
+        var naturalScale = Math.min(1, availW / vb.width, availH / vb.height);
+        fitWidth = Math.max(1, vb.width * naturalScale);
+        fitHeight = Math.max(1, vb.height * naturalScale);
+    }
+
+    function applyScale(value) {
+        if (!graph) return;
+        if (!fitWidth || !fitHeight) computeFitSize();
+        currentScale = value;
+        graph.style.width = Math.round(fitWidth * value / 100) + 'px';
+        graph.style.height = 'auto';
+        if (scaleLabel) scaleLabel.textContent = value + '%';
+        if (scaleInput) scaleInput.value = String(value);
+    }
+
+    function resetToFit() {
+        fitWidth = 0;
+        fitHeight = 0;
+        computeFitSize();
+        applyScale(100);
+    }
+
+    function fitValue() {
+        return 100;
     }
 
     function updateNav() {
@@ -372,8 +384,17 @@
         });
     }
 
+    function updateSidebarCurrent(node) {
+        var label = document.getElementById('nm-sidebar-current');
+        if (!label) return;
+        var path = String(node && node.path || '');
+        label.textContent = path || '首页';
+        label.title = path ? ('当前目录 ' + path) : '项目首页';
+    }
+
     function render(node) {
         current = node;
+        updateSidebarCurrent(node);
         // Replace the whole SVG, not its innerHTML.  Assigning an <svg> string
         // as innerHTML of an existing <svg> creates a nested SVG and breaks
         // the viewBox/coordinate system.
@@ -390,12 +411,14 @@
                 // clicked without causing a new drill-down).
                 if (window.nmRevealSidebarDir) window.nmRevealSidebarDir(target.id);
                 if (event.shiftKey || event.altKey) return;
-                if (target !== current && (target.children || []).length) {
+                if (target !== current) {
+                    // A leaf directory is still a directory the user wants to
+                    // focus; don't make its click a no-op.
                     navigate(target);
                 }
             });
         });
-        applyScale(currentScale);
+        resetToFit();
         updateNav();
         if (node.path && window.nmRevealSidebarDir) {
             window.nmRevealSidebarDir(node.id);
@@ -414,7 +437,6 @@
             );
         } catch (e) {}
         render(node);
-        if (autoFit) applyScale(fitValue());
     }
 
     function pathFromLocation() {
@@ -433,7 +455,6 @@
         stack = ancestorsOf(node);
         current = node;
         render(node);
-        if (autoFit) applyScale(fitValue());
     }
 
     if (backBtn) {
@@ -456,33 +477,12 @@
     if (scaleInput) {
         scaleInput.addEventListener('input', function () {
             var value = parseInt(scaleInput.value, 10) || 100;
-            autoFit = false;
             applyScale(value);
-            try {
-                localStorage.setItem('nmGraphScale', String(value));
-                localStorage.setItem('nmGraphAuto', '0');
-            } catch (e) {}
         });
     }
     if (fitBtn) {
         fitBtn.addEventListener('click', function () {
-            var value = fitValue();
-            autoFit = true;
-            applyScale(value);
-            try {
-                localStorage.setItem('nmGraphScale', String(value));
-                localStorage.setItem('nmGraphAuto', '1');
-            } catch (e) {}
-        });
-    }
-    if (resetBtn) {
-        resetBtn.addEventListener('click', function () {
-            autoFit = true;
             applyScale(fitValue());
-            try {
-                localStorage.removeItem('nmGraphScale');
-                localStorage.removeItem('nmGraphAuto');
-            } catch (e) {}
         });
     }
     window.addEventListener('popstate', function (event) {
@@ -505,19 +505,7 @@
     } catch (e) {}
     render(initialNode);
 
-    var savedScale = null;
-    var savedAuto = null;
-    try {
-        savedScale = localStorage.getItem('nmGraphScale');
-        savedAuto = localStorage.getItem('nmGraphAuto');
-    } catch (e) {}
-    autoFit = savedAuto === '1' || !savedScale;
-    var initialScale;
-    if (autoFit) {
-        initialScale = fitValue();
-    } else {
-        initialScale = savedScale ? parseInt(savedScale, 10) : 100;
-    }
-    if (!(initialScale >= 10 && initialScale <= 300)) initialScale = 100;
-    applyScale(initialScale);
+    // Always start a view at its fitted size.  A saved zoom from another
+    // directory would make the first render overflow and bring back scrollbars.
+    applyScale(100);
 })();

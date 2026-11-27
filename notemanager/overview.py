@@ -884,7 +884,6 @@ def render_directory_overview(overview: dict | None) -> str:
         '<input id="nm-dir-graph-scale" type="range" min="10" max="300" step="5" value="100">'
         '<span id="nm-dir-graph-scale-label">100%</span>'
         '<button id="nm-dir-graph-scale-fit" type="button">适应</button>'
-        '<button id="nm-dir-graph-scale-reset" type="button">重置</button>'
         "</div>"
         + _render_directory_graph(tree, project)
         + f'<script type="application/json" id="nm-dir-graph-data">{graph_json}</script>'

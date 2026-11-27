@@ -37,7 +37,7 @@ def _make_project(tmp_path: Path, source: str, ext: str = ".md") -> Path:
     return root / ".NoteManager" / "html"
 
 
-def _run_browser(page: Path, script: str) -> dict:
+def _run_browser(page: Path, script: str, suffix: str = "") -> dict:
     page.write_text(
         page.read_text(encoding="utf-8").replace("</body>", script + "</body>"),
         encoding="utf-8",
@@ -60,7 +60,7 @@ def _run_browser(page: Path, script: str) -> dict:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        url = f"http://127.0.0.1:{server.server_port}/p/0/{page.name}"
+        url = f"http://127.0.0.1:{server.server_port}/p/0/{page.name}{suffix}"
         result = subprocess.run(
             [
                 CHROMIUM,
@@ -236,3 +236,121 @@ window.addEventListener('load', function () {
     assert result["choices"] == 2
     assert result["tab"] == "render"
     assert result["restored"] is True
+
+
+def test_home_hash_directory_is_used_for_new_note(tmp_path):
+    root = tmp_path / "project"
+    (root / "sub").mkdir(parents=True)
+    (root / "sub" / "one.md").write_text("# One\n", encoding="utf-8")
+    full_build(root)
+    page = root / ".NoteManager" / "html" / "index.html"
+    result = _run_browser(
+        page,
+        """<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    document.getElementById('nm-new-root').click();
+    setTimeout(function () {
+      var dir = document.getElementById('nm-note-dir');
+      var crumb = document.getElementById('nm-sidebar-current');
+      document.title = JSON.stringify({
+        dir: dir ? dir.textContent : null,
+        crumb: crumb ? crumb.textContent : null
+      });
+    }, 300);
+  }, 800);
+});
+</script>""",
+        suffix="#nm-dir=sub",
+    )
+    assert result["dir"] == "sub"
+    assert result["crumb"] == "sub"
+
+
+def test_clicking_leaf_directory_updates_current_path(tmp_path):
+    root = tmp_path / "project"
+    (root / "sub" / "leaf").mkdir(parents=True)
+    (root / "sub" / "leaf" / "one.md").write_text("# One\n", encoding="utf-8")
+    full_build(root)
+    page = root / ".NoteManager" / "html" / "index.html"
+    result = _run_browser(
+        page,
+        """<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    var link = document.querySelector('a.nm-g-node[data-dir-path="sub/leaf"]');
+    if (!link) { document.title = JSON.stringify({error: 'no leaf node'}); return; }
+    var graph = document.querySelector('.nm-dir-graph');
+    var widthBefore = graph ? graph.style.width : null;
+    var slider = document.getElementById('nm-dir-graph-scale');
+    slider.value = '200';
+    slider.dispatchEvent(new Event('input', {bubbles: true}));
+    link.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+    setTimeout(function () {
+      var graphAfter = document.querySelector('.nm-dir-graph');
+      var widthAfter = graphAfter ? graphAfter.style.width : null;
+      var wrapAfter = graphAfter ? graphAfter.parentElement : null;
+      var scaleLabel = document.getElementById('nm-dir-graph-scale-label');
+      document.getElementById('nm-new-root').click();
+      setTimeout(function () {
+        var dir = document.getElementById('nm-note-dir');
+        var crumb = document.getElementById('nm-sidebar-current');
+        document.title = JSON.stringify({
+          hash: decodeURIComponent(location.hash),
+          dir: dir ? dir.textContent : null,
+          crumb: crumb ? crumb.textContent : null,
+          widthBefore: widthBefore,
+          widthAfter: widthAfter,
+          wrapWidth: wrapAfter ? wrapAfter.clientWidth : null,
+          scale: scaleLabel ? scaleLabel.textContent : null
+        });
+      }, 250);
+    }, 350);
+  }, 900);
+});
+</script>""",
+    )
+    assert result["hash"] == "#nm-dir=sub/leaf"
+    assert result["dir"] == "sub/leaf"
+    assert result["crumb"] == "sub/leaf"
+    assert result["scale"] == "100%"
+    assert result["widthAfter"]
+    assert int(result["widthAfter"].replace("px", "")) <= result["wrapWidth"]
+
+
+def test_large_radial_graph_starts_fitted_without_scrollbars(tmp_path):
+    root = tmp_path / "project"
+    for i in range(18):
+        d = root / ("dir-%02d" % i)
+        d.mkdir(parents=True)
+        for j in range(3):
+            (d / ("doc-%02d.md" % j)).write_text("# Doc\n", encoding="utf-8")
+    full_build(root)
+    page = root / ".NoteManager" / "html" / "index.html"
+    result = _run_browser(
+        page,
+        """<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    var graph = document.querySelector('.nm-dir-graph');
+    var wrap = graph ? graph.parentElement : null;
+    var label = document.getElementById('nm-dir-graph-scale-label');
+    var r = graph ? graph.getBoundingClientRect() : null;
+    document.title = JSON.stringify({
+      scale: label ? label.textContent : null,
+      w: r ? Math.round(r.width) : null,
+      h: r ? Math.round(r.height) : null,
+      cw: wrap ? wrap.clientWidth : null,
+      ch: wrap ? wrap.clientHeight : null,
+      sw: wrap ? wrap.scrollWidth : null,
+      sh: wrap ? wrap.scrollHeight : null
+    });
+  }, 1200);
+});
+</script>""",
+    )
+    assert result["scale"] == "100%"
+    assert result["w"] <= result["cw"] + 1, result
+    assert result["h"] <= result["ch"] + 1, result
+    assert result["sw"] <= result["cw"] + 1, result
+    assert result["sh"] <= result["ch"] + 1, result
