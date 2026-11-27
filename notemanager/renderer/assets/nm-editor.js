@@ -841,7 +841,41 @@
     }
 
     if (CodeMirror.Vim && typeof CodeMirror.Vim.defineEx === 'function') {
-      CodeMirror.commands.save = function () {
+      // Ex commands are global to CodeMirror.Vim.  Wrap defineEx so a
+      // CodeMirror instance can carry its own local Ex command scope (the
+      // Mermaid dialog does).  Without this, :q in a nested editor would run
+      // the note-level quit command.
+      if (!CodeMirror.Vim.__nmScopedEx) {
+        var nmOriginalDefineEx = CodeMirror.Vim.defineEx;
+        CodeMirror.Vim.defineEx = function (name, prefix, func) {
+          return nmOriginalDefineEx.call(CodeMirror.Vim, name, prefix, function (cm, params) {
+            var local = cm && cm.__nmMermaidEditor;
+            if (local) {
+              if (name === 'quit') {
+                local.close();
+                return;
+              }
+              if (name === 'wq' || name === 'x') {
+                local.apply();
+                return;
+              }
+              if (name === 'help' || name === 'vimhelp') {
+                local.message('Mermaid 编辑框：:w 应用并关闭，:q 关闭，Esc 返回源码');
+                return;
+              }
+              local.message('Mermaid 编辑框中不可用：:' + (prefix || name));
+              return;
+            }
+            return func.apply(this, arguments);
+          });
+        };
+        CodeMirror.Vim.__nmScopedEx = true;
+      }
+      CodeMirror.commands.save = function (cm) {
+        if (cm && cm.__nmMermaidEditor) {
+          cm.__nmMermaidEditor.apply();
+          return;
+        }
         saveSource({stay: true});
       };
       CodeMirror.Vim.defineEx('quit', 'q', function () {

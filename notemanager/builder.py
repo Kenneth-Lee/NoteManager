@@ -1232,9 +1232,9 @@ pre.nm-plaintext { white-space: pre-wrap; overflow-wrap: anywhere; background: #
 .nm-related-col a:hover { text-decoration: underline; }
 .nm-related-snippet { font-size: 11px; color: #999; margin-top: 2px; line-height: 1.45; }
 .nm-related-empty { font-size: 12px; color: #aaa; margin: 4px 0; }
-.nm-table-dialog { max-width: min(1100px, 96vw); width: min(1100px, 96vw); }
-.nm-vim-help { max-width: 620px; }
-.nm-math-dialog { width: min(760px, calc(100vw - 32px)); }
+.nm-note-dialog.nm-table-dialog { max-width: min(1100px, 96vw); width: min(1100px, 96vw); }
+.nm-note-dialog.nm-vim-help { max-width: 620px; }
+.nm-note-dialog.nm-math-dialog { width: min(760px, calc(100vw - 32px)); }
 .nm-math-mode { display: flex; align-items: center; gap: 14px; margin: 8px 0; font-size: 12px; color: #607d8b; }
 .nm-math-mode select { margin-left: 4px; padding: 3px 6px; }
 .nm-object-create-choices { display: flex; gap: 8px; margin: 12px 0 4px; flex-wrap: wrap; }
@@ -1244,20 +1244,60 @@ pre.nm-plaintext { white-space: pre-wrap; overflow-wrap: anywhere; background: #
 .nm-object-create:hover { background: #e3f2fd; border-color: #90caf9; }
 .nm-object-create strong { color: #1565c0; font-size: 13px; }
 .nm-object-create span { color: #78909c; font-size: 11px; }
-.nm-mermaid-dialog { width: min(980px, calc(100vw - 32px)); max-height: 92vh; display: flex; flex-direction: column; }
-.nm-mermaid-template { margin: 6px 0; color: #607d8b; font-size: 12px; }
+.nm-note-dialog.nm-mermaid-dialog { width: min(1440px, 98vw); height: min(84vh, 920px);
+                                    max-height: calc(100vh - 8vh); display: flex; flex-direction: column; }
+.nm-mermaid-overlay { padding-top: 4vh; }
+.nm-mermaid-template { margin: 4px 0 6px; color: #607d8b; font-size: 12px; }
 .nm-mermaid-template select { margin-left: 5px; padding: 3px 6px; }
+.nm-mermaid-palette { margin: 2px 0 8px; padding: 5px 7px; background: #f7fafc;
+                      border: 1px solid #e3ebef; border-radius: 5px; flex: 0 0 auto; }
+.nm-mermaid-palette-tabs { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 5px; }
+.nm-mermaid-palette-tabs button { border: 1px solid transparent; background: transparent; color: #78909c;
+                                   border-radius: 4px; padding: 2px 7px; cursor: pointer; font-size: 11px; }
+.nm-mermaid-palette-tabs button:hover { background: #eef5f9; color: #1565c0; }
+.nm-mermaid-palette-tabs button.active { background: #e3f2fd; color: #1565c0; border-color: #bbdefb; }
+.nm-mermaid-palette-title { color: #90a4ae; font-size: 11px; align-self: center; margin-right: 3px; }
+.nm-mermaid-palette-list { display: flex; flex-wrap: wrap; gap: 4px; max-height: 82px; overflow-y: auto; }
+.nm-mermaid-properties { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+                         margin-top: 5px; font-size: 11px; color: #607d8b; }
+.nm-mermaid-property { display: inline-flex; align-items: center; gap: 4px; }
+.nm-mermaid-property input[type=text] { width: 150px; padding: 2px 5px; border: 1px solid #cfd8dc;
+                                        border-radius: 3px; font-size: 11px; }
+.nm-mermaid-param-overlay { z-index: 1100; padding-top: 8vh; }
+.nm-note-dialog.nm-mermaid-param-dialog { width: min(540px, calc(100vw - 32px)); max-height: 84vh; overflow-y: auto; }
+.nm-mermaid-param-fields { display: grid; gap: 8px; margin-top: 10px; }
+.nm-mermaid-param-field { display: grid; grid-template-columns: 130px minmax(0, 1fr); align-items: center;
+                           gap: 8px; font-size: 12px; color: #607d8b; }
+.nm-mermaid-param-field input, .nm-mermaid-param-field select { width: 100%; box-sizing: border-box;
+                           padding: 5px 7px; border: 1px solid #cfd8dc; border-radius: 4px;
+                           font-size: 12px; background: #fff; }
+.nm-mermaid-param-preview-label { margin: 12px 0 4px; color: #78909c; font-size: 11px; }
+.nm-mermaid-param-preview { margin: 0; padding: 8px 10px; background: #f5f7f8; border: 1px solid #e0e5e8;
+                            border-radius: 4px; font-family: 'SFMono-Regular', Consolas, monospace;
+                            font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.nm-mermaid-param-diagram { min-height: 72px; max-height: 220px; overflow: auto; padding: 8px;
+                            border: 1px solid #e3ebef; border-radius: 4px; background: #fff;
+                            color: #90a4ae; font-size: 12px; }
+.nm-mermaid-param-diagram svg { max-width: 100%; height: auto; }
+.nm-mermaid-palette-list button { border: 1px solid #d5e2e7; background: #fff; color: #455a64;
+                                   border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 11px; }
+.nm-mermaid-palette-list button:hover { background: #e3f2fd; border-color: #90caf9; color: #1565c0; }
 .nm-mermaid-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px;
-                    min-height: 280px; max-height: 62vh; }
+                    flex: 1 1 auto; min-height: 0; }
 #nm-mermaid-input { width: 100%; height: 100%; box-sizing: border-box; resize: none;
                    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
                    font-size: 13px; line-height: 1.55; padding: 9px 10px; border: 1px solid #cfd8dc;
                    border-radius: 5px; background: #fbfcfd; }
 #nm-mermaid-input:focus { outline: 2px solid #90caf9; border-color: #90caf9; }
+.nm-mermaid-body .CodeMirror { height: 100%; border: 1px solid #cfd8dc; border-radius: 5px; font-size: 13px; }
 .nm-mermaid-preview { border: 1px solid #e3ebef; border-radius: 5px; background: #fff;
-                      padding: 10px; overflow: auto; min-height: 180px; }
+                      padding: 10px; overflow: auto; min-height: 0; }
 .nm-mermaid-preview svg { max-width: 100%; height: auto; }
-@media (max-width: 760px) { .nm-mermaid-body { grid-template-columns: 1fr; max-height: none; } }
+@media (max-width: 760px) {
+    .nm-note-dialog.nm-mermaid-dialog { width: calc(100vw - 24px); height: 92vh; }
+    .nm-mermaid-overlay { padding-top: 2vh; }
+    .nm-mermaid-body { grid-template-columns: 1fr; }
+}
 .nm-math-palette { margin: 4px 0 8px; padding: 6px 7px; background: #f7fafc;
                    border: 1px solid #e3ebef; border-radius: 5px; }
 .nm-math-palette-tabs { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 6px; }

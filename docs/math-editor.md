@@ -82,15 +82,7 @@ KaTeX 预览失败时显示错误信息，但保留用户输入，不阻止用�
 
 ### 4.3 源码生成规则
 
-Markdown 行内生成 `$text$`，行间生成：
-
-```markdown
-$$
-text
-$$
-```
-
-reST 行内生成 ``:math:`text` ``，行间生成：
+Markdown 行内生成 `$text$`，行间用一对 `$$` 包住内容。reST 行内生成 ``:math:`text` ``，行间生成：
 
 ```rst
 .. math::
