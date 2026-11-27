@@ -1034,6 +1034,7 @@ def _render_tree(node, depth, parent_path=""):
             # File node
             path = value["path"]
             title = value["title"]
+            display_title = title
             source = value.get("source_path") or ""
             source_attr = (
                 f' data-nm-source="{html_escape(str(source), quote=True)}"'
@@ -1049,7 +1050,8 @@ def _render_tree(node, depth, parent_path=""):
                 )
             parts.append(
                 f'<li class="nm-file"{source_attr} data-nm-html="{html_escape(path, quote=True)}">'
-                f'<a href="{html_escape(path, quote=True)}">{html_escape(title)}</a>'
+                f'<a href="{html_escape(path, quote=True)}" title="{html_escape(title)}">'
+                f'{html_escape(display_title)}</a>'
                 f'{delete_btn}</li>'
             )
     parts.append('</ul>')
@@ -1223,6 +1225,20 @@ pre.nm-plaintext { white-space: pre-wrap; overflow-wrap: anywhere; background: #
 .nm-math-dialog { width: min(760px, calc(100vw - 32px)); }
 .nm-math-mode { display: flex; align-items: center; gap: 14px; margin: 8px 0; font-size: 12px; color: #607d8b; }
 .nm-math-mode select { margin-left: 4px; padding: 3px 6px; }
+.nm-math-palette { margin: 4px 0 8px; padding: 6px 7px; background: #f7fafc;
+                   border: 1px solid #e3ebef; border-radius: 5px; }
+.nm-math-palette-tabs { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 6px; }
+.nm-math-palette-tabs button { border: 1px solid transparent; background: transparent; color: #78909c;
+                                border-radius: 4px; padding: 2px 7px; cursor: pointer; font-size: 11px; }
+.nm-math-palette-tabs button:hover { background: #eef5f9; color: #1565c0; }
+.nm-math-palette-tabs button.active { background: #e3f2fd; color: #1565c0; border-color: #bbdefb; }
+.nm-math-palette-list { display: flex; flex-wrap: wrap; gap: 4px; max-height: 104px; overflow-y: auto; }
+.nm-math-symbol-btn { min-width: 38px; min-height: 34px; border: 1px solid #d5e2e7; background: #fff;
+                      color: #37474f; border-radius: 4px; padding: 3px 7px; cursor: pointer;
+                      display: inline-flex; align-items: center; justify-content: center; }
+.nm-math-symbol-btn:hover { background: #e3f2fd; border-color: #90caf9; }
+.nm-math-icon .katex { font-size: 1.05em; }
+.nm-math-icon { display: inline-block; line-height: 1.15; }
 .nm-math-format { color: #90a4ae; }
 #nm-math-input { width: 100%; box-sizing: border-box; resize: vertical; min-height: 120px;
                  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
@@ -2364,6 +2380,26 @@ window.nmRevealSidebarDir = function(id) {
                 window.history.replaceState({}, '', u.pathname + (u.search || '') + u.hash);
             } catch (e) {}
         })();
+    });
+})();
+
+/* Document tab shortcuts: Ctrl/⌘+Alt+1/2/3, with C as a source fallback. */
+(function () {
+    var TAB_KEYS = {
+        Digit1: 'render', Digit2: 'source', Digit3: 'warnings',
+        KeyC: 'source'
+    };
+    document.addEventListener('keydown', function (event) {
+        if (!(event.ctrlKey || event.metaKey) || !event.altKey || event.shiftKey) return;
+        var name = TAB_KEYS[String(event.code || '')];
+        if (!name) return;
+        var tab = document.querySelector('.nm-tab[data-tab="' + name + '"]');
+        if (!tab) return;
+        event.preventDefault();
+        tab.click();
+        if (name === 'source' && window.__nmCM) {
+            setTimeout(function () { window.__nmCM.focus(); }, 0);
+        }
     });
 })();
 

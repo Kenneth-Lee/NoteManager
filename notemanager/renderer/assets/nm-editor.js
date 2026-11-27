@@ -51,6 +51,7 @@
     add('nm-source-paste-image', '把剪贴板中的图片粘贴到当前笔记目录的 _static', '粘贴图片', NM_NEW_STYLE);
     add('nm-source-import', '把本地文件或 URL 导入当前笔记目录的 _static', '导入资源', NM_NEW_STYLE);
     add('nm-source-reference', '从工程已有资源中选择并插入当前笔记', '引用资源', NM_NEW_STYLE);
+    add('nm-source-rename', '重命名当前笔记文件', '重命名', NM_NEW_STYLE);
     add('nm-source-delete', '删除磁盘上的当前源文件', '删除当前笔记', NM_DEL_STYLE);
   }
 
@@ -238,6 +239,9 @@
         if (!tab) return;
         if (tab.getAttribute('data-tab') !== 'source') return;
         scheduleRefresh(window.__nmCM);
+        setTimeout(function () {
+          if (window.__nmCM) window.__nmCM.focus();
+        }, 0);
       });
     }
 
@@ -838,6 +842,7 @@
           '<tr><td><code>:table</code></td><td>编辑/插入表格</td></tr>' +
           '<tr><td><code>:math</code> / <code>:formula</code></td><td>编辑/插入数学公式</td></tr>' +
           '<tr><td><code>:delete</code></td><td>删除当前笔记</td></tr>' +
+          '<tr><td><code>:rename</code> / <code>:mv</code></td><td>重命名当前笔记文件</td></tr>' +
           '<tr><td><code>:external</code> / <code>:ext</code></td><td>在外部编辑器中打开当前源文件</td></tr>' +
           '<tr><td><code>:split</code></td><td>切换分屏</td></tr>' +
           '<tr><td><code>:sync</code></td><td>切换分屏同步滚动</td></tr>' +
@@ -851,6 +856,12 @@
         });
         vimHelpOverlay.querySelector('.nm-note-close').addEventListener('click', closeVimHelp);
         vimHelpOverlay.querySelector('.nm-note-cancel').addEventListener('click', closeVimHelp);
+        document.addEventListener('keydown', function (event) {
+          if (event.key === 'Escape' && vimHelpOverlay && !vimHelpOverlay.hidden) {
+            event.preventDefault();
+            closeVimHelp();
+          }
+        });
       }
       vimHelpOverlay.hidden = false;
       document.body.classList.add('nm-note-open');
@@ -883,6 +894,12 @@
       });
       CodeMirror.Vim.defineEx('delete', 'delete', function () {
         clickSourceButton('nm-source-delete');
+      });
+      CodeMirror.Vim.defineEx('rename', 'rename', function () {
+        clickSourceButton('nm-source-rename');
+      });
+      CodeMirror.Vim.defineEx('mv', 'mv', function () {
+        clickSourceButton('nm-source-rename');
       });
       CodeMirror.Vim.defineEx('external', 'external', function () {
         clickSourceButton('nm-open-external');
@@ -989,6 +1006,49 @@
             window.__nmSuppressBuildReload = false;
             setStatus(err && err.message ? err.message : '网络错误', true);
           });
+      });
+    }
+
+    var renameBtn = document.getElementById('nm-source-rename');
+    if (renameBtn) {
+      renameBtn.addEventListener('click', function () {
+        var oldName = String(cfg.source_rel || '').split('/').pop();
+        if (!oldName) return;
+        if (window.__nmDirty) {
+          setStatus('请先保存当前修改，再重命名文件', true);
+          return;
+        }
+        var name = window.prompt('新的文件名（可以只写主文件名）', oldName);
+        if (name === null) return;
+        name = String(name).trim();
+        if (!name || name === oldName) return;
+        renameBtn.disabled = true;
+        setStatus('正在重命名…');
+        window.__nmSuppressBuildReload = true;
+        fetch('/api/rename_note', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json; charset=utf-8'},
+          body: JSON.stringify({
+            project: project,
+            source_rel_path: cfg.source_rel,
+            new_name: name,
+          }),
+        }).then(function (r) {
+          return r.json().then(function (d) {
+            if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+            return d;
+          });
+        }).then(function (d) {
+          var target = d.open_url || (d.html_rel_path
+            ? '/p/' + project + '/' + d.html_rel_path.replace(/[#?]/g, encodeURIComponent)
+            : '');
+          if (!target) throw new Error('服务端没有返回新文件地址');
+          window.location.assign(target);
+        }).catch(function (err) {
+          window.__nmSuppressBuildReload = false;
+          renameBtn.disabled = false;
+          setStatus(err && err.message ? err.message : '重命名失败', true);
+        });
       });
     }
 

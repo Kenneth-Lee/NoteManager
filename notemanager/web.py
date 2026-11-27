@@ -537,6 +537,17 @@ class WebHandler(BaseHTTPRequestHandler):
                 pj,
                 str(data.get("source_rel_path", "")),
             )
+        elif path == "/api/rename_note":
+            try:
+                pj = int(data.get("project", -1))
+            except (TypeError, ValueError):
+                self._send_json({"ok": False, "error": "无效工程编号"})
+                return
+            resp = self.daemon_ref.rename_managed_source(
+                pj,
+                str(data.get("source_rel_path", "")),
+                str(data.get("new_name", "")),
+            )
         elif path == "/api/delete_note":
             try:
                 pj = int(data.get("project", -1))

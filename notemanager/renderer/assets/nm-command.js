@@ -289,7 +289,7 @@
             '<div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>在命令面板中选择</dd></div>' +
             '<div><dt><kbd>Enter</kbd></dt><dd>打开选中的文档或执行命令</dd></div>' +
             '<div><dt><kbd>Esc</kbd></dt><dd>关闭命令面板或本帮助</dd></div>' +
-            '<div><dt><kbd>Ctrl/⌘+Alt+1/2/3</kbd></dt><dd>切换到渲染 / 源文件 / 诊断</dd></div>' +
+            '<div><dt><kbd>Ctrl/⌘+Alt+1/2/3</kbd> 或 <kbd>Ctrl/⌘+Alt+C</kbd></dt><dd>切换到渲染 / 源文件 / 诊断</dd></div>' +
             '<div><dt><kbd>Ctrl/⌘+Alt+S</kbd></dt><dd>切换分屏（文档页）</dd></div>' +
             '<div><dt><kbd>Ctrl/⌘+Alt+E</kbd></dt><dd>用外部编辑器打开当前源文件</dd></div>' +
             '<div><dt><kbd>Alt+↑ / Ctrl/⌘+Alt+U</kbd></dt><dd>回到项目主页并定位当前目录</dd></div>' +

@@ -120,6 +120,19 @@
         });
     }
 
+    function currentSourceDir() {
+        var meta = document.getElementById('nm-page-meta');
+        if (!meta) return '';
+        try {
+            var cfg = JSON.parse(meta.textContent || '{}');
+            var rel = String(cfg.source_rel || '').replace(/\\/g, '/');
+            var slash = rel.lastIndexOf('/');
+            return slash >= 0 ? rel.slice(0, slash) : '';
+        } catch (e) {
+            return '';
+        }
+    }
+
     function openCreate(dir) {
         ensureCreateDialog();
         createOverlay.dataset.dir = String(dir || '');
@@ -539,7 +552,8 @@
 
     var rootBtn = document.getElementById('nm-new-root');
     if (rootBtn) {
-        rootBtn.addEventListener('click', function () { openCreate(''); });
+        rootBtn.title = '在当前目录新建笔记';
+        rootBtn.addEventListener('click', function () { openCreate(currentSourceDir()); });
     }
     document.querySelectorAll('[data-nm-add-dir]').forEach(function (btn) {
         btn.addEventListener('click', function (event) {

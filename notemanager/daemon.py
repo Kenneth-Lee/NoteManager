@@ -2334,6 +2334,92 @@ class NoteManagerDaemon:
                 shutil.move(str(src), str(dst))
         shutil.rmtree(batch, ignore_errors=True)
 
+    def rename_managed_source(
+        self,
+        project_idx: int,
+        source_rel_posix: str,
+        new_name: str,
+    ) -> dict:
+        """Rename one managed note in place and rebuild its HTML/index entries."""
+        with self._lock:
+            dirs = list(self._observers.keys())
+        if not (0 <= project_idx < len(dirs)):
+            return {"ok": False, "error": "无效工程编号"}
+        root, rel = self._validated_source_rel(Path(dirs[project_idx]), source_rel_posix)
+        if rel is None:
+            return {"ok": False, "error": "非法源文件路径"}
+        root_r = root.resolve()
+        abs_src = (root / rel).resolve()
+        try:
+            abs_src.relative_to(root_r)
+        except ValueError:
+            return {"ok": False, "error": "拒绝路径"}
+        if not abs_src.is_file():
+            return {"ok": False, "error": "文件不存在"}
+
+        raw = str(new_name or "").strip()
+        if not raw:
+            return {"ok": False, "error": "新文件名为空"}
+        if any(c in raw for c in '<>:"|?*\\\x00') or "/" in raw or "\\" in raw:
+            return {"ok": False, "error": "文件名含有非法字符或路径分隔符"}
+        if len(raw) > 160:
+            return {"ok": False, "error": "文件名过长"}
+        if Path(raw).name != raw:
+            return {"ok": False, "error": "仅允许单个文件名，不要包含路径"}
+        old_ext = rel.suffix.lower()
+        new_ext = Path(raw).suffix.lower()
+        if new_ext in (".md", ".rst", ".txt"):
+            out_name = raw
+        elif new_ext:
+            return {"ok": False, "error": "仅支持 .md / .rst / .txt 文件"}
+        else:
+            out_name = raw + old_ext
+        new_rel = rel.parent / out_name
+        new_abs = (root / new_rel).resolve()
+        try:
+            new_abs.relative_to(root_r)
+        except ValueError:
+            return {"ok": False, "error": "拒绝路径"}
+        if new_abs == abs_src:
+            return {"ok": True, "source_rel_path": rel.as_posix(),
+                    "html_rel_path": rel.with_suffix(".html").as_posix()}
+        if new_abs.exists():
+            return {"ok": False, "error": "目标文件已存在"}
+        if new_abs.parent == abs_src.parent and old_ext != new_ext:
+            # Extension changes are allowed only when the content format is
+            # explicitly selected by the new name.
+            pass
+
+        html_root = root / ".NoteManager" / "html"
+        old_html = html_root / rel.with_suffix(".html")
+        new_html = html_root / new_rel.with_suffix(".html")
+        try:
+            suppress_path(abs_src)
+            abs_src.rename(new_abs)
+            if old_html.is_file():
+                old_html.unlink()
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
+
+        try:
+            from notemanager.builder import update_file
+            update_file(
+                root,
+                new_abs,
+                refresh_static_assets=False,
+                refresh_project_assets=False,
+            )
+        except Exception as e:
+            logger.exception("重命名后重建失败")
+            return {"ok": False, "error": f"重命名后重建失败: {e}"}
+
+        return {
+            "ok": True,
+            "source_rel_path": new_rel.as_posix(),
+            "html_rel_path": new_html.as_posix(),
+            "open_url": f"/p/{project_idx}/{new_html.as_posix()}",
+        }
+
     def delete_managed_source(
         self,
         project_idx: int,

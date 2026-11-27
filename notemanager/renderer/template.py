@@ -501,7 +501,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 {project_crumb_html}{dir_crumb_html}<span class="nm-crumb-doc" title="{_escape(title)}">{_escape(doc_label)}</span>
 </div>
 <div class="nm-sidebar-tools">
-<button type="button" id="nm-new-root" class="nm-new-note-btn" title="在项目根目录新建笔记">＋ 新建</button>
+<button type="button" id="nm-new-root" class="nm-new-note-btn" title="在当前目录新建笔记">＋ 新建</button>
 <button type="button" id="nm-trash-open" class="nm-trash-btn" title="回收站">回收站</button>
 <button type="button" id="nm-assets-open" class="nm-trash-btn" title="清理未引用图片">资源清理</button>
 </div>
@@ -541,7 +541,7 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 <h4 style="margin-top:10px;">快捷键</h4>
 <ul>
 <li><code>Ctrl/⌘ K</code> — 打开/关闭命令面板</li>
-<li><code>Ctrl/⌘+Alt+1/2/3</code> — 切换到渲染 / 源文件 / 诊断</li>
+<li><code>Ctrl/⌘+Alt+1/2/3</code> 或 <code>Ctrl/⌘+Alt+C</code> — 切换到渲染 / 源文件 / 诊断；部分桌面环境会占用数字组合键，可用 C</li>
 <li><code>Ctrl/⌘+Alt+S</code> — 切换分屏</li>
 <li><code>Ctrl/⌘+Alt+E</code> — 用外部编辑器打开当前源文件</li>
 <li><code>Alt+↑</code> / <code>Ctrl/⌘+Alt+U</code> — 回到项目主页并定位当前目录</li>
