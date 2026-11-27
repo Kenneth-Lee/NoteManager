@@ -51,7 +51,8 @@
             '<input id="nm-note-name" type="text" value="untitled" autocomplete="off" spellcheck="false"></div>' +
             '<div class="nm-note-field"><label for="nm-note-ext">类型</label>' +
             '<select id="nm-note-ext"><option value=".md">Markdown (.md)</option>' +
-            '<option value=".rst">reStructuredText (.rst)</option></select></div>' +
+            '<option value=".rst">reStructuredText (.rst)</option>' +
+            '<option value=".txt">纯文本 (.txt)</option></select></div>' +
             '<div class="nm-note-error" id="nm-note-error" hidden></div>' +
             '<div class="nm-note-actions"><button type="button" class="nm-note-cancel">取消</button>' +
             '<button type="button" class="nm-note-primary" id="nm-note-create">创建并打开</button></div>' +
@@ -207,7 +208,17 @@
                 return data;
             });
         }).then(function () {
+            // Close and remove the row immediately.  Navigation may be delayed
+            // or blocked by a beforeunload prompt; the user must still see that
+            // the note has already moved to trash.
+            closeOverlay(deleteOverlay);
+            document.querySelectorAll('.nm-file').forEach(function (row) {
+                if (row.getAttribute('data-nm-source') === source) row.remove();
+            });
             var dir = deleteOverlay.dataset.redirectDir || '';
+            setTimeout(function () {
+                window.__nmSuppressBuildReload = false;
+            }, 1200);
             window.location.href = dir
                 ? base + 'index.html#nm-dir=' + encodeURIComponent(dir)
                 : base;

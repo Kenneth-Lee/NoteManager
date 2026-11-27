@@ -2,6 +2,9 @@
 
 ## v0.4.3（2026-11-27）
 
+- 新建笔记支持项目级/用户级模板 `template.md|rst|txt`，支持文件名、日期、
+  年份、项目、目录等占位符替换；`{{multi:=}}` 按标题显示宽度生成 reST 下划线；
+  新建对话框增加 `.txt` 类型；同目录同 HTML 主名时拒绝创建并提示换名；
 - 统一对象编辑器增加 Mermaid：识别 Markdown 围栏和 reST `code-block:: mermaid`，
   提供实时预览和流程图/时序图/类图等模板；Vim 增加 `:mermaid`；
 - 修复 reST `code-block:: mermaid` 被 Pygments 当作未知语言而吞进

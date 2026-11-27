@@ -17,6 +17,7 @@
 入口：
 
 - 侧边栏顶部「＋ 新建」：在**当前文档所在目录**新建；项目首页没有当前文档时在根目录新建；
+- 新建时优先使用 `.NoteManager/template.<ext>` 或用户配置目录的 `template.<ext>`，支持 `{{filename}}`、`{{date}}` 等替换，详见 `docs/note-templates.md`；
 - 每个目录摘要右侧的 `+`：在该目录新建；
 - 新建弹窗包含：目标目录、文件名、类型（Markdown / reST）。
 

@@ -19,6 +19,7 @@ import hashlib
 import time
 import shutil
 import mimetypes
+import unicodedata
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -163,6 +164,16 @@ HOME_NM_DIR = Path.home() / ".NoteManager"
 CONFIG_FILE = HOME_NM_DIR / "config.json"
 CONFIG_BACKUP_FILE = HOME_NM_DIR / "config.json.bak"
 DAEMON_FILE = HOME_NM_DIR / "daemon.json"
+
+
+def _text_display_width(text: str) -> int:
+    """Width used by monospace/reST title adornments (CJK counts as 2)."""
+    width = 0
+    for ch in str(text):
+        if unicodedata.combining(ch):
+            continue
+        width += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return width
 
 
 def _default_config() -> dict:
@@ -2102,6 +2113,81 @@ class NoteManagerDaemon:
             project_idx, dir_rel_posix, filename, default_ext
         )
 
+    def _initial_note_content(
+        self,
+        root: Path,
+        parent_abs: Path,
+        out_name: str,
+        out_ext: str,
+    ) -> str:
+        """Use ``template.<ext>`` from the project or user config, or default content.
+
+        Template locations, in priority order:
+          1. <project>/.NoteManager/template.md|rst|txt
+          2. ~/.NoteManager/template.md|rst|txt
+        """
+        raw_stem = Path(out_name).stem
+        title = raw_stem.replace("_", " ").replace("-", " ").strip() or "Untitled"
+        now = datetime.datetime.now()
+        today = now.date().isoformat()
+        try:
+            rel_dir = parent_abs.relative_to(root).as_posix()
+        except ValueError:
+            rel_dir = ""
+        if rel_dir == ".":
+            rel_dir = ""
+
+        candidates = [
+            root / ".NoteManager" / f"template{out_ext}",
+            HOME_NM_DIR / f"template{out_ext}",
+        ]
+        for template in candidates:
+            try:
+                if not template.is_file():
+                    continue
+                text = template.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as e:
+                logger.warning("读取笔记模板失败 %s: %s", template, e)
+                continue
+            replacements = {
+                "{{filename}}": out_name,
+                "{{stem}}": raw_stem,
+                "{{title}}": title,
+                "{{date}}": today,
+                "{{year}}": now.strftime("%Y"),
+                "{{time}}": now.strftime("%H:%M:%S"),
+                "{{datetime}}": now.strftime("%Y-%m-%d %H:%M:%S"),
+                "{{project}}": root.name,
+                "{{dir}}": rel_dir,
+            }
+            for key, value in replacements.items():
+                text = text.replace(key, value)
+            title_width = _text_display_width(title)
+            text = re.sub(
+                r"\{\{multi:(.*?)\}\}",
+                lambda m: (m.group(1) or "=") * title_width,
+                text,
+            )
+            return text
+
+        if out_ext == ".rst":
+            title_line = "=" * max(len(title), 3)
+            return (
+                f"{title}\n"
+                f"{title_line}\n\n"
+                f":创建日期: {today}\n\n"
+                "TODO：\n\n"
+                "- [ ] TODO\n"
+            )
+        if out_ext == ".txt":
+            return f"{title}\n\n创建日期：{today}\n"
+        return (
+            f"# {title}\n\n"
+            f"创建日期：{today}\n\n"
+            "## TODO\n\n"
+            "- [ ] TODO\n"
+        )
+
     def _create_note_in_parent(
         self,
         project_idx: int,
@@ -2135,7 +2221,7 @@ class NoteManagerDaemon:
             return {"ok": False, "error": "目标目录不存在"}
 
         ext = (default_ext or "").lower()
-        if ext not in (".md", ".rst"):
+        if ext not in (".md", ".rst", ".txt"):
             ext = ".md"
         name = (filename or "").strip()
         if not name:
@@ -2156,6 +2242,9 @@ class NoteManagerDaemon:
         elif low.endswith(".rst"):
             out_name = name[:-4] + ".rst"
             out_ext = ".rst"
+        elif low.endswith(".txt"):
+            out_name = name[:-4] + ".txt"
+            out_ext = ".txt"
         else:
             out_ext = ext
             out_name = name + out_ext
@@ -2168,25 +2257,23 @@ class NoteManagerDaemon:
             return {"ok": False, "error": "拒绝路径"}
         if new_abs.exists():
             return {"ok": False, "error": "文件已存在"}
+        # Two source extensions in one directory map to the same HTML path
+        # (foo.md and foo.rst both become foo.html).  Reject the second one
+        # instead of creating a file that cannot appear in the tree.
+        for sibling in new_abs.parent.iterdir():
+            if not sibling.is_file() or sibling == new_abs:
+                continue
+            if sibling.suffix.lower() not in (".md", ".rst", ".txt"):
+                continue
+            if sibling.stem == new_abs.stem:
+                return {
+                    "ok": False,
+                    "error": f"同目录已有 {sibling.name}，会生成同一个 HTML 路径；请换一个文件名",
+                }
 
-        stem = Path(out_name).stem.replace("_", " ").replace("-", " ").strip() or "Untitled"
-        today = datetime.date.today().isoformat()
-        if out_ext == ".rst":
-            title_line = "=" * max(len(stem), 3)
-            initial = (
-                f"{stem}\n"
-                f"{title_line}\n\n"
-                f":创建日期: {today}\n\n"
-                "TODO：\n\n"
-                "- [ ] TODO\n"
-            )
-        else:
-            initial = (
-                f"# {stem}\n\n"
-                f"创建日期：{today}\n\n"
-                "## TODO\n\n"
-                "- [ ] TODO\n"
-            )
+        initial = self._initial_note_content(
+            root_r, parent_abs, out_name, out_ext
+        )
         try:
             suppress_path(new_abs)
             new_abs.parent.mkdir(parents=True, exist_ok=True)
@@ -2385,6 +2472,16 @@ class NoteManagerDaemon:
                     "html_rel_path": rel.with_suffix(".html").as_posix()}
         if new_abs.exists():
             return {"ok": False, "error": "目标文件已存在"}
+        for sibling in new_abs.parent.iterdir():
+            if not sibling.is_file() or sibling == abs_src:
+                continue
+            if sibling.suffix.lower() not in (".md", ".rst", ".txt"):
+                continue
+            if sibling.stem == new_abs.stem:
+                return {
+                    "ok": False,
+                    "error": f"同目录已有 {sibling.name}，会生成同一个 HTML 路径；请换一个文件名",
+                }
         if new_abs.parent == abs_src.parent and old_ext != new_ext:
             # Extension changes are allowed only when the content format is
             # explicitly selected by the new name.
