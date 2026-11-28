@@ -367,11 +367,31 @@ def _convert_mermaid_code_blocks(source: str) -> str:
     lines = source.splitlines(keepends=True)
     out: list[str] = []
     i = 0
+    literal_indent: int | None = None
     directive_re = re.compile(r"^(\s*)\.\.\s+(?:code-block|code)::\s*mermaid\s*$", re.IGNORECASE)
     while i < len(lines):
-        match = directive_re.match(lines[i].rstrip("\r\n"))
+        raw_line = lines[i]
+        stripped = raw_line.rstrip("\r\n")
+        line_indent = len(raw_line) - len(raw_line.lstrip(" "))
+        # A ``::`` block is literal text.  Its contents must not be parsed as
+        # reST directives, even if the user demonstrates a mermaid code-block
+        # inside it.
+        if literal_indent is not None:
+            if not raw_line.strip() or line_indent > literal_indent:
+                out.append(raw_line)
+                i += 1
+                continue
+            literal_indent = None
+        if stripped.rstrip().endswith("::") and not re.match(
+            r"^\s*\.\.\s+\S+::", stripped
+        ):
+            literal_indent = line_indent
+            out.append(raw_line)
+            i += 1
+            continue
+        match = directive_re.match(stripped)
         if not match:
-            out.append(lines[i])
+            out.append(raw_line)
             i += 1
             continue
         indent = match.group(1)

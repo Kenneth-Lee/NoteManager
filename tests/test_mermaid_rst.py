@@ -14,3 +14,22 @@ def test_rst_mermaid_code_block_renders_without_pygments_warning():
     assert not any("Pygments" in warning for warning in result["warnings"])
     assert '<pre class="mermaid">' in result["body"]
     assert "flowchart TD" in result["body"]
+
+
+def test_rst_literal_block_is_not_parsed_as_mermaid_directive():
+    source = """\
+Lit
+===
+
+Example::
+
+    .. code-block:: mermaid
+
+       flowchart TD
+           A --> B
+"""
+    result = render_rst(source, "literal.rst")
+    assert not result["warnings"]
+    assert '<pre class="mermaid">' not in result["body"]
+    assert ".. code-block:: mermaid" in result["body"]
+    assert '<pre class="literal-block">' in result["body"]
