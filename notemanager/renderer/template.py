@@ -165,6 +165,7 @@ def wrap_html(body: str, title: str, html_rel_path: str,
             },
             ensure_ascii=False,
         )
+        source_panel_attrs = ' data-nm-source-editable="true"'
         source_panel_inner = (
             '<div class="nm-source-toolbar">'
             '<button type="button" class="nm-source-save" id="nm-source-save">保存退出</button>'
@@ -419,7 +420,9 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
     white-space: pre-wrap; font-size: 13px; line-height: 1.5; }}
 .nm-source-path {{ color: #98c379; font-size: 12px; font-family: 'SFMono-Regular', Consolas, monospace;
                    margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #555; }}
-.nm-source-toolbar {{ margin-bottom: 10px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }}
+.nm-source-toolbar {{ position: sticky; top: 0; z-index: 20; background: #282c34;
+    margin: -6px 0 10px; padding: 6px 0 10px; display: flex; align-items: center;
+    gap: 12px; flex-wrap: wrap; }}
 .nm-source-vim-wrap {{ font-size: 13px; color: #abb2bf; cursor: pointer; user-select: none; display: inline-flex;
     align-items: center; gap: 6px; }}
 .nm-source-vim-wrap input {{ margin: 0; cursor: pointer; }}
@@ -434,6 +437,31 @@ body.nm-split #nm-panel-warnings {{ display: none !important; }}
 .nm-source-status {{ font-size: 12px; min-height: 1.2em; }}
 /* CodeMirror：避免在 display:none 中初始化后行号与正文重叠；由 JS refresh 配合 */
 .nm-source-panel.nm-tab-panel {{ overflow-x: hidden; }}
+/* Editable source: header is outside the CodeMirror scroll area. */
+#nm-panel-source[data-nm-source-editable] {{
+  flex-direction: column; overflow: hidden;
+}}
+#nm-panel-source[data-nm-source-editable].active {{
+  display: flex;
+}}
+body.nm-split #nm-panel-source[data-nm-source-editable] {{
+  display: flex !important;
+}}
+#nm-panel-source[data-nm-source-editable] .nm-source-toolbar {{
+  position: static; flex: 0 0 auto; margin: 0 0 10px; padding: 0;
+}}
+#nm-panel-source[data-nm-source-editable] .nm-source-path {{
+  flex: 0 0 auto;
+}}
+#nm-panel-source[data-nm-source-editable] #nm-editor-mount {{
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+}}
+#nm-panel-source[data-nm-source-editable] #nm-editor-mount .CodeMirror {{
+  height: 100% !important; flex: 1 1 auto; min-height: 0;
+}}
+#nm-panel-source[data-nm-source-editable] #nm-editor-mount .CodeMirror-scroll {{
+  height: 100% !important; min-height: 0; overflow: auto !important;
+}}
 #nm-editor-mount .CodeMirror {{
   border: 1px solid #444; border-radius: 4px; font-size: 13px;
   height: auto !important;

@@ -427,3 +427,70 @@ window.addEventListener('load', function () {
     match = re.search(r"<title>(.*?)</title>", completed.stdout, re.S)
     assert match, completed.stderr[-2000:]
     assert html.unescape(match.group(1)) == "STILL_OPEN"
+
+
+def test_source_toolbar_stays_outside_editor_scroll(tmp_path):
+    lines = ["# Toolbar", ""] + ["line %d" % i for i in range(300)]
+    ui = _make_project(tmp_path, "\n".join(lines) + "\n")
+    result = _run_browser(
+        ui / "a.html",
+        """<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    document.querySelector('.nm-tab[data-tab="source"]').click();
+    setTimeout(function () {
+      var cm = window.__nmCM;
+      var toolbar = document.querySelector('.nm-source-toolbar');
+      var scroller = cm.getScrollerElement();
+      var before = Math.round(toolbar.getBoundingClientRect().top);
+      cm.refresh();
+      scroller.scrollTop = scroller.scrollHeight;
+      setTimeout(function () {
+        document.title = JSON.stringify({
+          before: before,
+          after: Math.round(toolbar.getBoundingClientRect().top),
+          scroll: scroller.scrollTop
+        });
+      }, 250);
+    }, 1000);
+  }, 800);
+});
+</script>""",
+    )
+    assert result["scroll"] > 0, result
+    assert result["before"] == result["after"]
+
+def test_render_tab_is_visible_after_source_layout_change(tmp_path):
+    ui = _make_project(tmp_path, "# Render\n\nvisible body\n")
+    result = _run_browser(
+        ui / "a.html",
+        """<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    var source = document.getElementById('nm-panel-source');
+    var render = document.getElementById('nm-panel-render');
+    var out = {
+      initialRender: getComputedStyle(render).display,
+      initialSource: getComputedStyle(source).display
+    };
+    document.querySelector('.nm-tab[data-tab="source"]').click();
+    setTimeout(function () {
+      out.sourceActive = getComputedStyle(source).display;
+      out.renderHidden = getComputedStyle(render).display;
+      document.querySelector('.nm-tab[data-tab="render"]').click();
+      setTimeout(function () {
+        out.renderActive = getComputedStyle(render).display;
+        out.sourceHidden = getComputedStyle(source).display;
+        document.title = JSON.stringify(out);
+      }, 250);
+    }, 250);
+  }, 800);
+});
+</script>""",
+    )
+    assert result["initialRender"] != "none"
+    assert result["initialSource"] == "none"
+    assert result["sourceActive"] != "none"
+    assert result["renderHidden"] == "none"
+    assert result["renderActive"] != "none"
+    assert result["sourceHidden"] == "none"
