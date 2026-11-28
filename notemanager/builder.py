@@ -2063,6 +2063,12 @@ window.nmRevealSidebarDir = function(id) {
             // A page that is creating/deleting a note is about to navigate to a
             // different URL; don't let this event reload the current page first.
             if (window.__nmSuppressBuildReload) return;
+            // Another application changed some note while this page has unsaved
+            // source edits.  Reloading now would trigger the browser's
+            // "leave page?" prompt even when the edited note is untouched.
+            // Keep the editor open; the user's next save/reload will pick up
+            // the external changes.
+            if (window.__nmDirty) return;
             var data;
             try { data = JSON.parse(e.data); } catch (err) { return; }
             if (data.project === undefined || data.project === null) return;

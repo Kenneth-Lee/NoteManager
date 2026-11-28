@@ -354,3 +354,76 @@ window.addEventListener('load', function () {
     assert result["h"] <= result["ch"] + 1, result
     assert result["sw"] <= result["cw"] + 1, result
     assert result["sh"] <= result["ch"] + 1, result
+
+
+def test_external_build_does_not_reload_page_with_unsaved_edits(tmp_path):
+    ui = _make_project(tmp_path, "# Dirty\n\nbody\n")
+    page = ui / "a.html"
+    page.write_text(
+        page.read_text(encoding="utf-8").replace(
+            "</body>",
+            """<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    if (sessionStorage.getItem('nmReloadProbe') === '1') {
+      document.title = 'RELOADED';
+      return;
+    }
+    sessionStorage.setItem('nmReloadProbe', '1');
+    var es = window.NM_EVENT_SOURCE;
+    if (!es) { document.title = 'NO_EVENT_SOURCE'; return; }
+    window.__nmDirty = true;
+    es.dispatchEvent(new MessageEvent('build_complete', {
+      data: JSON.stringify({project: 0})
+    }));
+    setTimeout(function () {
+      document.title = 'STILL_OPEN';
+    }, 500);
+  }, 800);
+});
+</script></body>""",
+        ),
+        encoding="utf-8",
+    )
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(page.parent), **kwargs)
+
+        def translate_path(self, path):
+            if path.startswith("/p/0/"):
+                path = path[len("/p/0"):]
+            return super().translate_path(path)
+
+        def log_message(self, format, *args):  # noqa: A002
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/p/0/{page.name}"
+        completed = subprocess.run(
+            [
+                CHROMIUM,
+                "--headless=new",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--window-size=1400,1000",
+                f"--user-data-dir={page.parent / '.browser-profile'}",
+                "--virtual-time-budget=5000",
+                "--dump-dom",
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    match = re.search(r"<title>(.*?)</title>", completed.stdout, re.S)
+    assert match, completed.stderr[-2000:]
+    assert html.unescape(match.group(1)) == "STILL_OPEN"
