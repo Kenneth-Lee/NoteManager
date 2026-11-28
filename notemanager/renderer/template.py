@@ -193,7 +193,8 @@ def wrap_html(body: str, title: str, html_rel_path: str,
             f'<script src="{prefix}_static/nm-table-editor.js?v={asset_version}"></script>\n'
             f'<script src="{prefix}_static/nm-math-editor.js?v={asset_version}"></script>\n'
             f'<script src="{prefix}_static/nm-mermaid-editor.js?v={asset_version}"></script>\n'
-            f'<script src="{prefix}_static/nm-object-editor.js?v={asset_version}"></script>'
+            f'<script src="{prefix}_static/nm-object-editor.js?v={asset_version}"></script>\n'
+            f'<script src="{prefix}_static/nm-render-vim.js?v={asset_version}"></script>'
         )
     else:
         cm_head = ""
@@ -568,17 +569,7 @@ body.nm-split #nm-panel-source[data-nm-source-editable] {{
 </table>
 <p style="margin:4px 0 0;color:#888;">&#92;b 是 ASCII 单词边界，对中文通常不起作用；中文关键词直接写即可。</p>
 </details>
-<h4 style="margin-top:10px;">快捷键</h4>
-<ul>
-<li><code>Ctrl/⌘ K</code> — 打开/关闭命令面板</li>
-<li><code>Ctrl/⌘+Alt+1/2/3</code> 或 <code>Ctrl/⌘+Alt+C</code> — 切换到渲染 / 源文件 / 诊断；部分桌面环境会占用数字组合键，可用 C</li>
-<li><code>Ctrl/⌘+Alt+S</code> — 切换分屏</li>
-<li><code>Ctrl/⌘+Alt+E</code> — 用外部编辑器打开当前源文件</li>
-<li><code>Alt+↑</code> / <code>Ctrl/⌘+Alt+U</code> — 回到项目主页并定位当前目录</li>
-<li><code>↑</code> / <code>↓</code> — 在命令面板中选择</li>
-<li><code>Enter</code> — 打开选中项</li>
-<li><code>Esc</code> — 关闭命令面板/帮助</li>
-</ul>
+
 </div>
 <div class="nm-search-shortcut-hint">
 <kbd>Ctrl/⌘ K</kbd>
@@ -588,8 +579,10 @@ body.nm-split #nm-panel-source[data-nm-source-editable] {{
 </div>
 </div>
 <div class="nm-sidebar-switch">
-<button id="nm-sidebar-view-toc" class="nm-sidebar-switch-btn active" data-view="toc" type="button">目录</button>
-<button id="nm-sidebar-view-results" class="nm-sidebar-switch-btn" data-view="results" type="button">搜索结果</button>
+<button id="nm-sidebar-view-toc" class="nm-sidebar-switch-btn active" data-view="toc" type="button"
+        title="显示目录（Ctrl/⌘+Alt+D）" aria-keyshortcuts="Control+Alt+D Meta+Alt+D">目录</button>
+<button id="nm-sidebar-view-results" class="nm-sidebar-switch-btn" data-view="results" type="button"
+        title="显示搜索结果（Ctrl/⌘+Alt+F）" aria-keyshortcuts="Control+Alt+F Meta+Alt+F">搜索结果</button>
 </div>
 <div id="nm-sidebar-toc" class="nm-sidebar-toc">{toc}</div>
 <div id="nm-sidebar-search-results" class="nm-sidebar-search-results"></div>

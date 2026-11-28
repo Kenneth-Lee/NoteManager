@@ -33,3 +33,23 @@ Example::
     assert '<pre class="mermaid">' not in result["body"]
     assert ".. code-block:: mermaid" in result["body"]
     assert '<pre class="literal-block">' in result["body"]
+
+
+def test_rst_mermaid_block_followed_by_paragraph_keeps_blank_separator():
+    source = """\
+Title
+=====
+
+Before.
+
+.. code-block:: mermaid
+
+   flowchart TD
+       A --> B
+
+After paragraph.
+"""
+    result = render_rst(source, "separator.rst")
+    assert not result["warnings"]
+    assert '<pre class="mermaid">' in result["body"]
+    assert "After paragraph." in result["body"]

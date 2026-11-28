@@ -90,3 +90,4 @@ Mermaid 预览失败只影响预览，不阻止用户把源码写回；保存后
 | 2026-11-27 | 修复 Mermaid 编辑框 Vim `:q` 误触发笔记退出：为 Mermaid CodeMirror 建立局部 Ex 命令作用域 |
 | 2026-11-27 | 修复 Markdown 围栏中 `gantt` 等无参数 Mermaid 类型未被识别的问题 |
 | 2026-11-28 | 修复 reST `::` 字面块中的示例内容被误当作 Mermaid code-block 解析 |
+| 2026-11-28 | 修复 reST Mermaid 转换后缺少空行导致的显式标记警告和空白渲染 |

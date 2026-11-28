@@ -777,6 +777,7 @@ _RUNTIME_STATIC_TOP_LEVEL = {
     "nm-math-editor.js",
     "nm-mermaid-editor.js",
     "nm-object-editor.js",
+    "nm-render-vim.js",
     "nm-overview.js",
     "nm-relations.js",
     "nm-reading.js",
@@ -1234,6 +1235,13 @@ pre.nm-plaintext { white-space: pre-wrap; overflow-wrap: anywhere; background: #
 .nm-related-empty { font-size: 12px; color: #aaa; margin: 4px 0; }
 .nm-note-dialog.nm-table-dialog { max-width: min(1100px, 96vw); width: min(1100px, 96vw); }
 .nm-note-dialog.nm-vim-help { max-width: 620px; }
+.nm-vim-find { background: #ffe082; color: #000; border-radius: 2px; }
+.nm-vim-search { position: fixed; top: 76px; right: 28px; z-index: 1200; display: flex;
+                 align-items: center; gap: 4px; padding: 6px 8px; background: #fff;
+                 border: 1px solid #cfd8dc; border-radius: 5px; box-shadow: 0 4px 18px rgba(0,0,0,.18); }
+.nm-vim-search[hidden] { display: none !important; }
+.nm-vim-search-input { width: 180px; padding: 3px 6px; border: 1px solid #cfd8dc; border-radius: 3px; font-size: 12px; }
+.nm-vim-search button { border: 1px solid #cfd8dc; background: #fff; border-radius: 3px; cursor: pointer; padding: 2px 6px; }
 .nm-note-dialog.nm-math-dialog { width: min(760px, calc(100vw - 32px)); }
 .nm-math-mode { display: flex; align-items: center; gap: 14px; margin: 8px 0; font-size: 12px; color: #607d8b; }
 .nm-math-mode select { margin-left: 4px; padding: 3px 6px; }
@@ -2005,6 +2013,19 @@ window.nmRevealSidebarDir = function(id) {
     if (sidebarViewResultsBtn) {
         sidebarViewResultsBtn.addEventListener('click', function() { setSidebarView('results'); });
     }
+    document.addEventListener('keydown', function(event) {
+        if (!(event.ctrlKey || event.metaKey) || !event.altKey || event.shiftKey) return;
+        var target = event.target;
+        if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || '') ||
+                (target.closest && target.closest('.CodeMirror')))) return;
+        if (event.code === 'KeyD') {
+            event.preventDefault();
+            setSidebarView('toc');
+        } else if (event.code === 'KeyF') {
+            event.preventDefault();
+            setSidebarView('results');
+        }
+    });
     setSidebarView('toc');
     window.nmRunSearch = function(query) {
         if (!searchInput) return false;

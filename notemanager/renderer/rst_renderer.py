@@ -427,6 +427,9 @@ def _convert_mermaid_code_blocks(source: str) -> str:
         out.append(f"{indent}.. raw:: html\n")
         out.append(f"{indent}\n")
         out.append(f"{indent}   <pre class=\"mermaid\">{escaped}</pre>\n")
+        # A raw directive is explicit markup; it needs a blank line before the
+        # next paragraph.  The body scan consumed the source's trailing blank.
+        out.append("\n")
         i = j
     return "".join(out)
 

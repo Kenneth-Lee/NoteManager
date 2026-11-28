@@ -494,3 +494,237 @@ window.addEventListener('load', function () {
     assert result["renderHidden"] == "none"
     assert result["renderActive"] != "none"
     assert result["sourceHidden"] == "none"
+
+
+def test_render_vim_scroll_keys_when_source_vim_enabled(tmp_path):
+    body = "\n\n".join("paragraph %d" % i for i in range(250))
+    ui = _make_project(tmp_path, "# Render Vim\n\n" + body + "\n")
+    result = _run_browser(
+        ui / "a.html",
+        """<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    var checkbox = document.getElementById('nm-source-vim');
+    checkbox.click();
+    document.querySelector('.nm-tab[data-tab="render"]').click();
+    setTimeout(function () {
+      var panel = document.getElementById('nm-panel-render');
+      function press(key, opts) {
+        var ev = new KeyboardEvent('keydown', Object.assign({key: key, bubbles: true, cancelable: true}, opts || {}));
+        document.dispatchEvent(ev);
+      }
+      panel.scrollTop = 0;
+      press('j');
+      var afterJ = panel.scrollTop;
+      press('G');
+      var afterG = panel.scrollTop;
+      press('g');
+      press('g');
+      var afterGG = panel.scrollTop;
+      press('/');
+      var search = document.querySelector('.nm-vim-search');
+      document.title = JSON.stringify({
+        afterJ: afterJ,
+        afterG: afterG,
+        afterGG: afterGG,
+        searchVisible: !!(search && !search.hidden)
+      });
+    }, 400);
+  }, 900);
+});
+</script>""",
+    )
+    assert result["afterJ"] > 0, result
+    assert result["afterG"] > result["afterJ"], result
+    assert result["afterGG"] == 0, result
+    assert result["searchVisible"] is True
+
+
+def test_render_vim_search_n_and_shift_n(tmp_path):
+    body = (
+        "alpha first paragraph\n\n"
+        + "\n\n".join("filler %d" % i for i in range(80))
+        + "\n\nalpha second paragraph\n\n"
+        + "\n\n".join("later %d" % i for i in range(80))
+        + "\n\nalpha third paragraph\n"
+    )
+    ui = _make_project(tmp_path, "# Search\n\n" + body)
+    result = _run_browser(
+        ui / "a.html",
+        """<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    document.getElementById('nm-source-vim').click();
+    document.querySelector('.nm-tab[data-tab="render"]').click();
+    setTimeout(function () {
+      var panel = document.getElementById('nm-panel-render');
+      panel.scrollTop = 0;
+      function topOfSelection() {
+        var sel = window.getSelection();
+        if (!sel || !sel.rangeCount) return null;
+        var node = sel.anchorNode;
+        if (!node) return null;
+        var el = node.nodeType === 1 ? node : node.parentElement;
+        return el ? Math.round(el.getBoundingClientRect().top) : null;
+      }
+      function press(key) {
+        document.dispatchEvent(new KeyboardEvent('keydown', {
+          key: key, bubbles: true, cancelable: true
+        }));
+      }
+      var first = window.nmRenderVim.runSearch('alpha', 1, false);
+      var top1 = topOfSelection();
+      press('n');
+      var top2 = topOfSelection();
+      press('N');
+      var top3 = topOfSelection();
+      press('?');
+      var box = document.querySelector('.nm-vim-search');
+      document.title = JSON.stringify({
+        first: first,
+        top1: top1,
+        top2: top2,
+        top3: top3,
+        reverseBox: !!(box && !box.hidden)
+      });
+    }, 400);
+  }, 900);
+});
+</script>""",
+    )
+    assert result["first"] is True, result
+    assert result["top1"] is not None
+    assert result["top2"] > result["top1"], result
+    assert result["top3"] <= result["top2"], result
+    assert result["reverseBox"] is True
+
+
+def test_sidebar_view_hotkeys_and_labels(tmp_path):
+    ui = _make_project(tmp_path, "# Sidebar\n\nbody\n")
+    result = _run_browser(
+        ui / "a.html",
+        """<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    var toc = document.getElementById('nm-sidebar-view-toc');
+    var results = document.getElementById('nm-sidebar-view-results');
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      code: 'KeyF', key: 'f', ctrlKey: true, altKey: true, bubbles: true
+    }));
+    var resultsActive = results.classList.contains('active');
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      code: 'KeyD', key: 'd', ctrlKey: true, altKey: true, bubbles: true
+    }));
+    document.getElementById('nm-shortcuts-help-link').click();
+    setTimeout(function () {
+      document.title = JSON.stringify({
+        resultsActive: resultsActive,
+        tocActive: toc.classList.contains('active'),
+        tocLabel: toc.textContent,
+        resultsLabel: results.textContent,
+        searchHelp: (document.getElementById('nm-search-help') || {}).textContent || '',
+        help: (document.querySelector('.nm-help-overlay') || {}).textContent || ''
+      });
+    }, 150);
+  }, 800);
+});
+</script>""",
+    )
+    assert result["resultsActive"] is True
+    assert result["tocActive"] is True
+    assert result["tocLabel"].strip() == "目录"
+    assert result["resultsLabel"].strip() == "搜索结果"
+    assert "Ctrl/⌘+Alt+D" not in result["searchHelp"]
+    assert "Ctrl/⌘+Alt+D" in result["help"]
+    assert "Ctrl/⌘+Alt+F" in result["help"]
+    assert "Vim" in result["help"]
+
+
+def test_render_vim_search_enter_closes_box_and_n_works(tmp_path):
+    ui = _make_project(
+        tmp_path,
+        "# Search\n\nalpha first\n\n" + "\n\n".join("filler %d" % i for i in range(30))
+        + "\n\nalpha second\n",
+    )
+    result = _run_browser(
+        ui / "a.html",
+        """<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    document.getElementById('nm-source-vim').click();
+    document.querySelector('.nm-tab[data-tab="render"]').click();
+    setTimeout(function () {
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: '/', bubbles: true, cancelable: true
+      }));
+      var box = document.querySelector('.nm-vim-search');
+      var input = box.querySelector('.nm-vim-search-input');
+      input.value = 'alpha';
+      input.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter', bubbles: true, cancelable: true
+      }));
+      var closed = box.hidden;
+      var sel = window.getSelection();
+      var firstTop = sel && sel.rangeCount
+        ? Math.round(sel.anchorNode.parentElement.getBoundingClientRect().top) : null;
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'n', bubbles: true, cancelable: true
+      }));
+      sel = window.getSelection();
+      var secondTop = sel && sel.rangeCount
+        ? Math.round(sel.anchorNode.parentElement.getBoundingClientRect().top) : null;
+      document.title = JSON.stringify({
+        closed: closed,
+        firstTop: firstTop,
+        secondTop: secondTop
+      });
+    }, 400);
+  }, 900);
+});
+</script>""",
+    )
+    assert result["closed"] is True, result
+    assert result["secondTop"] > result["firstTop"], result
+
+
+def test_render_vim_single_key_navigation(tmp_path):
+    ui = _make_project(tmp_path, "# Single Keys\n\nbody\n")
+    result = _run_browser(
+        ui / "a.html",
+        """<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    document.getElementById('nm-source-vim').click();
+    document.querySelector('.nm-tab[data-tab="render"]').click();
+    setTimeout(function () {
+      function press(key) {
+        document.dispatchEvent(new KeyboardEvent('keydown', {
+          key: key, bubbles: true, cancelable: true
+        }));
+      }
+      function activeTab() {
+        var t = document.querySelector('.nm-tab.active');
+        return t ? t.getAttribute('data-tab') : null;
+      }
+      var out = {};
+      press('2'); out.two = activeTab();
+      document.querySelector('.nm-tab[data-tab="render"]').click();
+      press('3'); out.three = activeTab();
+      document.querySelector('.nm-tab[data-tab="render"]').click();
+      press('c'); out.c = activeTab();
+      document.querySelector('.nm-tab[data-tab="render"]').click();
+      press('d'); out.d = document.getElementById('nm-sidebar-view-toc').classList.contains('active');
+      press('f'); out.f = document.getElementById('nm-sidebar-view-results').classList.contains('active');
+      press('s'); out.s = document.body.classList.contains('nm-split');
+      document.title = JSON.stringify(out);
+    }, 350);
+  }, 900);
+});
+</script>""",
+    )
+    assert result["two"] == "source", result
+    assert result["three"] == "warnings", result
+    assert result["c"] == "source", result
+    assert result["d"] is True
+    assert result["f"] is True
+    assert result["s"] is True

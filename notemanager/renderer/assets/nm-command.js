@@ -290,9 +290,11 @@
             '<div><dt><kbd>Enter</kbd></dt><dd>打开选中的文档或执行命令</dd></div>' +
             '<div><dt><kbd>Esc</kbd></dt><dd>关闭命令面板或本帮助</dd></div>' +
             '<div><dt><kbd>Ctrl/⌘+Alt+1/2/3</kbd> 或 <kbd>Ctrl/⌘+Alt+C</kbd></dt><dd>切换到渲染 / 源文件 / 诊断</dd></div>' +
+            '<div><dt><kbd>Ctrl/⌘+Alt+D</kbd> / <kbd>Ctrl/⌘+Alt+F</kbd></dt><dd>切换侧边栏目录 / 搜索结果</dd></div>' +
             '<div><dt><kbd>Ctrl/⌘+Alt+S</kbd></dt><dd>切换分屏（文档页）</dd></div>' +
             '<div><dt><kbd>Ctrl/⌘+Alt+E</kbd></dt><dd>用外部编辑器打开当前源文件</dd></div>' +
             '<div><dt><kbd>Alt+↑ / Ctrl/⌘+Alt+U</kbd></dt><dd>回到项目主页并定位当前目录</dd></div>' +
+            '<div><dt><kbd>渲染页 Vim</kbd></dt><dd>在编辑器为 Vim 模式的时候，渲染页也可以使用 Vim 键绑定进行移动，而且上述热键大部分可以不使用修饰键。</dd></div>' +
             '</dl>' +
             '<p class="nm-help-note">命令面板可以搜索文档、打开页面、保存搜索视图。' +
             '搜索框右侧的 <b>?</b> 可以查看搜索语法。</p>' +

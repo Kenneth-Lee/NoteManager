@@ -170,6 +170,10 @@
       cm.setOption('keyMap', on ? 'vim' : 'default');
       if (vimCb) vimCb.checked = on;
       writeVimPref(on);
+      window.__nmVimEnabled = on;
+      try {
+        document.dispatchEvent(new CustomEvent('nm-vim-pref', {detail: {on: on}}));
+      } catch (e) {}
       if (on) {
         try { setStatus('Vim 模式：:help 查看命令'); } catch (e) {}
       }
