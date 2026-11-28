@@ -60,6 +60,7 @@ def test_temp_view_html_includes_auto_refresh_probe(tmp_path: Path) -> None:
     assert 'setInterval' in content
     assert 'nm-source-readonly-note' in content
     assert 'tabindex="0"' in content
+    assert 'nm-render-vim.js' in content
 
 
 def test_check_reports_unclosed_markdown_math(tmp_path: Path) -> None:

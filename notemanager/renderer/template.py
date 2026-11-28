@@ -198,7 +198,9 @@ def wrap_html(body: str, title: str, html_rel_path: str,
         )
     else:
         cm_head = ""
-        cm_foot = ""
+        # Vim key preference is global (localStorage), not tied to an editable
+        # source file.  Read-only/temp pages still get Vim reading navigation.
+        cm_foot = f'<script src="{prefix}_static/nm-render-vim.js?v={asset_version}"></script>'
         highlighted_source = _highlight_source(source, source_path) if source else ""
         highlighted_source = highlighted_source.replace("{", "{{").replace("}", "}}")
         source_panel_inner = (
